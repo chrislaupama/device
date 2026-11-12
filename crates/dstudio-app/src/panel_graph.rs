@@ -185,7 +185,9 @@ fn geo(kind: Kind, def: &DeviceDef) -> Geo {
     let full = |lo, hi, top, bottom| Geo { w, h, x0: 0.0, x1: w, y0: 0.0, y1: h, lo, hi, top, bottom };
     match kind {
         // Wave plot inset 8 pt in the well, amplitude axis +-1.25.
-        Kind::Declipper => Geo { w, h, x0: 8.0 * Z, x1: w - 8.0 * Z, y0: 8.0 * Z, y1: h - 8.0 * Z, lo: 1.0, hi: 2.0, top: 1.25, bottom: -1.25 },
+        Kind::Declipper => {
+            Geo { w, h, x0: 8.0 * Z, x1: w - 8.0 * Z, y0: 8.0 * Z, y1: h - 8.0 * Z, lo: 1.0, hi: 2.0, top: 1.25, bottom: -1.25 }
+        }
         Kind::Deesser => full(1000.0, 20000.0, 0.0, -30.0),
         Kind::Dehummer => full(20.0, 2000.0, 0.0, -60.0),
         Kind::Denoiser => full(20.0, 20000.0, 0.0, -80.0),
@@ -291,7 +293,13 @@ fn dashed(pts: &[(f32, f32)], dash: f32, gap: f32) -> String {
 /// Signed dB text with one decimal and a true minus sign ("−40.0 dB", "0.0 dB").
 fn db_text(v: f32) -> String {
     let a = (v.abs() * 10.0).round() / 10.0;
-    if a < 0.05 { "0.0 dB".into() } else if v < 0.0 { format!("{MINUS}{a:.1} dB") } else { format!("{a:.1} dB") }
+    if a < 0.05 {
+        "0.0 dB".into()
+    } else if v < 0.0 {
+        format!("{MINUS}{a:.1} dB")
+    } else {
+        format!("{a:.1} dB")
+    }
 }
 
 fn axis_db(v: f32) -> String {
@@ -424,7 +432,11 @@ impl Controller {
         let rungs = |hr: &mut Vec<Rule>, steps: &[f32]| {
             for &db in steps {
                 let last = db == g.bottom;
-                hr.push(Rule { pos: g.y_of(db).min(g.h - 1.0), text: s(if last { String::new() } else { axis_db(db) }), strong: db == 0.0 });
+                hr.push(Rule {
+                    pos: g.y_of(db).min(g.h - 1.0),
+                    text: s(if last { String::new() } else { axis_db(db) }),
+                    strong: db == 0.0,
+                });
             }
         };
         let grid = |vr: &mut Vec<Rule>, lines: &[(f32, &str)]| {
@@ -441,10 +453,12 @@ impl Controller {
                     layers.push(layer(format!("M{:.2} {yy:.2} L{:.2} {yy:.2}", g.x0, g.x1), ink(a), 1.0 / Z, none()));
                 }
                 let n = 192;
-                let xs: Vec<(f32, f32)> = (0..=n).map(|i| {
-                    let u = i as f32 / n as f32;
-                    (g.x0 + u * (g.x1 - g.x0), (2.0 * std::f32::consts::TAU * u).sin())
-                }).collect();
+                let xs: Vec<(f32, f32)> = (0..=n)
+                    .map(|i| {
+                        let u = i as f32 / n as f32;
+                        (g.x0 + u * (g.x1 - g.x0), (2.0 * std::f32::consts::TAU * u).sin())
+                    })
+                    .collect();
                 let to_y = |s: f32| mid - s.clamp(-1.25, 1.25) * amp;
                 let input: Vec<(f32, f32)> = xs.iter().map(|(px, s)| (*px, to_y(*s))).collect();
                 let out: Vec<(f32, f32)> = xs.iter().map(|(px, s)| (*px, to_y(declipper_wave(*s, t, c, mix).0))).collect();
@@ -480,16 +494,28 @@ impl Controller {
                 for (hz, z) in [(lo, Zone::EdgeLo), (hi, Zone::EdgeHi)] {
                     if hz > g.lo && hz < g.hi {
                         let ex = g.x_of(hz);
-                        layers.push(layer(format!("M{ex:.2} 0 L{ex:.2} {:.2}", g.h), ink(if hot(z) { 0.55 } else { 0.24 }), 1.0 / Z, none()));
+                        layers.push(layer(
+                            format!("M{ex:.2} 0 L{ex:.2} {:.2}", g.h),
+                            ink(if hot(z) { 0.55 } else { 0.24 }),
+                            1.0 / Z,
+                            none(),
+                        ));
                     }
                 }
                 let dot_fill = if hot(Zone::Band) { Color::from_rgb_u8(0x29, 0x2a, 0x30) } else { well };
-                dots.push(PanelPath { commands: s(circle(g.x_of(f0), g.y_of(db_at(f0)), 5.0 * Z)), stroke: ink(1.0), width: 1.5 * Z, fill: dot_fill, fill2: dot_fill });
+                dots.push(PanelPath {
+                    commands: s(circle(g.x_of(f0), g.y_of(db_at(f0)), 5.0 * Z)),
+                    stroke: ink(1.0),
+                    width: 1.5 * Z,
+                    fill: dot_fill,
+                    fill2: dot_fill,
+                });
                 caption = "Band";
                 value = if f0 >= 1000.0 { format!("{:.2} kHz", f0 / 1000.0) } else { format!("{f0:.0} Hz") };
             }
             Kind::Dehummer => {
-                let (f0, harm, q, depth, mix) = (v("frequency"), v("num_harmonics").round().clamp(1.0, 8.0) as u32, v("notch_width"), v("depth"), v("mix") / 100.0);
+                let (f0, harm, q, depth, mix) =
+                    (v("frequency"), v("num_harmonics").round().clamp(1.0, 8.0) as u32, v("notch_width"), v("depth"), v("mix") / 100.0);
                 rungs(&mut hrules, &[0.0, -20.0, -40.0, -60.0]);
                 grid(&mut vrules, &[(50.0, "50"), (100.0, "100"), (200.0, "200"), (500.0, "500"), (1000.0, "1k")]);
                 let mut fs = log_points(g.lo, g.hi, 240);
@@ -500,7 +526,8 @@ impl Controller {
                     }
                 }
                 fs.sort_by(f32::total_cmp);
-                let pts: Vec<(f32, f32)> = fs.iter().map(|&f| (g.x_of(f), g.y_of(dehummer_db(f0, harm, q, depth, mix, f).clamp(g.bottom, 0.0)))).collect();
+                let pts: Vec<(f32, f32)> =
+                    fs.iter().map(|&f| (g.x_of(f), g.y_of(dehummer_db(f0, harm, q, depth, mix, f).clamp(g.bottom, 0.0)))).collect();
                 layers.push(layer(polyline(&pts), ink(1.0), if hot(Zone::Plane) { 2.25 } else { 1.5 }, none()));
                 caption = "Hum";
                 value = format!("{f0:.1} Hz");
@@ -515,10 +542,25 @@ impl Controller {
                 layers.push(layer(rect(ty, fy), Color::from_argb_u8(0, 0, 0, 0), 0.0, alpha(accent, 0.16)));
                 let duck = spectrum.map_or(0.0, |s| s.duck);
                 if duck < -0.1 {
-                    layers.push(layer(rect(ty, g.y_of((t + duck).max(g.bottom))), Color::from_argb_u8(0, 0, 0, 0), 0.0, alpha(accent, 0.3)));
+                    layers.push(layer(
+                        rect(ty, g.y_of((t + duck).max(g.bottom))),
+                        Color::from_argb_u8(0, 0, 0, 0),
+                        0.0,
+                        alpha(accent, 0.3),
+                    ));
                 }
-                layers.push(layer(format!("M{x0:.2} {ty:.2} L{:.2} {ty:.2}", g.w), accent, if hot(Zone::Threshold) { 2.0 } else { 1.5 }, none()));
-                layers.push(layer(format!("M{x0:.2} {fy:.2} L{:.2} {fy:.2}", g.w), alpha(accent, 0.45), if hot(Zone::Floor) { 1.5 } else { 1.0 }, none()));
+                layers.push(layer(
+                    format!("M{x0:.2} {ty:.2} L{:.2} {ty:.2}", g.w),
+                    accent,
+                    if hot(Zone::Threshold) { 2.0 } else { 1.5 },
+                    none(),
+                ));
+                layers.push(layer(
+                    format!("M{x0:.2} {fy:.2} L{:.2} {fy:.2}", g.w),
+                    alpha(accent, 0.45),
+                    if hot(Zone::Floor) { 1.5 } else { 1.0 },
+                    none(),
+                ));
                 let inside = |y: f32| y.clamp(9.0 * Z, g.h - 9.0 * Z);
                 pills.push(Pill { x: 30.0 * Z, y: inside(ty), label: "Threshold", value: db_text(t), hot: hot(Zone::Threshold) });
                 pills.push(Pill { x: -1.0, y: inside(fy), label: "Reduction", value: db_text(red), hot: hot(Zone::Floor) });
@@ -530,7 +572,9 @@ impl Controller {
         let (ww, wh) = (w * Z, (h - CAPTION) * Z);
         let rule = |commands: String, a: f32| PanelPath { commands: s(commands), stroke: ink(a), width: 1.0, fill: none(), fill2: none() };
         let mut paths: Vec<PanelPath> = Vec::new();
-        paths.extend(hrules.iter().map(|r| rule(format!("M0 {:.2} L{ww:.2} {:.2}", r.pos + 0.5, r.pos + 0.5), if r.strong { 0.13 } else { 0.05 })));
+        paths.extend(
+            hrules.iter().map(|r| rule(format!("M0 {:.2} L{ww:.2} {:.2}", r.pos + 0.5, r.pos + 0.5), if r.strong { 0.13 } else { 0.05 })),
+        );
         paths.extend(vrules.iter().map(|r| rule(format!("M{:.2} 0 L{:.2} {wh:.2}", r.pos + 0.5, r.pos + 0.5), 0.05)));
         if let Some(sp) = spectrum.filter(|_| kind.has_spectrum()) {
             let pts = spectrum_points(&sp.shown, &g);
@@ -541,8 +585,19 @@ impl Controller {
         }
         paths.extend(layers);
         paths.extend(dots);
-        let label_text = |x: f32, y: f32, w: f32, t: &SharedString, align: i32| PanelText { x, y, w, h: 12.0 * Z, text: t.clone(), color: Color::from_argb_u8(0x66, 255, 255, 255), size: 9.0 * Z, weight: 500, align };
-        let mut texts: Vec<PanelText> = hrules.iter().filter(|r| !r.text.is_empty()).map(|r| label_text(3.0 * Z, r.pos + 1.0, 40.0 * Z, &r.text, 0)).collect();
+        let label_text = |x: f32, y: f32, w: f32, t: &SharedString, align: i32| PanelText {
+            x,
+            y,
+            w,
+            h: 12.0 * Z,
+            text: t.clone(),
+            color: Color::from_argb_u8(0x66, 255, 255, 255),
+            size: 9.0 * Z,
+            weight: 500,
+            align,
+        };
+        let mut texts: Vec<PanelText> =
+            hrules.iter().filter(|r| !r.text.is_empty()).map(|r| label_text(3.0 * Z, r.pos + 1.0, 40.0 * Z, &r.text, 0)).collect();
         texts.extend(vrules.iter().map(|r| label_text(r.pos - 20.0 * Z, wh - 13.0 * Z, 40.0 * Z, &r.text, 1)));
         let mut grips = Vec::new();
         let mut next_x = 0.0;
@@ -578,7 +633,12 @@ impl Controller {
         let ids: Vec<(DeviceId, bool, bool)> = t
             .devices
             .iter()
-            .filter_map(|d| dstudio_core::builtin::def_of(d).and_then(Kind::of).filter(|k| k.has_spectrum()).map(|k| (d.id, k != Kind::Dehummer, d.enabled)))
+            .filter_map(|d| {
+                dstudio_core::builtin::def_of(d)
+                    .and_then(Kind::of)
+                    .filter(|k| k.has_spectrum())
+                    .map(|k| (d.id, k != Kind::Dehummer, d.enabled))
+            })
             .collect();
         self.devices.panel.graph.spectra.retain(|id, _| ids.iter().any(|(i, _, _)| i == id));
         let now = Instant::now();
@@ -592,7 +652,13 @@ impl Controller {
             let mut raw = [SPEC_FLOOR_DB; BANDS];
             raw.copy_from_slice(&out[out.len() - BANDS..]);
             let duck = if has_duck { out[0].min(0.0) } else { 0.0 };
-            let sp = self.devices.panel.graph.spectra.entry(id).or_insert_with(|| Spectrum { shown: [SPEC_FLOOR_DB; BANDS], raw: [f32::NAN; BANDS], duck: 0.0, changed: now, polled: now });
+            let sp = self.devices.panel.graph.spectra.entry(id).or_insert_with(|| Spectrum {
+                shown: [SPEC_FLOOR_DB; BANDS],
+                raw: [f32::NAN; BANDS],
+                duck: 0.0,
+                changed: now,
+                polled: now,
+            });
             let dt = (now - sp.polled).as_secs_f32().min(0.25);
             sp.polled = now;
             if raw != sp.raw {
@@ -612,7 +678,9 @@ impl Controller {
             }
             let d_before = sp.duck;
             sp.duck += (duck - sp.duck) * (1.0 - (-dt / 0.06).exp());
-            if (sp.duck - d_before).abs() > 0.02 || sp.shown.iter().zip(before.iter()).any(|(a, b)| (a - b).abs() > 0.05 && a.max(*b) > -SPEC_SCALE_DB - 1.0) {
+            if (sp.duck - d_before).abs() > 0.02
+                || sp.shown.iter().zip(before.iter()).any(|(a, b)| (a - b).abs() > 0.05 && a.max(*b) > -SPEC_SCALE_DB - 1.0)
+            {
                 dirty = true;
             }
         }
@@ -701,12 +769,25 @@ impl Controller {
                     (Kind::Deesser, Zone::Band) => {
                         let v = |id: &str| def.param(id).map_or(0.0, |p| def.value(d, p));
                         let f0 = v("frequency");
-                        let dy = deesser_db(f0, v("bandwidth"), v("reduction"), v("listen") >= 0.5, v("mix") / 100.0, f0).clamp(g.bottom, 0.0);
+                        let dy =
+                            deesser_db(f0, v("bandwidth"), v("reduction"), v("listen") >= 0.5, v("mix") / 100.0, f0).clamp(g.bottom, 0.0);
                         (x - g.x_of(f0), y - g.y_of(dy))
                     }
                     _ => (0.0, 0.0),
                 };
-                self.devices.panel.graph.drag = Some(Drag { device, kind, zone: z, values: start.clone(), start, last: (x, y), press: (x, y), pos: (x, y), grab, travel: 0.0, active: false });
+                self.devices.panel.graph.drag = Some(Drag {
+                    device,
+                    kind,
+                    zone: z,
+                    values: start.clone(),
+                    start,
+                    last: (x, y),
+                    press: (x, y),
+                    pos: (x, y),
+                    grab,
+                    travel: 0.0,
+                    active: false,
+                });
                 self.devices.panel.graph.hover = Some((device, z));
                 self.ui_dirty = true;
             }
@@ -854,7 +935,8 @@ impl Controller {
 /// display scale over the plot height; empty when everything is under it.
 fn spectrum_points(shown: &[f32; BANDS], g: &Geo) -> Vec<(f32, f32)> {
     let at = |i: isize| shown[i.clamp(0, BANDS as isize - 1) as usize];
-    let sm: Vec<f32> = (0..BANDS as isize).map(|i| (at(i - 2) + 4.0 * at(i - 1) + 6.0 * at(i) + 4.0 * at(i + 1) + at(i + 2)) / 16.0).collect();
+    let sm: Vec<f32> =
+        (0..BANDS as isize).map(|i| (at(i - 2) + 4.0 * at(i - 1) + 6.0 * at(i) + 4.0 * at(i + 1) + at(i + 2)) / 16.0).collect();
     if sm.iter().all(|v| *v <= -SPEC_SCALE_DB) {
         return Vec::new();
     }
@@ -884,7 +966,9 @@ mod tests {
 
     #[test]
     fn every_restoration_device_names_a_graph() {
-        for (id, kind) in [("declipper", Kind::Declipper), ("deesser", Kind::Deesser), ("dehummer", Kind::Dehummer), ("denoiser", Kind::Denoiser)] {
+        for (id, kind) in
+            [("declipper", Kind::Declipper), ("deesser", Kind::Deesser), ("dehummer", Kind::Dehummer), ("denoiser", Kind::Denoiser)]
+        {
             assert_eq!(Kind::of(def(id)), Some(kind));
         }
         assert_eq!(Kind::of(def("compressor")), None);

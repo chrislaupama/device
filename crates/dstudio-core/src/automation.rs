@@ -66,7 +66,8 @@ impl SynthParam {
     pub fn range(self) -> (f32, f32) {
         use SynthParam::*;
         match self {
-            Osc1Level | Osc2Level | Osc1Shape | Osc2Shape | CrossFm | SubLevel | NoiseLevel | FilterResonance | FilterKeyTrack | LfoToAmp => (0.0, 1.0),
+            Osc1Level | Osc2Level | Osc1Shape | Osc2Shape | CrossFm | SubLevel | NoiseLevel | FilterResonance | FilterKeyTrack
+            | LfoToAmp => (0.0, 1.0),
             Osc1Fine | Osc2Fine => (-100.0, 100.0),
             FilterCutoff => (20.0, 20_000.0),
             FilterEnvAmount => (-1.0, 1.0),
@@ -233,11 +234,7 @@ pub fn shape(t: f32, c: f32) -> f32 {
 
 /// Interpolate between two plain values (geometric for logarithmic targets).
 pub fn lerp_value(a: f32, b: f32, s: f32, logarithmic: bool) -> f32 {
-    if logarithmic && a > 0.0 && b > 0.0 {
-        (a.ln() + (b.ln() - a.ln()) * s).exp()
-    } else {
-        a + (b - a) * s
-    }
+    if logarithmic && a > 0.0 && b > 0.0 { (a.ln() + (b.ln() - a.ln()) * s).exp() } else { a + (b - a) * s }
 }
 
 impl AutomationLane {
@@ -292,7 +289,11 @@ mod tests {
     use super::*;
 
     fn lane(points: &[(Ticks, f32, f32)]) -> AutomationLane {
-        AutomationLane { target: AutomationTarget::Volume, enabled: true, points: points.iter().map(|&(time, value, curve)| AutoPoint { time, value, curve }).collect() }
+        AutomationLane {
+            target: AutomationTarget::Volume,
+            enabled: true,
+            points: points.iter().map(|&(time, value, curve)| AutoPoint { time, value, curve }).collect(),
+        }
     }
 
     #[test]
@@ -322,6 +323,14 @@ mod tests {
         assert!(lane(&[(10, 0.0, 0.0), (0, 0.0, 0.0)]).validate().is_err());
         assert!(lane(&[(0, 12.0, 0.0)]).validate().is_err());
         assert!(lane(&[(0, 0.0, 2.0)]).validate().is_err());
-        assert!(AutomationLane { target: AutomationTarget::Synth { param: SynthParam::FilterCutoff }, enabled: true, points: vec![AutoPoint { time: 0, value: 10.0, curve: 0.0 }] }.validate().is_err());
+        assert!(
+            AutomationLane {
+                target: AutomationTarget::Synth { param: SynthParam::FilterCutoff },
+                enabled: true,
+                points: vec![AutoPoint { time: 0, value: 10.0, curve: 0.0 }]
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

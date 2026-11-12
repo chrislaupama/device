@@ -48,7 +48,11 @@ fn check(code: i32) -> Result<(), EngineError> {
 }
 
 fn cpath(p: &Path) -> Result<CString, EngineError> {
-    CString::new(p.to_string_lossy().as_bytes()).map_err(|_| EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "path contains NUL".into() })
+    CString::new(p.to_string_lossy().as_bytes()).map_err(|_| EngineError {
+        code: ffi::SE_ERR_INVALID_ARG,
+        kind: "invalid argument",
+        message: "path contains NUL".into(),
+    })
 }
 
 /// A transient found by [`Engine::detect_onsets`].
@@ -125,7 +129,12 @@ unsafe impl Sync for Engine {}
 
 impl Engine {
     pub fn new(cfg: Config) -> Result<Self, EngineError> {
-        let c = ffi::se_config { abi_version: ffi::SE_ABI_VERSION, sample_rate: cfg.sample_rate, max_block_size: cfg.max_block_size, output_channels: 2 };
+        let c = ffi::se_config {
+            abi_version: ffi::SE_ABI_VERSION,
+            sample_rate: cfg.sample_rate,
+            max_block_size: cfg.max_block_size,
+            output_channels: 2,
+        };
         // SAFETY: valid pointer to a properly initialised config.
         let raw = unsafe { ffi::se_engine_create(&c) };
         if raw.is_null() {
@@ -190,10 +199,19 @@ impl Engine {
     }
 
     /// Min/max pairs of one channel (0 left, 1 right) for per-channel lanes.
-    pub fn channel_peaks(&self, id: u64, channel: u32, start_frame: u64, frames_per_peak: u32, max_pairs: usize) -> Result<Vec<[f32; 2]>, EngineError> {
+    pub fn channel_peaks(
+        &self,
+        id: u64,
+        channel: u32,
+        start_frame: u64,
+        frames_per_peak: u32,
+        max_pairs: usize,
+    ) -> Result<Vec<[f32; 2]>, EngineError> {
         let mut buf = vec![0f32; max_pairs * 2];
         let mut n = 0usize;
-        check(unsafe { ffi::se_asset_compute_channel_peaks(self.raw, id, channel, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n) })?;
+        check(unsafe {
+            ffi::se_asset_compute_channel_peaks(self.raw, id, channel, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n)
+        })?;
         buf.truncate(n * 2);
         Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
     }
@@ -239,7 +257,14 @@ impl Engine {
             .map(|t| {
                 t.clips
                     .iter()
-                    .map(|c| ffi::se_clip_desc { clip_id: c.clip_id, asset_id: c.engine_asset, timeline_start: c.timeline_start, source_offset: c.source_offset, length: c.length, gain: c.gain })
+                    .map(|c| ffi::se_clip_desc {
+                        clip_id: c.clip_id,
+                        asset_id: c.engine_asset,
+                        timeline_start: c.timeline_start,
+                        source_offset: c.source_offset,
+                        length: c.length,
+                        gain: c.gain,
+                    })
                     .collect()
             })
             .collect();
@@ -250,7 +275,10 @@ impl Engine {
                 if !t.instrument {
                     return Vec::new();
                 }
-                t.notes.iter().map(|n| ffi::se_note_desc { start: n.start, end: n.end, pitch: n.pitch, velocity: n.velocity, _pad: [0; 6] }).collect()
+                t.notes
+                    .iter()
+                    .map(|n| ffi::se_note_desc { start: n.start, end: n.end, pitch: n.pitch, velocity: n.velocity, _pad: [0; 6] })
+                    .collect()
             })
             .collect();
         // Parameters only matter on instrument tracks; the engine copies them.
@@ -258,24 +286,41 @@ impl Engine {
             s.tracks.iter().map(|t| if t.instrument { t.synth.as_ref().map(synth_params_to_ffi) } else { None }).collect();
         // Plugin devices: owned strings / decoded states first, then the
         // C descriptors pointing into them (both outlive the call).
-        let dev_store: Vec<Vec<DeviceStore>> =
-            s.tracks
-                .iter()
-                .map(|t| t.devices.iter().map(|d| self.device_store(d, &t.devices, t.instrument_plugin.as_ref(), &s.device_assets)).collect::<Result<_, _>>())
-                .collect::<Result<_, _>>()?;
+        let dev_store: Vec<Vec<DeviceStore>> = s
+            .tracks
+            .iter()
+            .map(|t| {
+                t.devices
+                    .iter()
+                    .map(|d| self.device_store(d, &t.devices, t.instrument_plugin.as_ref(), &s.device_assets))
+                    .collect::<Result<_, _>>()
+            })
+            .collect::<Result<_, _>>()?;
         let inst_store: Vec<Option<DeviceStore>> = s
             .tracks
             .iter()
-            .map(|t| if t.instrument { t.instrument_plugin.as_ref().map(|d| self.device_store(d, &[], None, &s.device_assets)).transpose() } else { Ok(None) })
+            .map(|t| {
+                if t.instrument {
+                    t.instrument_plugin.as_ref().map(|d| self.device_store(d, &[], None, &s.device_assets)).transpose()
+                } else {
+                    Ok(None)
+                }
+            })
             .collect::<Result<_, _>>()?;
         let dev_descs: Vec<Vec<ffi::se_device_desc>> = dev_store.iter().map(|v| v.iter().map(DeviceStore::desc).collect()).collect();
         let inst_descs: Vec<Option<ffi::se_device_desc>> = inst_store.iter().map(|d| d.as_ref().map(DeviceStore::desc)).collect();
         // Automation: points first, then the lane descriptors pointing at them.
-        let track_points: Vec<Vec<Vec<ffi::se_auto_point>>> = s.tracks.iter().map(|t| t.automation.iter().map(lane_points).collect()).collect();
-        let lane_descs: Vec<Vec<ffi::se_auto_lane_desc>> =
-            s.tracks.iter().zip(&track_points).map(|(t, pts)| t.automation.iter().zip(pts).map(|(l, p)| lane_desc(l, p)).collect()).collect();
+        let track_points: Vec<Vec<Vec<ffi::se_auto_point>>> =
+            s.tracks.iter().map(|t| t.automation.iter().map(lane_points).collect()).collect();
+        let lane_descs: Vec<Vec<ffi::se_auto_lane_desc>> = s
+            .tracks
+            .iter()
+            .zip(&track_points)
+            .map(|(t, pts)| t.automation.iter().zip(pts).map(|(l, p)| lane_desc(l, p)).collect())
+            .collect();
         let master_points: Vec<Vec<ffi::se_auto_point>> = s.master_automation.iter().map(lane_points).collect();
-        let master_descs: Vec<ffi::se_auto_lane_desc> = s.master_automation.iter().zip(&master_points).map(|(l, p)| lane_desc(l, p)).collect();
+        let master_descs: Vec<ffi::se_auto_lane_desc> =
+            s.master_automation.iter().zip(&master_points).map(|(l, p)| lane_desc(l, p)).collect();
         let tracks: Vec<ffi::se_track_desc_v6> = s
             .tracks
             .iter()
@@ -313,9 +358,17 @@ impl Engine {
         // Warped clips: points and slices first, then the descriptors.
         let warped: Vec<(u64, &dstudio_core::snapshot::WarpSnapshot)> =
             s.tracks.iter().flat_map(|t| t.clips.iter().filter_map(|c| c.warp.as_ref().map(|w| (c.clip_id, w)))).collect();
-        let warp_points: Vec<Vec<ffi::se_warp_point>> = warped.iter().map(|(_, w)| w.points.iter().map(|&(frame, source)| ffi::se_warp_point { frame, source }).collect()).collect();
-        let warp_slices: Vec<Vec<ffi::se_warp_slice>> =
-            warped.iter().map(|(_, w)| w.slices.iter().map(|&(source, percussive)| ffi::se_warp_slice { source, percussive: percussive as u8, _pad: [0; 7] }).collect()).collect();
+        let warp_points: Vec<Vec<ffi::se_warp_point>> =
+            warped.iter().map(|(_, w)| w.points.iter().map(|&(frame, source)| ffi::se_warp_point { frame, source }).collect()).collect();
+        let warp_slices: Vec<Vec<ffi::se_warp_slice>> = warped
+            .iter()
+            .map(|(_, w)| {
+                w.slices
+                    .iter()
+                    .map(|&(source, percussive)| ffi::se_warp_slice { source, percussive: percussive as u8, _pad: [0; 7] })
+                    .collect()
+            })
+            .collect();
         let warp_descs: Vec<ffi::se_clip_warp_desc> = warped
             .iter()
             .zip(warp_points.iter().zip(&warp_slices))
@@ -333,19 +386,36 @@ impl Engine {
         let loop_descs: Vec<ffi::se_clip_loop_desc> = s
             .tracks
             .iter()
-            .flat_map(|t| t.clips.iter().filter_map(|c| c.clip_loop.map(|(loop_start, loop_end)| ffi::se_clip_loop_desc { clip_id: c.clip_id, loop_start, loop_end })))
+            .flat_map(|t| {
+                t.clips.iter().filter_map(|c| {
+                    c.clip_loop.map(|(loop_start, loop_end)| ffi::se_clip_loop_desc { clip_id: c.clip_id, loop_start, loop_end })
+                })
+            })
             .collect();
         // Routing: return tracks and outputs, then sends (spec 002).
         let routes: Vec<ffi::se_track_route> = s
             .tracks
             .iter()
             .filter(|t| t.is_return || t.output.is_some())
-            .map(|t| ffi::se_track_route { track_id: t.track_id, output_track_id: t.output.unwrap_or(0), is_return: t.is_return as u8, _pad: [0; 7] })
+            .map(|t| ffi::se_track_route {
+                track_id: t.track_id,
+                output_track_id: t.output.unwrap_or(0),
+                is_return: t.is_return as u8,
+                _pad: [0; 7],
+            })
             .collect();
         let sends: Vec<ffi::se_send_desc> = s
             .tracks
             .iter()
-            .flat_map(|t| t.sends.iter().map(move |x| ffi::se_send_desc { track_id: t.track_id, return_track_id: x.target, gain: x.gain, pre_fader: x.pre_fader as u8, _pad: [0; 3] }))
+            .flat_map(|t| {
+                t.sends.iter().map(move |x| ffi::se_send_desc {
+                    track_id: t.track_id,
+                    return_track_id: x.target,
+                    gain: x.gain,
+                    pre_fader: x.pre_fader as u8,
+                    _pad: [0; 3],
+                })
+            })
             .collect();
         let v8 = ffi::se_session_desc_v8 {
             v7: ffi::se_session_desc_v7 {
@@ -365,7 +435,13 @@ impl Engine {
             loop_count: loop_descs.len() as u32,
             _pad: 0,
         };
-        let desc = ffi::se_session_desc_v9 { v8, routes: routes.as_ptr(), route_count: routes.len() as u32, send_count: sends.len() as u32, sends: sends.as_ptr() };
+        let desc = ffi::se_session_desc_v9 {
+            v8,
+            routes: routes.as_ptr(),
+            route_count: routes.len() as u32,
+            send_count: sends.len() as u32,
+            sends: sends.as_ptr(),
+        };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
         check(unsafe { ffi::se_session_publish_v9(self.raw, &desc) })
     }
@@ -590,7 +666,12 @@ pub fn builtin_state(values: &[f32], sidechain_track: u64) -> Vec<u8> {
 /// `se_builtin_state_v2` header, the values, then one `se_builtin_sample`
 /// per (engine asset, slot, slices), every sample's slices in that order,
 /// then the routes of a modulation source.
-pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u32, &[dstudio_core::Slice])], routes: &[dstudio_core::modulation::ModRoute]) -> Vec<u8> {
+pub fn builtin_state_v2(
+    values: &[f32],
+    sidechain_track: u64,
+    samples: &[(u64, u32, &[dstudio_core::Slice])],
+    routes: &[dstudio_core::modulation::ModRoute],
+) -> Vec<u8> {
     // Slices the engine would reject (and with them the whole session):
     // dropped, keeping the rest ascending.
     let valid: Vec<Vec<dstudio_core::Slice>> = samples
@@ -598,7 +679,9 @@ pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u
         .map(|(_, _, sl)| {
             let mut kept: Vec<dstudio_core::Slice> = Vec::new();
             for s in sl.iter() {
-                let ok = [s.start, s.gain, s.pan, s.pitch].iter().all(|f| f.is_finite()) && (0.0..1.0).contains(&s.start) && kept.last().is_none_or(|p| s.start > p.start);
+                let ok = [s.start, s.gain, s.pan, s.pitch].iter().all(|f| f.is_finite())
+                    && (0.0..1.0).contains(&s.start)
+                    && kept.last().is_none_or(|p| s.start > p.start);
                 if ok && kept.len() < ffi::SE_BUILTIN_MAX_SLICES {
                     kept.push(*s);
                 }
@@ -1053,7 +1136,12 @@ impl Engine {
             }
             return Ok(raw[..n]
                 .iter()
-                .map(|p| MidiInputInfo { id: c_chars_to_string(&p.id), name: c_chars_to_string(&p.name), open: p.open != 0, events: p.events })
+                .map(|p| MidiInputInfo {
+                    id: c_chars_to_string(&p.id),
+                    name: c_chars_to_string(&p.name),
+                    open: p.open != 0,
+                    events: p.events,
+                })
                 .collect());
         }
     }
@@ -1063,11 +1151,11 @@ impl Engine {
     /// error names the ports that failed; the rest are open. An id with a
     /// NUL byte is an invalid argument (nothing is opened or closed).
     pub fn open_midi_inputs(&self, ids: &[String]) -> Result<(), EngineError> {
-        let c = ids
-            .iter()
-            .map(|i| CString::new(i.as_str()))
-            .collect::<Result<Vec<CString>, _>>()
-            .map_err(|_| EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "MIDI input id contains NUL".into() })?;
+        let c = ids.iter().map(|i| CString::new(i.as_str())).collect::<Result<Vec<CString>, _>>().map_err(|_| EngineError {
+            code: ffi::SE_ERR_INVALID_ARG,
+            kind: "invalid argument",
+            message: "MIDI input id contains NUL".into(),
+        })?;
         let ptrs: Vec<*const std::os::raw::c_char> = c.iter().map(|s| s.as_ptr()).collect();
         check(unsafe { ffi::se_midi_inputs_open(self.raw, ptrs.as_ptr(), ptrs.len()) })
     }
@@ -1201,7 +1289,11 @@ impl Engine {
     pub fn render_offline_with_input(&self, input: &[f32], input_channels: u32, out: &mut [f32]) -> Result<(), EngineError> {
         let frames = out.len() / 2;
         if input_channels == 0 || input.len() != frames * input_channels as usize {
-            return Err(EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "input length must be frames * input_channels".into() });
+            return Err(EngineError {
+                code: ffi::SE_ERR_INVALID_ARG,
+                kind: "invalid argument",
+                message: "input length must be frames * input_channels".into(),
+            });
         }
         check(unsafe { ffi::se_render_offline_with_input(self.raw, input.as_ptr(), input_channels, out.as_mut_ptr(), frames as u32) })
     }
@@ -1304,7 +1396,11 @@ pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&s
     use std::io::{BufRead, Read};
     let exe = plugin_scanner_path();
     if !exe.is_file() {
-        return Err(EngineError { code: ffi::SE_ERR_NOT_FOUND, kind: "not found", message: format!("plugin scanner not found at {} (set DSTUDIO_PLUGIN_SCANNER)", exe.display()) });
+        return Err(EngineError {
+            code: ffi::SE_ERR_NOT_FOUND,
+            kind: "not found",
+            message: format!("plugin scanner not found at {} (set DSTUDIO_PLUGIN_SCANNER)", exe.display()),
+        });
     }
     let io_err = |e: std::io::Error| EngineError { code: ffi::SE_ERR_IO, kind: "i/o error", message: format!("plugin scanner: {e}") };
     let mut cmd = std::process::Command::new(&exe);
@@ -1319,7 +1415,12 @@ pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&s
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().map_err(io_err)?;
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(io_err)?;
     let mut stdout = child.stdout.take().expect("piped stdout");
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
@@ -1339,15 +1440,31 @@ pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&s
     let status = child.wait().map_err(io_err)?;
     let out = reader.join().map_err(|_| io_err(std::io::Error::other("reader thread panicked")))?.map_err(io_err)?;
     if !status.success() {
-        return Err(EngineError { code: ffi::SE_ERR_IO, kind: "i/o error", message: format!("plugin scanner failed ({status}): {}", errors.trim()) });
+        return Err(EngineError {
+            code: ffi::SE_ERR_IO,
+            kind: "i/o error",
+            message: format!("plugin scanner failed ({status}): {}", errors.trim()),
+        });
     }
-    let raw: RawReport = serde_json::from_str(&out).map_err(|e| EngineError { code: ffi::SE_ERR_IO, kind: "i/o error", message: format!("plugin scanner output: {e}") })?;
+    let raw: RawReport = serde_json::from_str(&out).map_err(|e| EngineError {
+        code: ffi::SE_ERR_IO,
+        kind: "i/o error",
+        message: format!("plugin scanner output: {e}"),
+    })?;
     Ok(ScanReport {
         plugins: raw
             .plugins
             .into_iter()
             .map(|p| PluginInfo {
-                plugin: dstudio_core::PluginRef { format: p.format, id: p.id, path: (!p.path.is_empty()).then_some(p.path), name: p.name, vendor: p.vendor, version: p.version, kind: p.kind },
+                plugin: dstudio_core::PluginRef {
+                    format: p.format,
+                    id: p.id,
+                    path: (!p.path.is_empty()).then_some(p.path),
+                    name: p.name,
+                    vendor: p.vendor,
+                    version: p.version,
+                    kind: p.kind,
+                },
                 has_editor: p.has_editor,
                 audio_inputs: p.audio_inputs,
                 audio_outputs: p.audio_outputs,
@@ -1539,7 +1656,11 @@ impl Engine {
                 continue; // republished in between
             }
             tracks.truncate(n);
-            return LatencyReport { total_frames: r.total_frames, tracks: tracks.iter().map(|t| (t.track_id, t.latency_frames)).collect(), clamped: r.clamped != 0 };
+            return LatencyReport {
+                total_frames: r.total_frames,
+                tracks: tracks.iter().map(|t| (t.track_id, t.latency_frames)).collect(),
+                clamped: r.clamped != 0,
+            };
         }
     }
 
@@ -1679,7 +1800,7 @@ impl Drop for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dstudio_core::instrument::{factory_presets, Adsr, Filter, Lfo, Osc, Voice};
+    use dstudio_core::instrument::{Adsr, Filter, Lfo, Osc, Voice, factory_presets};
 
     #[test]
     fn plugin_scanner_resolution_order() {
@@ -1772,7 +1893,8 @@ mod tests {
                     automation: vec![],
                 }],
                 master_gain: 1.0,
-                master_automation: vec![], device_assets: Default::default(),
+                master_automation: vec![],
+                device_assets: Default::default(),
             };
             e.publish(&snap).unwrap_or_else(|err| panic!("{}: {err}", p.preset));
         }
@@ -1801,7 +1923,8 @@ mod tests {
                 automation: vec![],
             }],
             master_gain: 1.0,
-            master_automation: vec![], device_assets: Default::default(),
+            master_automation: vec![],
+            device_assets: Default::default(),
         };
         assert_eq!(e.publish(&snap).unwrap_err().code, ffi::SE_ERR_INVALID_ARG);
     }

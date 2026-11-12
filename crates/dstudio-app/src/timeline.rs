@@ -215,7 +215,16 @@ impl RulerSteps {
         let mut bands = [beat_len, bar, numerator as f64 * bar, 4.0 * numerator as f64 * bar];
         bands.sort_by(f64::total_cmp);
         let band_beats = bands.into_iter().find(|&b| b * px_per_beat >= BAND_MIN_PX).unwrap_or(bands[3]);
-        RulerSteps { label_bars, tick_bars, tick_beats, line_beats, band_beats, beats_per_bar, beat_len, ticks_visible: tick_beats * px_per_beat >= TICK_MIN_PX }
+        RulerSteps {
+            label_bars,
+            tick_bars,
+            tick_beats,
+            line_beats,
+            band_beats,
+            beats_per_bar,
+            beat_len,
+            ticks_visible: tick_beats * px_per_beat >= TICK_MIN_PX,
+        }
     }
 
     /// A fixed grid size at this zoom: doubled until 6 px wide (or 128 beats); a triplet that
@@ -633,7 +642,16 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         }
         if let Some((slot, segs)) = &c.wave {
             let (wy, wh) = (y + CLIP_HEADER + 2.0, ch - CLIP_HEADER - 4.0);
-            peaks::push_wave(&mut dl.waves, *slot, segs, |b| v.x_of(c.start_beats + b), (x.max(0.0), (x + cw).min(w)), (wy, wh), sc.scale, wave);
+            peaks::push_wave(
+                &mut dl.waves,
+                *slot,
+                segs,
+                |b| v.x_of(c.start_beats + b),
+                (x.max(0.0), (x + cw).min(w)),
+                (wy, wh),
+                sc.scale,
+                wave,
+            );
         }
     }
 
@@ -811,7 +829,13 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     // A muted track's clips are grey with no selection tint, like audio clips.
     let track_selected = !c.muted && sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
     let head = if c.muted { rgb(0xa8a8a8) } else { c.color };
-    let body = if c.muted { rgb(0x6b6b6b) } else if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
+    let body = if c.muted {
+        rgb(0x6b6b6b)
+    } else if track_selected {
+        mix(c.color, WHITE, 0.67)
+    } else {
+        c.color
+    };
     // 0.5 pt outline (greyish), then title strip and body inset by it.
     out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
     out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(head, 1.0)));
@@ -954,7 +978,11 @@ mod tests {
         ];
         for (ppb, label, tick, tick_beats, line, band) in rows {
             let s = steps(ppb);
-            assert_eq!((s.label_bars, s.tick_bars, s.tick_beats, s.line_beats, s.band_beats), (label, tick, tick_beats, line, band), "ppb {ppb}");
+            assert_eq!(
+                (s.label_bars, s.tick_bars, s.tick_beats, s.line_beats, s.band_beats),
+                (label, tick, tick_beats, line, band),
+                "ppb {ppb}"
+            );
         }
     }
 
@@ -1029,7 +1057,13 @@ mod tests {
             }
             (fulls, beat, sub)
         };
-        for ppb in [DEFAULT_PX_PER_BEAT / 8.0, DEFAULT_PX_PER_BEAT / 2.0, DEFAULT_PX_PER_BEAT, DEFAULT_PX_PER_BEAT * 4.0, DEFAULT_PX_PER_BEAT * 16.0] {
+        for ppb in [
+            DEFAULT_PX_PER_BEAT / 8.0,
+            DEFAULT_PX_PER_BEAT / 2.0,
+            DEFAULT_PX_PER_BEAT,
+            DEFAULT_PX_PER_BEAT * 4.0,
+            DEFAULT_PX_PER_BEAT * 16.0,
+        ] {
             assert_eq!(count(ppb), expect(ppb), "ppb {ppb}");
         }
     }
@@ -1071,7 +1105,10 @@ mod tests {
         assert!((third.tick_beats - 2.0 / 3.0).abs() < 1e-9);
         assert!((fixed(z, GridSize::SixteenthTriplet).tick_beats - 1.0 / 6.0).abs() < 1e-9);
         assert!((fixed(DEFAULT_PX_PER_BEAT, GridSize::EighthTriplet).tick_beats - 2.0 / 3.0).abs() < 1e-9, "doubled once to 6 px");
-        assert!((RulerSteps::new(z, 3.0, 1.0, Some(GridSize::QuarterTriplet)).tick_beats - 1.0 / 3.0).abs() < 1e-9, "3/4 is not a whole number of 2/3 beats: halved to 1/3");
+        assert!(
+            (RulerSteps::new(z, 3.0, 1.0, Some(GridSize::QuarterTriplet)).tick_beats - 1.0 / 3.0).abs() < 1e-9,
+            "3/4 is not a whole number of 2/3 beats: halved to 1/3"
+        );
     }
 
     #[test]
@@ -1114,7 +1151,18 @@ mod tests {
         assert!((v.beat_at(v.x_of(4.0)) - 4.0).abs() < 1e-4);
         assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
         assert_eq!(v.track_at(RULER_H + TRACK_PITCH + 1.0), Some(1));
-        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, muted: false, name: String::new(), wave: None, midi: None, live: None }];
+        let clips = vec![ClipVis {
+            track_index: 0,
+            start_beats: 4.0,
+            len_beats: 4.0,
+            color: [1.0; 3],
+            selected: false,
+            muted: false,
+            name: String::new(),
+            wave: None,
+            midi: None,
+            live: None,
+        }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);
         assert_eq!(hit_test(&v, size, 2, &clips, 70.0, 60.0), Hit::Clip { index: 0, zone: Zone::Body });

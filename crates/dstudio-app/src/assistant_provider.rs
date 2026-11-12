@@ -27,9 +27,16 @@ const API_VERSION: &str = "2026-10-21";
 const TOOL_NAME: &str = "daw_turn";
 
 pub enum Provider {
-    Anthropic { key: String, model: String },
+    Anthropic {
+        key: String,
+        model: String,
+    },
     /// TEST provider: canned turns, returned in order (the last one repeats).
-    Fixture { turns: Vec<String>, next: Mutex<usize>, label: String },
+    Fixture {
+        turns: Vec<String>,
+        next: Mutex<usize>,
+        label: String,
+    },
     Unavailable,
 }
 
@@ -62,7 +69,8 @@ impl Provider {
     pub fn from_env() -> Provider {
         match std::env::var("ANTHROPIC_API_KEY") {
             Ok(key) if !key.trim().is_empty() => {
-                let model = std::env::var("DSTUDIO_ASSISTANT_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.into());
+                let model =
+                    std::env::var("DSTUDIO_ASSISTANT_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.into());
                 Provider::Anthropic { key: key.trim().to_string(), model }
             }
             _ => Provider::Unavailable,
@@ -200,7 +208,10 @@ pub fn parse_response(v: &Value) -> Result<String, String> {
         return Err("The model declined this request.".into());
     }
     let content = v.get("content").and_then(Value::as_array).cloned().unwrap_or_default();
-    if let Some(tu) = content.iter().find(|b| b.get("type").and_then(Value::as_str) == Some("tool_use") && b.get("name").and_then(Value::as_str) == Some(TOOL_NAME)) {
+    if let Some(tu) = content
+        .iter()
+        .find(|b| b.get("type").and_then(Value::as_str) == Some("tool_use") && b.get("name").and_then(Value::as_str) == Some(TOOL_NAME))
+    {
         let input = tu.get("input").cloned().unwrap_or(Value::Null);
         return Ok(input.to_string());
     }
@@ -208,7 +219,11 @@ pub fn parse_response(v: &Value) -> Result<String, String> {
         return Err("The response was cut off (max_tokens).".into());
     }
     // No tool call (possible with tool_choice auto): treat the text as an explanation only.
-    let text: Vec<&str> = content.iter().filter(|b| b.get("type").and_then(Value::as_str) == Some("text")).filter_map(|b| b.get("text").and_then(Value::as_str)).collect();
+    let text: Vec<&str> = content
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|b| b.get("text").and_then(Value::as_str))
+        .collect();
     let text = text.join("\n").trim().to_string();
     if text.is_empty() {
         return Err("The model returned no actions.".into());
@@ -217,8 +232,10 @@ pub fn parse_response(v: &Value) -> Result<String, String> {
 }
 
 fn call_anthropic(key: &str, model: &str, req: &Request) -> Result<String, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(Duration::from_secs(180))).build().into();
-    let mut builder = agent.post(API_URL).header("x-api-key", key).header("anthropic-version", API_VERSION).header("content-type", "application/json");
+    let agent: ureq::Agent =
+        ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(Duration::from_secs(180))).build().into();
+    let mut builder =
+        agent.post(API_URL).header("x-api-key", key).header("anthropic-version", API_VERSION).header("content-type", "application/json");
     if supports_default_fallback(model) {
         builder = builder.header("anthropic-beta", "server-side-fallback-2026-07-01");
     }
@@ -239,7 +256,13 @@ mod tests {
     use super::*;
 
     fn req(mode: Mode) -> Request {
-        Request { mode, prompt: "make it faster".into(), state: json!({"tempo_bpm": 120}), selection: Some("track 1".into()), history: vec![("hi".into(), "Hello.".into())] }
+        Request {
+            mode,
+            prompt: "make it faster".into(),
+            state: json!({"tempo_bpm": 120}),
+            selection: Some("track 1".into()),
+            history: vec![("hi".into(), "Hello.".into())],
+        }
     }
 
     #[test]

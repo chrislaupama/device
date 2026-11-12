@@ -256,7 +256,20 @@ pub fn routes(devices: &[Device], instrument: Option<&Device>, source: &Device) 
             if rack && !is_member(devices, source.id, t.id) {
                 return None;
             }
-            let mut r = ModRoute { target: t.id, param: 0, plugin: false, slot: l.slot, absolute: rack, min: l.min, max: l.max, p_min: 0.0, p_max: 1.0, p_log: false, p_skew: 1.0, p_step: 0.0 };
+            let mut r = ModRoute {
+                target: t.id,
+                param: 0,
+                plugin: false,
+                slot: l.slot,
+                absolute: rack,
+                min: l.min,
+                max: l.max,
+                p_min: 0.0,
+                p_max: 1.0,
+                p_log: false,
+                p_skew: 1.0,
+                p_step: 0.0,
+            };
             match &l.param {
                 ModParam::Builtin(id) => {
                     let def = builtin::def_of(t)?;
@@ -381,8 +394,20 @@ mod tests {
     #[test]
     fn routes_resolve_targets_and_tapers() {
         let mut t = track();
-        t.devices[0].links.push(ModLink { slot: 0, target: DeviceId(10), param: ModParam::Builtin("attack".into()), min: -0.25, max: 0.25 });
-        t.devices[0].links.push(ModLink { slot: 0, target: DeviceId(99), param: ModParam::Builtin("attack".into()), min: -0.25, max: 0.25 });
+        t.devices[0].links.push(ModLink {
+            slot: 0,
+            target: DeviceId(10),
+            param: ModParam::Builtin("attack".into()),
+            min: -0.25,
+            max: 0.25,
+        });
+        t.devices[0].links.push(ModLink {
+            slot: 0,
+            target: DeviceId(99),
+            param: ModParam::Builtin("attack".into()),
+            min: -0.25,
+            max: 0.25,
+        });
         t.devices[2].links.push(ModLink { slot: 2, target: DeviceId(13), param: ModParam::Builtin("ratio".into()), min: 0.2, max: 0.8 });
         let r = routes(&t.devices, None, &t.devices[0]);
         assert_eq!(r.len(), 1, "a missing target is inert");

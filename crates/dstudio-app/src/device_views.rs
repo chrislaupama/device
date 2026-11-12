@@ -15,8 +15,8 @@ use crate::controller::Controller;
 use crate::device_panel::{CAPTION_H, Z};
 use crate::gain_scope::ScopeHistory;
 use crate::{PanelButton, PanelCanvas, PanelGrip, PanelPath, PanelText, PanelZone};
-use dstudio_core::builtin::{self, DeviceDef};
 use dstudio_core::Device;
+use dstudio_core::builtin::{self, DeviceDef};
 use slint::{Color, ModelRc, SharedString, VecModel};
 use std::f32::consts::TAU;
 use std::fmt::Write;
@@ -131,10 +131,12 @@ fn ellipse(cx: f32, cy: f32, rx: f32, ry: f32) -> String {
 }
 
 fn circle_pts(cx: f32, cy: f32, r: f32) -> Vec<(f32, f32)> {
-    (0..=96).map(|i| {
-        let a = TAU * i as f32 / 96.0;
-        (cx + r * a.cos(), cy + r * a.sin())
-    }).collect()
+    (0..=96)
+        .map(|i| {
+            let a = TAU * i as f32 / 96.0;
+            (cx + r * a.cos(), cy + r * a.sin())
+        })
+        .collect()
 }
 
 /// Harmonic distortion of a transfer curve (the "Harmonics"
@@ -166,7 +168,13 @@ pub(crate) fn fmt_percent_readout(p: f32) -> String {
 /// "Clipping" readout: "0.0 dB" under 0.05 dB, else "−N.N dB".
 pub(crate) fn fmt_clipping(db: f32) -> String {
     let a = (db.abs() * 10.0).round() / 10.0;
-    if a < 0.05 { "0.0 dB".into() } else if db < 0.0 { format!("{MINUS}{a:.1} dB") } else { format!("{a:.1} dB") }
+    if a < 0.05 {
+        "0.0 dB".into()
+    } else if db < 0.0 {
+        format!("{MINUS}{a:.1} dB")
+    } else {
+        format!("{a:.1} dB")
+    }
 }
 
 impl Controller {
@@ -187,7 +195,9 @@ impl Controller {
             "utility" => utility_body(def, &value, &idx),
             "pitch-trace" | "tuner" | "spectrum" => self.analyzer_body(d, def, name, accent),
             "gain-scope" => scope_body(self.devices.panel.scopes.get(&d.id), value("clip") >= 0.5, accent, rect),
-            "declipper-wave" | "deesser-graph" | "dehummer-graph" | "denoiser-graph" => CustomBody { canvas: self.graph_canvas(d, def, accent), ..Default::default() },
+            "declipper-wave" | "deesser-graph" | "dehummer-graph" | "denoiser-graph" => {
+                CustomBody { canvas: self.graph_canvas(d, def, accent), ..Default::default() }
+            }
             _ => CustomBody::default(),
         }
     }
@@ -221,7 +231,8 @@ fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, acce
             (Box::new(move |x| builtin::tape_transfer(x, dr, cp, mx, out, mode)), Box::new(|x| x), "Harmonics", 0.18 + 0.2 * warmth, hiss)
         }
         "soft-clipper" => {
-            let (inp, ceil, soft, shape, gm, mx, out) = (v("input"), v("ceiling"), v("softness"), v("shape").round() as u32, v("gain_match") >= 0.5, v("mix"), v("output_gain"));
+            let (inp, ceil, soft, shape, gm, mx, out) =
+                (v("input"), v("ceiling"), v("softness"), v("shape").round() as u32, v("gain_match") >= 0.5, v("mix"), v("output_gain"));
             (
                 Box::new(move |x| builtin::clipper_transfer(x, inp, ceil, soft, shape, gm, mx, out)),
                 Box::new(move |x| builtin::clipper_open(x, inp, gm, mx, out)),
@@ -231,7 +242,8 @@ fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, acce
             )
         }
         _ => {
-            let (dr, bias, gain, mx, out, mode) = (v("drive"), v("bias"), v("output"), v("mix"), v("output_gain"), v("mode").round() as u32);
+            let (dr, bias, gain, mx, out, mode) =
+                (v("drive"), v("bias"), v("output"), v("mix"), v("output_gain"), v("mode").round() as u32);
             (Box::new(move |x| builtin::distortion_transfer(x, dr, bias, gain, mx, out, mode)), Box::new(|x| x), "Harmonics", 0.18, 0.0)
         }
     };
@@ -284,7 +296,16 @@ fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, acce
         paths.push(fill(dots, accent.with_alpha(0.35)));
     }
     field.paths = model(paths);
-    field.zones = model(vec![PanelZone { x: x0, y: y0, w: x1 - x0, h: y1 - y0, param_x: -1, param_y: drag_param, rate_x: 0.0, rate_y: 1.0 / (y1 - y0 - 16.0 * Z).max(8.0) }]);
+    field.zones = model(vec![PanelZone {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+        param_x: -1,
+        param_y: drag_param,
+        rate_x: 0.0,
+        rate_y: 1.0 / (y1 - y0 - 16.0 * Z).max(8.0),
+    }]);
     CustomBody { canvas: field, ..Default::default() }
 }
 
@@ -379,7 +400,15 @@ fn crush_body(value: &dyn Fn(&str) -> f32, p_down: i32, p_bits: i32, accent: Col
 }
 
 #[allow(clippy::too_many_arguments)]
-fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_side: i32, p_low: i32, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
+fn stereo_body(
+    def: &DeviceDef,
+    value: &dyn Fn(&str) -> f32,
+    p_width: i32,
+    p_side: i32,
+    p_low: i32,
+    accent: Color,
+    rect: (f32, f32, f32, f32),
+) -> CustomBody {
     let (width, mid_db, side_db, low, mix) = (value("width2"), value("midgain"), value("sidegain"), value("lowcut"), value("mix"));
     let resp = |f: f32| builtin::widener_response(f, width, mid_db, side_db, low, mix, DRAW_RATE);
     let fmt = |id: &str, v: f32| def.param(id).map(|p| p.format(v)).unwrap_or_default();
@@ -418,9 +447,17 @@ fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_sid
     let (py0, py1) = (m, h - m - 12.0 * Z);
     let fx = |f: f32| px0 + (px1 - px0) * (f / 20.0).ln() / 100f32.ln();
     let fy = |pct: f32| py1 - (py1 - py0) * (pct / 400.0).clamp(0.0, 1.0);
-    paths.push(stroke(format!("M{px0:.2} {a:.2} L{px1:.2} {a:.2} M{px0:.2} {b:.2} L{px1:.2} {b:.2}", a = fy(0.0), b = fy(400.0)), ink(0.06), 1.0));
+    paths.push(stroke(
+        format!("M{px0:.2} {a:.2} L{px1:.2} {a:.2} M{px0:.2} {b:.2} L{px1:.2} {b:.2}", a = fy(0.0), b = fy(400.0)),
+        ink(0.06),
+        1.0,
+    ));
     paths.push(stroke(dashed(&[(px0, fy(100.0)), (px1, fy(100.0))], 3.0 * Z, 3.0 * Z), ink(0.22), 1.0));
-    paths.push(stroke(format!("M{a:.2} {py0:.2} L{a:.2} {py1:.2} M{b:.2} {py0:.2} L{b:.2} {py1:.2}", a = fx(100.0), b = fx(1000.0)), ink(0.06), 1.0));
+    paths.push(stroke(
+        format!("M{a:.2} {py0:.2} L{a:.2} {py1:.2} M{b:.2} {py0:.2} L{b:.2} {py1:.2}", a = fx(100.0), b = fx(1000.0)),
+        ink(0.06),
+        1.0,
+    ));
     for (pct, label) in [(400.0, "400%"), (100.0, "100%"), (0.0, "0%")] {
         texts.push(text(px0 - gutter - 4.0 * Z, fy(pct), gutter, label, axis, 9.5, 600, 2));
     }
@@ -429,15 +466,23 @@ fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_sid
         texts.push(text(tx, py1 + 8.0 * Z, 20.0 * Z, label, axis, 9.5, 600, if f == 20.0 { 0 } else { 1 }));
     }
     let n = ((px1 - px0).round() as usize).max(48);
-    let curve: Vec<(f32, f32)> = (0..=n).map(|i| {
-        let f = 20.0 * 100f32.powf(i as f32 / n as f32);
-        (fx(f), fy(resp(f)))
-    }).collect();
+    let curve: Vec<(f32, f32)> = (0..=n)
+        .map(|i| {
+            let f = 20.0 * 100f32.powf(i as f32 / n as f32);
+            (fx(f), fy(resp(f)))
+        })
+        .collect();
     paths.push(stroke(poly(&curve), accent, 1.5));
     let lx = fx(low.clamp(20.0, 2000.0));
     paths.push(stroke(dashed(&[(lx, py0), (lx, py1)], 3.0 * Z, 3.0 * Z), ink(0.3), 1.0));
     paths.push(fill(ellipse(lx, fy(resp(low)), 2.5 * Z, 2.5 * Z), accent));
-    grips.push(PanelGrip { x: lx + 4.0 * Z, y: (fy(resp(low)) - 18.0 * Z).max(py0 + 8.0 * Z), label: "Low Cut".into(), value: fmt("lowcut", low).into(), ..Default::default() });
+    grips.push(PanelGrip {
+        x: lx + 4.0 * Z,
+        y: (fy(resp(low)) - 18.0 * Z).max(py0 + 8.0 * Z),
+        label: "Low Cut".into(),
+        value: fmt("lowcut", low).into(),
+        ..Default::default()
+    });
 
     field.paths = model(paths);
     field.texts = model(texts);
@@ -447,8 +492,26 @@ fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_sid
     let half_gutter = 0.5 * (14.0 * Z + gutter);
     let low_travel = (px1 - px0) * (500f32 / 20.0).ln() / 100f32.ln();
     field.zones = model(vec![
-        PanelZone { x: sx, y: sy, w: size + half_gutter, h: size, param_x: p_width, param_y: p_side, rate_x: 1.0 / size, rate_y: 1.0 / size },
-        PanelZone { x: sx + size + half_gutter, y: 0.0, w: px1 - (sx + size + half_gutter) + m, h, param_x: p_low, param_y: -1, rate_x: 1.0 / low_travel.max(8.0), rate_y: 0.0 },
+        PanelZone {
+            x: sx,
+            y: sy,
+            w: size + half_gutter,
+            h: size,
+            param_x: p_width,
+            param_y: p_side,
+            rate_x: 1.0 / size,
+            rate_y: 1.0 / size,
+        },
+        PanelZone {
+            x: sx + size + half_gutter,
+            y: 0.0,
+            w: px1 - (sx + size + half_gutter) + m,
+            h,
+            param_x: p_low,
+            param_y: -1,
+            rate_x: 1.0 / low_travel.max(8.0),
+            rate_y: 0.0,
+        },
     ]);
     CustomBody { canvas: field, ..Default::default() }
 }
@@ -459,7 +522,8 @@ fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str)
     let header = Color::from_rgb_u8(0xa6, 0xa8, 0xad);
     // Two 91 pt columns around a 1 pt rule (centre 110.75 of the 221.5 pt card).
     let (left, right) = (56.2, 164.2);
-    let latch = |id: &str, x: f32, w: f32| PanelButton { kind: 0, param: idx(id), x: x * Z, y: 0.0, w: w * Z, label: label(id).into(), on: on(id) };
+    let latch =
+        |id: &str, x: f32, w: f32| PanelButton { kind: 0, param: idx(id), x: x * Z, y: 0.0, w: w * Z, label: label(id).into(), on: on(id) };
     let at = |mut b: PanelButton, y: f32| {
         b.y = (y - 10.0) * Z;
         b
@@ -469,7 +533,18 @@ fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str)
     let buttons = vec![
         at(latch("phase_l", left - 36.0, 34.0), 113.4),
         at(latch("phase_r", left + 2.0, 34.0), 113.4),
-        at(PanelButton { kind: 1, param: idx("channel_mode"), x: (left - 36.0) * Z, y: 0.0, w: 72.0 * Z, label: mode_name.into(), on: false }, 137.9),
+        at(
+            PanelButton {
+                kind: 1,
+                param: idx("channel_mode"),
+                x: (left - 36.0) * Z,
+                y: 0.0,
+                w: 72.0 * Z,
+                label: mode_name.into(),
+                on: false,
+            },
+            137.9,
+        ),
         at(latch("mono", left - 36.0, 72.0), 263.2),
         at(latch("mute", right - 36.0, 34.0), 263.2),
         at(latch("dc_filter", right + 2.0, 34.0), 263.2),
@@ -527,7 +602,12 @@ mod tests {
         let n = 2000;
         let t0 = std::time::Instant::now();
         for _ in 0..n {
-            std::hint::black_box(scope_body(Some(std::hint::black_box(&h)), true, Color::from_rgb_u8(0x43, 0x9b, 0x94), (0.0, 0.0, 440.0, 160.0)));
+            std::hint::black_box(scope_body(
+                Some(std::hint::black_box(&h)),
+                true,
+                Color::from_rgb_u8(0x43, 0x9b, 0x94),
+                (0.0, 0.0, 440.0, 160.0),
+            ));
         }
         let body = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
         let t0 = std::time::Instant::now();

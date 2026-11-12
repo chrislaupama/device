@@ -114,7 +114,17 @@ impl SeqGeom {
         };
         let view_h = (height + crate::pianoroll::PANEL_ORIGIN.1 - 27.0 - ROW_Y0).max(0.0);
         let max = (rows as f32 * ROW_PITCH - view_h + 4.0).max(0.0);
-        SeqGeom { cols, page, first: page * cols, pages, pitch, cell_w: (pitch - COL_GAP).max(3.0), rows, scroll: scroll.clamp(0.0, max), view_h }
+        SeqGeom {
+            cols,
+            page,
+            first: page * cols,
+            pages,
+            pitch,
+            cell_w: (pitch - COL_GAP).max(3.0),
+            rows,
+            scroll: scroll.clamp(0.0, max),
+            view_h,
+        }
     }
 
     /// Left edge of a column of the page.
@@ -206,7 +216,15 @@ fn lane_index(lane: Option<StepLane>) -> i32 {
 /// The grid's view model for one page: visible rows only, background cells
 /// first, then the active cells on top (a tied cell spans the steps it holds,
 /// cut at the page edges).
-pub fn build_view(p: &StepPattern, size: (f32, f32), scroll: f32, page: u16, lane: Option<StepLane>, names: &dyn Fn(u8) -> String, dragging: Option<(u8, u16)>) -> SeqView {
+pub fn build_view(
+    p: &StepPattern,
+    size: (f32, f32),
+    scroll: f32,
+    page: u16,
+    lane: Option<StepLane>,
+    names: &dyn Fn(u8) -> String,
+    dragging: Option<(u8, u16)>,
+) -> SeqView {
     let g = SeqGeom::new(size, p.steps, p.rows, scroll, page);
     let last = g.first + g.cols - 1;
     let mut rows = Vec::new();
@@ -244,7 +262,17 @@ pub fn build_view(p: &StepPattern, size: (f32, f32), scroll: f32, page: u16, lan
                 (Some(l), Some(at)) if at == (key, c.step) => l.format(c.get(l)),
                 _ => String::new(),
             };
-            cells.push(CellView { x: g.col_x(a - g.first), y, w: g.cell_w + (b - a) as f32 * g.pitch, state: 2, lane: li, bar, marks, label, dim: !audible });
+            cells.push(CellView {
+                x: g.col_x(a - g.first),
+                y,
+                w: g.cell_w + (b - a) as f32 * g.pitch,
+                state: 2,
+                lane: li,
+                bar,
+                marks,
+                label,
+                dim: !audible,
+            });
         }
     }
     let steps_per_beat = p.rate.steps_per_beat();
@@ -284,7 +312,11 @@ impl Controller {
         }
         let pad = (key - drum_rack::FIRST_NOTE) as u32;
         let p = self.project();
-        let rack = self.pr_clip().and_then(|c| p.find_midi_clip(c.id)).and_then(|(t, _)| p.tracks[t].instrument_plugin.as_ref()).filter(|d| is_drum_rack(d));
+        let rack = self
+            .pr_clip()
+            .and_then(|c| p.find_midi_clip(c.id))
+            .and_then(|(t, _)| p.tracks[t].instrument_plugin.as_ref())
+            .filter(|d| is_drum_rack(d));
         rack.and_then(|d| d.sample(pad * pad_sampler::LAYERS)).map_or_else(|| format!("Pad {}", pad + 1), |s| s.name.clone())
     }
 
@@ -294,7 +326,15 @@ impl Controller {
             Some(SeqDrag::Value { key, step, .. }) => Some((*key, *step)),
             _ => None,
         };
-        Some(build_view(&p, self.pr.size, self.pr.seq.scroll, self.pr.seq.page, self.pr.seq.lane, &|k| self.seq_row_name(p.rows, k), dragging))
+        Some(build_view(
+            &p,
+            self.pr.size,
+            self.pr.seq.scroll,
+            self.pr.seq.page,
+            self.pr.seq.lane,
+            &|k| self.seq_row_name(p.rows, k),
+            dragging,
+        ))
     }
 
     fn seq_clip(&self) -> Option<(ClipId, StepPattern)> {
@@ -530,7 +570,6 @@ pub fn initial_scroll(p: &StepPattern) -> f32 {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,7 +627,11 @@ mod tests {
         assert_eq!(on.len(), 1, "step 71 is on page 3");
         assert_eq!((on[0].x, on[0].w), (COL_X0, v.geom.cell_w + 2.0 * v.geom.pitch), "the tie from step 31 shows its last three steps");
         let last = build_view(&p, SIZE, 0.0, 2, None, &|k| format!("k{k}"), None);
-        assert_eq!(last.cells.iter().filter(|c| c.y == last.rows[0].y && c.state == 1).count(), 16, "steps 65..80 in the pattern, the rest past its end");
+        assert_eq!(
+            last.cells.iter().filter(|c| c.y == last.rows[0].y && c.state == 1).count(),
+            16,
+            "steps 65..80 in the pattern, the rest past its end"
+        );
     }
 
     /// Cost of the grid's view model, built on every UI update while the sequencer is open.
@@ -602,7 +645,11 @@ mod tests {
                 full = full.toggled(k, s);
             }
         }
-        for (name, p, lane) in [("16 steps, beat", beat(), None), ("64 steps, every cell on", full.clone(), None), ("64 steps, every cell on, Velocity", full, Some(StepLane::Velocity))] {
+        for (name, p, lane) in [
+            ("16 steps, beat", beat(), None),
+            ("64 steps, every cell on", full.clone(), None),
+            ("64 steps, every cell on, Velocity", full, Some(StepLane::Velocity)),
+        ] {
             let mut t: Vec<f64> = (0..2000)
                 .map(|_| {
                     let s = std::time::Instant::now();
@@ -615,4 +662,3 @@ mod tests {
         }
     }
 }
-

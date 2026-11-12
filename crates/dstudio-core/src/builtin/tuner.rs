@@ -9,7 +9,8 @@ const TUNINGS: &[&str] = &["Chromatic", "Standard", "Drop D", "DADGAD", "Sweeten
 const OFF_ON: &[&str] = &["Off", "On"];
 
 /// Open strings (MIDI, low to high) of each tuning; Chromatic has none.
-pub const TUNING_STRINGS: [&[u8]; 5] = [&[], &[40, 45, 50, 55, 59, 64], &[38, 45, 50, 55, 59, 64], &[38, 45, 50, 55, 57, 62], &[40, 45, 50, 55, 59, 64]];
+pub const TUNING_STRINGS: [&[u8]; 5] =
+    [&[], &[40, 45, 50, 55, 59, 64], &[38, 45, 50, 55, 59, 64], &[38, 45, 50, 55, 57, 62], &[40, 45, 50, 55, 59, 64]];
 
 pub static TUNER: DeviceDef = DeviceDef {
     id: "tuner",
@@ -19,8 +20,11 @@ pub static TUNER: DeviceDef = DeviceDef {
     purpose: "Shows which note is played and how many cents it is off; audio passes through unless Mute is on.",
     params: &[
         ParamDef::choice("reference", "Reference", REFERENCE, 0).label("A4").help("Pitch of A4 the notes are measured against."),
-        ParamDef::choice("tuning", "Tuning", TUNINGS, 0).help("Chromatic names the nearest note; a guitar tuning names the nearest string."),
-        ParamDef::choice("mute_output", "Mute Output", OFF_ON, 0).label("Mute").help("Silences the output while tuning; the reading keeps working."),
+        ParamDef::choice("tuning", "Tuning", TUNINGS, 0)
+            .help("Chromatic names the nearest note; a guitar tuning names the nearest string."),
+        ParamDef::choice("mute_output", "Mute Output", OFF_ON, 0)
+            .label("Mute")
+            .help("Silences the output while tuning; the reading keeps working."),
     ],
     layout: Layout {
         picker: &[Control::Dropdown("tuning"), Control::Menu("reference"), Control::Gap, Control::Latch("mute_output")],

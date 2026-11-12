@@ -13,10 +13,28 @@ const RATE: f64 = 48_000.0;
 fn doc() -> (Document, ClipId, AssetId) {
     let mut d = Document::new(Project::default());
     let track = d.project().tracks[0].id;
-    let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/loop.wav".into(), sample_rate: 44_100.0, channels: 2, frames: 44_100 * 8 };
+    let asset = Asset {
+        id: AssetId(0),
+        relative_path: None,
+        absolute_path: "/nonexistent/loop.wav".into(),
+        sample_rate: 44_100.0,
+        channels: 2,
+        frames: 44_100 * 8,
+    };
     d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
     let a = d.project().assets[0].id;
-    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: PPQ * 4, source_offset: 0, source_length: 44_100 * 4, gain: 1.0, warp: ClipWarp::default(), disabled: false, clip_loop: None };
+    let clip = Clip {
+        id: ClipId(0),
+        asset: a,
+        name: "loop".into(),
+        start: PPQ * 4,
+        source_offset: 0,
+        source_length: 44_100 * 4,
+        gain: 1.0,
+        warp: ClipWarp::default(),
+        disabled: false,
+        clip_loop: None,
+    };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let id = d.project().tracks[0].clips[0].id;
     (d, id, a)
@@ -143,7 +161,10 @@ fn transient_edits_add_remove_and_move_with_a_1ms_tolerance() {
     let mut w = ClipWarp::default();
     assert!(!w.add_transient(&det, 1030, rate), "within 1 ms of a detected one");
     assert!(w.add_transient(&det, 40_000, rate));
-    assert_eq!(w.transients(&det, rate).iter().map(|t| (t.source, t.percussive)).collect::<Vec<_>>(), [(1000, true), (30_000, false), (40_000, false)]);
+    assert_eq!(
+        w.transients(&det, rate).iter().map(|t| (t.source, t.percussive)).collect::<Vec<_>>(),
+        [(1000, true), (30_000, false), (40_000, false)]
+    );
     assert!(w.remove_transient(&det, 1010, rate));
     assert_eq!((w.transients_added.clone(), w.transients_removed.clone()), (vec![40_000], vec![1000]));
     assert!(w.add_transient(&det, 1000, rate), "re-adding undoes the removal");
@@ -194,9 +215,17 @@ fn set_clip_warp_undoes_validates_and_coalesces_drags() {
     assert_eq!(d.undo_label(), Some("Set clip warp mode"));
     // An original-BPM drag is one undo step; the next kind of edit is another.
     for (i, bpm) in [121.0, 122.0, 123.0].into_iter().enumerate() {
-        d.execute_at(Command::SetClipWarp { clip: c, warp: ClipWarp { original_bpm: bpm, ..on.clone() }, label: "Set original BPM".into() }, t0 + Duration::from_millis(16 * (i as u64 + 1))).unwrap();
+        d.execute_at(
+            Command::SetClipWarp { clip: c, warp: ClipWarp { original_bpm: bpm, ..on.clone() }, label: "Set original BPM".into() },
+            t0 + Duration::from_millis(16 * (i as u64 + 1)),
+        )
+        .unwrap();
     }
-    d.execute_at(Command::SetClipWarp { clip: c, warp: ClipWarp { original_bpm: 123.0, speed: 2.0, ..on.clone() }, label: "Set clip speed".into() }, t0 + Duration::from_millis(80)).unwrap();
+    d.execute_at(
+        Command::SetClipWarp { clip: c, warp: ClipWarp { original_bpm: 123.0, speed: 2.0, ..on.clone() }, label: "Set clip speed".into() },
+        t0 + Duration::from_millis(80),
+    )
+    .unwrap();
     d.undo().unwrap();
     assert_eq!(warp(&d, c).original_bpm, 123.0);
     d.undo().unwrap();
@@ -240,7 +269,12 @@ fn warp_settings_persist_and_old_projects_load_unwarped() {
     assert_eq!((partial.speed, partial.original_bpm, partial.mode), (1.0, 120.0, WarpMode::Auto));
 }
 
-fn snap_full(d: &Document, c: ClipId, reversed: &HashMap<AssetId, u64>, transients: &HashMap<AssetId, Vec<Transient>>) -> (snapshot::SessionSnapshot, Vec<u64>) {
+fn snap_full(
+    d: &Document,
+    c: ClipId,
+    reversed: &HashMap<AssetId, u64>,
+    transients: &HashMap<AssetId, Vec<Transient>>,
+) -> (snapshot::SessionSnapshot, Vec<u64>) {
     let a = d.project().clip(c).unwrap().asset;
     snapshot::build_full(d.project(), RATE, &HashMap::from([(a, 7)]), reversed, transients)
 }
@@ -256,7 +290,10 @@ fn reversed_clip_plays_the_mirrored_window_of_the_reversed_copy() {
     let (s, skipped) = snap_full(&d, c, &HashMap::from([(a, 8)]), &HashMap::new());
     assert!(skipped.is_empty());
     let cs = &s.tracks[0].clips[0];
-    assert_eq!((cs.engine_asset, cs.timeline_start, cs.source_offset, cs.length, cs.warp.is_none()), (8, 96_000, 5 * 48_000, 2 * 48_000, true));
+    assert_eq!(
+        (cs.engine_asset, cs.timeline_start, cs.source_offset, cs.length, cs.warp.is_none()),
+        (8, 96_000, 5 * 48_000, 2 * 48_000, true)
+    );
     d.undo().unwrap();
     assert!(!warp(&d, c).reverse);
 }
@@ -268,7 +305,10 @@ fn reversed_warped_clip_mirrors_its_map_and_slices() {
     assert!(w.set_marker(0, 0.0));
     assert!(w.set_marker(44_100, 3.0));
     set(&mut d, c, w.clone(), "Set clip speed");
-    let detected = HashMap::from([(a, vec![Transient { source: 22_050, strength: 1.0, percussive: false }, Transient { source: 88_200, strength: 1.0, percussive: true }])]);
+    let detected = HashMap::from([(
+        a,
+        vec![Transient { source: 22_050, strength: 1.0, percussive: false }, Transient { source: 88_200, strength: 1.0, percussive: true }],
+    )]);
     set(&mut d, c, ClipWarp { reverse: false, ..w.clone() }, "Toggle clip reverse");
     let (_, _, fwd) = snap_warp(&d, c, &detected);
     let fwd = fwd.unwrap();
@@ -432,4 +472,3 @@ fn looped_clip_snapshot_carries_its_loop_in_content_frames() {
     assert_eq!((s.tracks[0].clips[0].length, s.tracks[0].clips[0].clip_loop), (4 * 48_000, None));
     assert!(d.execute(Command::SetClipLoop { clip: c, clip_loop: Some(AudioLoop { end: 0, ..l }) }, Origin::User).is_err());
 }
-

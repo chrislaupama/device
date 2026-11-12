@@ -5,9 +5,26 @@ use super::*;
 use crate::device::PluginKind;
 
 /// Note values of the Note dials, longest first.
-pub const DIVISIONS: &[&str] = &["2/1", "1/1", "Dot 1/2", "1/2", "Trip 1/2", "Dot 1/4", "1/4", "Trip 1/4", "Dot 1/8", "1/8", "Trip 1/8", "Dot 1/16", "1/16", "Trip 1/16", "1/32"];
+pub const DIVISIONS: &[&str] = &[
+    "2/1",
+    "1/1",
+    "Dot 1/2",
+    "1/2",
+    "Trip 1/2",
+    "Dot 1/4",
+    "1/4",
+    "Trip 1/4",
+    "Dot 1/8",
+    "1/8",
+    "Trip 1/8",
+    "Dot 1/16",
+    "1/16",
+    "Trip 1/16",
+    "1/32",
+];
 /// Length of each division in quarter notes.
-pub const DIVISION_BEATS: [f32; 15] = [8.0, 4.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.125];
+pub const DIVISION_BEATS: [f32; 15] =
+    [8.0, 4.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.125];
 pub const MODES: &[&str] = &["Tape", "Digital", "BBD"];
 const OFF_ON: &[&str] = &["Off", "On"];
 const FREE_SYNC: &[&str] = &["Free", "Sync"];
@@ -109,7 +126,14 @@ pub(super) static BEHAVIOR: Behavior = Behavior {
     ..Behavior::NONE
 };
 
-const fn band(n: usize, freq: &'static str, gain: &'static str, q: &'static str, on: &'static str, names: [&'static str; 4]) -> [ParamDef; 4] {
+const fn band(
+    n: usize,
+    freq: &'static str,
+    gain: &'static str,
+    q: &'static str,
+    on: &'static str,
+    names: [&'static str; 4],
+) -> [ParamDef; 4] {
     let (_, f, q0, enabled) = BANDS[n];
     [
         ParamDef::new(freq, names[0], 20.0, 20000.0, f, Taper::Log, "Hz", FREQ).help("Band frequency of the repeat EQ."),
@@ -143,32 +167,77 @@ pub static DELAY: DeviceDef = DeviceDef {
     category: "Delay",
     purpose: "Repeats the sound in time with the song or freely, as clean digital, warm tape or murky bucket-brigade echoes, with an EQ on the repeats.",
     params: &[
-        ParamDef::new("time", "BPM", 40.0, 250.0, 120.0, LINEAR, "BPM", Format::Plain(0)).step(1.0).help("Tempo used for synced times when the session reports none."),
-        ParamDef::choice("timeDivision", "Time Division", DIVISIONS, 8).label("Note").reversed().help("Synced delay time of the left side (both sides while linked)."),
-        ParamDef::new("feedback", "Feedback", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).help("How much of each repeat feeds the next."),
-        ParamDef::new("grit", "Grit", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent).help("Saturation and wear of the repeats, in the character of the mode."),
-        ParamDef::new("modSpeed", "Mod Speed", 0.01, 10.0, 0.0692, Taper::Log, "Hz", Format::Custom(TextFn(rate_text))).label("Rate").help("Speed of the delay-time wobble."),
+        ParamDef::new("time", "BPM", 40.0, 250.0, 120.0, LINEAR, "BPM", Format::Plain(0))
+            .step(1.0)
+            .help("Tempo used for synced times when the session reports none."),
+        ParamDef::choice("timeDivision", "Time Division", DIVISIONS, 8)
+            .label("Note")
+            .reversed()
+            .help("Synced delay time of the left side (both sides while linked)."),
+        ParamDef::new("feedback", "Feedback", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent)
+            .help("How much of each repeat feeds the next."),
+        ParamDef::new("grit", "Grit", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent)
+            .help("Saturation and wear of the repeats, in the character of the mode."),
+        ParamDef::new("modSpeed", "Mod Speed", 0.01, 10.0, 0.0692, Taper::Log, "Hz", Format::Custom(TextFn(rate_text)))
+            .label("Rate")
+            .help("Speed of the delay-time wobble."),
         ParamDef::new("modDepth", "Mod Depth", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent).help("Depth of the delay-time wobble."),
         ParamDef::new("stereoWidth", "Stereo Width", 0.0, 200.0, 100.0, LINEAR, "%", Format::Custom(TextFn(width_text)))
             .label("Width")
             .help("Mono to stereo; above 100% the repeats bounce between the sides (ping-pong)."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).help("Level of the repeats against the dry signal."),
         ParamDef::choice("mode", "Mode", MODES, 0).help("Character of the delay line: tape, clean digital or bucket-brigade."),
-        B0[0], B0[1], B0[2], B0[3],
-        B1[0], B1[1], B1[2], B1[3],
-        B2[0], B2[1], B2[2], B2[3],
-        B3[0], B3[1], B3[2], B3[3],
-        B4[0], B4[1], B4[2], B4[3],
-        B5[0], B5[1], B5[2], B5[3],
-        ParamDef::choice("sync", "Sync", FREE_SYNC, 1).latch("Free", "Sync").help("Sync: times follow the session tempo; Free: times in milliseconds."),
-        ParamDef::choice("dry", "Dry", OFF_ON, 1).latch("Dry Off", "Dry On").help("Pass the dry signal; turn off when the delay sits on a send."),
-        ParamDef::new("timeMs", "Time", 1.0, 12000.0, 500.0, Taper::Log, "ms", MS).help("Free delay time of the left side (both sides while linked)."),
-        ParamDef::choice("link", "Link", OFF_ON, 1).latch("Link Off", "Link On").help("Both sides use the left time; off gives each side its own time."),
-        ParamDef::choice("timeDivisionR", "Time Division R", DIVISIONS, 8).label("Note R").reversed().help("Synced delay time of the right side while unlinked."),
-        ParamDef::new("timeMsR", "Time R", 1.0, 12000.0, 500.0, Taper::Log, "ms", MS).help("Free delay time of the right side while unlinked."),
+        B0[0],
+        B0[1],
+        B0[2],
+        B0[3],
+        B1[0],
+        B1[1],
+        B1[2],
+        B1[3],
+        B2[0],
+        B2[1],
+        B2[2],
+        B2[3],
+        B3[0],
+        B3[1],
+        B3[2],
+        B3[3],
+        B4[0],
+        B4[1],
+        B4[2],
+        B4[3],
+        B5[0],
+        B5[1],
+        B5[2],
+        B5[3],
+        ParamDef::choice("sync", "Sync", FREE_SYNC, 1)
+            .latch("Free", "Sync")
+            .help("Sync: times follow the session tempo; Free: times in milliseconds."),
+        ParamDef::choice("dry", "Dry", OFF_ON, 1)
+            .latch("Dry Off", "Dry On")
+            .help("Pass the dry signal; turn off when the delay sits on a send."),
+        ParamDef::new("timeMs", "Time", 1.0, 12000.0, 500.0, Taper::Log, "ms", MS)
+            .help("Free delay time of the left side (both sides while linked)."),
+        ParamDef::choice("link", "Link", OFF_ON, 1)
+            .latch("Link Off", "Link On")
+            .help("Both sides use the left time; off gives each side its own time."),
+        ParamDef::choice("timeDivisionR", "Time Division R", DIVISIONS, 8)
+            .label("Note R")
+            .reversed()
+            .help("Synced delay time of the right side while unlinked."),
+        ParamDef::new("timeMsR", "Time R", 1.0, 12000.0, 500.0, Taper::Log, "ms", MS)
+            .help("Free delay time of the right side while unlinked."),
     ],
     layout: Layout {
-        picker: &[Control::Toggle("link"), Control::Toggle("sync"), Control::Menu("mode"), Control::Gap, Control::Views, Control::Toggle("dry")],
+        picker: &[
+            Control::Toggle("link"),
+            Control::Toggle("sync"),
+            Control::Menu("mode"),
+            Control::Gap,
+            Control::Views,
+            Control::Toggle("dry"),
+        ],
         view: Some(View::Custom("delay")),
         clusters: &[
             &[Control::Knob("timeMs"), Control::Knob("timeDivision"), Control::Knob("timeMsR"), Control::Knob("timeDivisionR")],
@@ -186,30 +255,308 @@ pub static DELAY: DeviceDef = DeviceDef {
         ..Layout::EMPTY
     },
     factory: &[
-        FactoryPreset { name: "Clean Quarter Repeat", values: &[("timeDivision", 6.0), ("feedback", 32.0), ("mix", 28.0), ("mode", 1.0), ("eq0Freq", 170.0), ("eq0Enabled", 1.0)] },
-        FactoryPreset { name: "Dotted Drive", values: &[("timeDivision", 8.0), ("feedback", 42.0), ("mix", 27.0), ("mode", 1.0), ("eq0Freq", 210.0), ("eq0Enabled", 1.0), ("eq5Freq", 9500.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Eighth Pulse", values: &[("timeDivision", 9.0), ("feedback", 28.0), ("mix", 30.0), ("mode", 1.0), ("eq0Freq", 190.0), ("eq0Enabled", 1.0)] },
-        FactoryPreset { name: "Triplet Skip", values: &[("timeDivision", 10.0), ("feedback", 33.0), ("mix", 32.0), ("mode", 1.0), ("eq0Freq", 240.0), ("eq0Enabled", 1.0)] },
-        FactoryPreset { name: "Long Half Tail", values: &[("timeDivision", 3.0), ("feedback", 22.0), ("mix", 33.0), ("mode", 1.0), ("eq0Freq", 260.0), ("eq0Enabled", 1.0), ("eq5Freq", 7500.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Rockabilly Slap", values: &[("feedback", 6.0), ("mix", 34.0), ("mode", 0.0), ("eq0Freq", 140.0), ("eq0Enabled", 1.0), ("sync", 0.0), ("timeMs", 95.0)] },
-        FactoryPreset { name: "Short Clean Slap", values: &[("feedback", 4.0), ("mix", 26.0), ("mode", 1.0), ("eq0Freq", 230.0), ("eq0Enabled", 1.0), ("eq5Freq", 7500.0), ("eq5Enabled", 1.0), ("sync", 0.0), ("timeMs", 72.0)] },
-        FactoryPreset { name: "Wide Double", values: &[("feedback", 0.0), ("modSpeed", 0.45), ("modDepth", 25.0), ("mix", 38.0), ("mode", 1.0), ("eq0Freq", 160.0), ("eq0Enabled", 1.0), ("sync", 0.0), ("timeMs", 21.0), ("link", 0.0), ("timeMsR", 33.0)] },
-        FactoryPreset { name: "Precedence Spread", values: &[("feedback", 0.0), ("mix", 100.0), ("mode", 1.0), ("sync", 0.0), ("dry", 0.0), ("timeMs", 2.0), ("link", 0.0), ("timeMsR", 17.0)] },
-        FactoryPreset { name: "Bounce Eighths", values: &[("timeDivision", 9.0), ("feedback", 48.0), ("stereoWidth", 200.0), ("mix", 40.0), ("mode", 1.0), ("eq0Freq", 220.0), ("eq0Enabled", 1.0)] },
-        FactoryPreset { name: "Bounce Dotted", values: &[("timeDivision", 8.0), ("feedback", 44.0), ("stereoWidth", 185.0), ("mix", 38.0), ("mode", 1.0), ("eq0Freq", 230.0), ("eq0Enabled", 1.0), ("eq5Freq", 9000.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Bounce Quarters", values: &[("timeDivision", 6.0), ("feedback", 38.0), ("stereoWidth", 170.0), ("mix", 36.0), ("mode", 1.0), ("eq0Freq", 190.0), ("eq0Enabled", 1.0)] },
-        FactoryPreset { name: "Offset Quarter / Triplet", values: &[("timeDivision", 6.0), ("feedback", 30.0), ("mix", 30.0), ("mode", 1.0), ("eq0Freq", 210.0), ("eq0Enabled", 1.0), ("link", 0.0), ("timeDivisionR", 7.0)] },
-        FactoryPreset { name: "Offset Eighth / Dotted", values: &[("timeDivision", 9.0), ("feedback", 36.0), ("mix", 34.0), ("mode", 1.0), ("eq0Freq", 230.0), ("eq0Enabled", 1.0), ("link", 0.0), ("timeDivisionR", 8.0)] },
-        FactoryPreset { name: "Warm Tape Repeats", values: &[("timeDivision", 6.0), ("feedback", 46.0), ("grit", 25.0), ("modSpeed", 0.7), ("modDepth", 15.0), ("mix", 33.0), ("mode", 0.0), ("eq0Freq", 160.0), ("eq0Enabled", 1.0)] },
-        FactoryPreset { name: "Stretched Tape", values: &[("timeDivision", 8.0), ("feedback", 52.0), ("grit", 50.0), ("modSpeed", 1.1), ("modDepth", 55.0), ("mix", 40.0), ("mode", 0.0), ("eq0Freq", 240.0), ("eq0Enabled", 1.0), ("eq5Freq", 3800.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Analog Chip Echo", values: &[("timeDivision", 9.0), ("feedback", 42.0), ("grit", 28.0), ("modSpeed", 0.45), ("modDepth", 22.0), ("mix", 35.0), ("mode", 2.0), ("eq0Freq", 180.0), ("eq0Enabled", 1.0), ("eq5Freq", 4200.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Broken Radio", values: &[("timeDivision", 10.0), ("feedback", 48.0), ("grit", 85.0), ("modSpeed", 2.2), ("modDepth", 40.0), ("mix", 48.0), ("mode", 2.0), ("eq0Freq", 500.0), ("eq0Enabled", 1.0), ("eq5Freq", 2300.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Dub Space", values: &[("timeDivision", 8.0), ("feedback", 70.0), ("modDepth", 12.0), ("stereoWidth", 150.0), ("mix", 50.0), ("mode", 0.0), ("eq0Freq", 320.0), ("eq0Enabled", 1.0), ("eq5Freq", 2200.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Runaway Dub", values: &[("timeDivision", 6.0), ("feedback", 88.0), ("grit", 18.0), ("mix", 30.0), ("mode", 0.0), ("eq0Freq", 420.0), ("eq0Enabled", 1.0), ("eq5Freq", 1600.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Muffled Repeats", values: &[("timeDivision", 6.0), ("feedback", 58.0), ("mix", 24.0), ("mode", 1.0), ("eq0Freq", 220.0), ("eq0Enabled", 1.0), ("eq4Freq", 2800.0), ("eq4Gain", -10.0), ("eq5Freq", 3600.0), ("eq5Enabled", 1.0)] },
-        FactoryPreset { name: "Send: Quarter", values: &[("timeDivision", 6.0), ("feedback", 38.0), ("mix", 100.0), ("mode", 1.0), ("eq0Freq", 210.0), ("eq0Enabled", 1.0), ("dry", 0.0)] },
-        FactoryPreset { name: "Send: Dotted", values: &[("timeDivision", 8.0), ("feedback", 42.0), ("mix", 100.0), ("mode", 1.0), ("eq0Freq", 210.0), ("eq0Enabled", 1.0), ("eq5Freq", 9500.0), ("eq5Enabled", 1.0), ("dry", 0.0)] },
-        FactoryPreset { name: "Send: Bounce", values: &[("timeDivision", 9.0), ("feedback", 44.0), ("stereoWidth", 190.0), ("mix", 100.0), ("mode", 1.0), ("eq0Freq", 210.0), ("eq0Enabled", 1.0), ("dry", 0.0)] },
+        FactoryPreset {
+            name: "Clean Quarter Repeat",
+            values: &[("timeDivision", 6.0), ("feedback", 32.0), ("mix", 28.0), ("mode", 1.0), ("eq0Freq", 170.0), ("eq0Enabled", 1.0)],
+        },
+        FactoryPreset {
+            name: "Dotted Drive",
+            values: &[
+                ("timeDivision", 8.0),
+                ("feedback", 42.0),
+                ("mix", 27.0),
+                ("mode", 1.0),
+                ("eq0Freq", 210.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 9500.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Eighth Pulse",
+            values: &[("timeDivision", 9.0), ("feedback", 28.0), ("mix", 30.0), ("mode", 1.0), ("eq0Freq", 190.0), ("eq0Enabled", 1.0)],
+        },
+        FactoryPreset {
+            name: "Triplet Skip",
+            values: &[("timeDivision", 10.0), ("feedback", 33.0), ("mix", 32.0), ("mode", 1.0), ("eq0Freq", 240.0), ("eq0Enabled", 1.0)],
+        },
+        FactoryPreset {
+            name: "Long Half Tail",
+            values: &[
+                ("timeDivision", 3.0),
+                ("feedback", 22.0),
+                ("mix", 33.0),
+                ("mode", 1.0),
+                ("eq0Freq", 260.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 7500.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Rockabilly Slap",
+            values: &[
+                ("feedback", 6.0),
+                ("mix", 34.0),
+                ("mode", 0.0),
+                ("eq0Freq", 140.0),
+                ("eq0Enabled", 1.0),
+                ("sync", 0.0),
+                ("timeMs", 95.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Short Clean Slap",
+            values: &[
+                ("feedback", 4.0),
+                ("mix", 26.0),
+                ("mode", 1.0),
+                ("eq0Freq", 230.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 7500.0),
+                ("eq5Enabled", 1.0),
+                ("sync", 0.0),
+                ("timeMs", 72.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Wide Double",
+            values: &[
+                ("feedback", 0.0),
+                ("modSpeed", 0.45),
+                ("modDepth", 25.0),
+                ("mix", 38.0),
+                ("mode", 1.0),
+                ("eq0Freq", 160.0),
+                ("eq0Enabled", 1.0),
+                ("sync", 0.0),
+                ("timeMs", 21.0),
+                ("link", 0.0),
+                ("timeMsR", 33.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Precedence Spread",
+            values: &[
+                ("feedback", 0.0),
+                ("mix", 100.0),
+                ("mode", 1.0),
+                ("sync", 0.0),
+                ("dry", 0.0),
+                ("timeMs", 2.0),
+                ("link", 0.0),
+                ("timeMsR", 17.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Bounce Eighths",
+            values: &[
+                ("timeDivision", 9.0),
+                ("feedback", 48.0),
+                ("stereoWidth", 200.0),
+                ("mix", 40.0),
+                ("mode", 1.0),
+                ("eq0Freq", 220.0),
+                ("eq0Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Bounce Dotted",
+            values: &[
+                ("timeDivision", 8.0),
+                ("feedback", 44.0),
+                ("stereoWidth", 185.0),
+                ("mix", 38.0),
+                ("mode", 1.0),
+                ("eq0Freq", 230.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 9000.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Bounce Quarters",
+            values: &[
+                ("timeDivision", 6.0),
+                ("feedback", 38.0),
+                ("stereoWidth", 170.0),
+                ("mix", 36.0),
+                ("mode", 1.0),
+                ("eq0Freq", 190.0),
+                ("eq0Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Offset Quarter / Triplet",
+            values: &[
+                ("timeDivision", 6.0),
+                ("feedback", 30.0),
+                ("mix", 30.0),
+                ("mode", 1.0),
+                ("eq0Freq", 210.0),
+                ("eq0Enabled", 1.0),
+                ("link", 0.0),
+                ("timeDivisionR", 7.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Offset Eighth / Dotted",
+            values: &[
+                ("timeDivision", 9.0),
+                ("feedback", 36.0),
+                ("mix", 34.0),
+                ("mode", 1.0),
+                ("eq0Freq", 230.0),
+                ("eq0Enabled", 1.0),
+                ("link", 0.0),
+                ("timeDivisionR", 8.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Warm Tape Repeats",
+            values: &[
+                ("timeDivision", 6.0),
+                ("feedback", 46.0),
+                ("grit", 25.0),
+                ("modSpeed", 0.7),
+                ("modDepth", 15.0),
+                ("mix", 33.0),
+                ("mode", 0.0),
+                ("eq0Freq", 160.0),
+                ("eq0Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Stretched Tape",
+            values: &[
+                ("timeDivision", 8.0),
+                ("feedback", 52.0),
+                ("grit", 50.0),
+                ("modSpeed", 1.1),
+                ("modDepth", 55.0),
+                ("mix", 40.0),
+                ("mode", 0.0),
+                ("eq0Freq", 240.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 3800.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Analog Chip Echo",
+            values: &[
+                ("timeDivision", 9.0),
+                ("feedback", 42.0),
+                ("grit", 28.0),
+                ("modSpeed", 0.45),
+                ("modDepth", 22.0),
+                ("mix", 35.0),
+                ("mode", 2.0),
+                ("eq0Freq", 180.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 4200.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Broken Radio",
+            values: &[
+                ("timeDivision", 10.0),
+                ("feedback", 48.0),
+                ("grit", 85.0),
+                ("modSpeed", 2.2),
+                ("modDepth", 40.0),
+                ("mix", 48.0),
+                ("mode", 2.0),
+                ("eq0Freq", 500.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 2300.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Dub Space",
+            values: &[
+                ("timeDivision", 8.0),
+                ("feedback", 70.0),
+                ("modDepth", 12.0),
+                ("stereoWidth", 150.0),
+                ("mix", 50.0),
+                ("mode", 0.0),
+                ("eq0Freq", 320.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 2200.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Runaway Dub",
+            values: &[
+                ("timeDivision", 6.0),
+                ("feedback", 88.0),
+                ("grit", 18.0),
+                ("mix", 30.0),
+                ("mode", 0.0),
+                ("eq0Freq", 420.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 1600.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Muffled Repeats",
+            values: &[
+                ("timeDivision", 6.0),
+                ("feedback", 58.0),
+                ("mix", 24.0),
+                ("mode", 1.0),
+                ("eq0Freq", 220.0),
+                ("eq0Enabled", 1.0),
+                ("eq4Freq", 2800.0),
+                ("eq4Gain", -10.0),
+                ("eq5Freq", 3600.0),
+                ("eq5Enabled", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Send: Quarter",
+            values: &[
+                ("timeDivision", 6.0),
+                ("feedback", 38.0),
+                ("mix", 100.0),
+                ("mode", 1.0),
+                ("eq0Freq", 210.0),
+                ("eq0Enabled", 1.0),
+                ("dry", 0.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Send: Dotted",
+            values: &[
+                ("timeDivision", 8.0),
+                ("feedback", 42.0),
+                ("mix", 100.0),
+                ("mode", 1.0),
+                ("eq0Freq", 210.0),
+                ("eq0Enabled", 1.0),
+                ("eq5Freq", 9500.0),
+                ("eq5Enabled", 1.0),
+                ("dry", 0.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Send: Bounce",
+            values: &[
+                ("timeDivision", 9.0),
+                ("feedback", 44.0),
+                ("stereoWidth", 190.0),
+                ("mix", 100.0),
+                ("mode", 1.0),
+                ("eq0Freq", 210.0),
+                ("eq0Enabled", 1.0),
+                ("dry", 0.0),
+            ],
+        },
     ],
     sidechain: false,
     samples: 0,

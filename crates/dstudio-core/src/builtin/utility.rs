@@ -21,14 +21,19 @@ pub static UTILITY: DeviceDef = DeviceDef {
     params: &[
         ParamDef::new("gain", "Gain", -70.0, 35.0, 0.0, LINEAR, "dB", Format::Db).help("Output level."),
         ParamDef::new("balance", "Balance", -50.0, 50.0, 0.0, LINEAR, "", Format::Balance).help("Left / right balance."),
-        ParamDef::new("width", "Width", 0.0, 400.0, 100.0, LINEAR, "%", Format::Percent0).help("Stereo width: 0% mono, 100% unchanged, up to 400% wider."),
-        ParamDef::choice("channel_mode", "Channel Mode", CHANNELS, 0).help("Stereo passes both channels, Left / Right put one channel on both sides, Swap exchanges them."),
+        ParamDef::new("width", "Width", 0.0, 400.0, 100.0, LINEAR, "%", Format::Percent0)
+            .help("Stereo width: 0% mono, 100% unchanged, up to 400% wider."),
+        ParamDef::choice("channel_mode", "Channel Mode", CHANNELS, 0)
+            .help("Stereo passes both channels, Left / Right put one channel on both sides, Swap exchanges them."),
         ParamDef::choice("phase_l", "Phase L", OFF_ON, 0).label("\u{d8}L").help("Inverts the polarity of the left channel."),
         ParamDef::choice("phase_r", "Phase R", OFF_ON, 0).label("\u{d8}R").help("Inverts the polarity of the right channel."),
         ParamDef::choice("mono", "Mono", OFF_ON, 0).help("Sums both channels to mono."),
         ParamDef::choice("bass_mono", "Bass Mono", OFF_ON, 0).help("Makes everything below the Bass Mono frequency mono."),
-        ParamDef::new("bass_mono_freq", "Bass Mono Freq", 50.0, 500.0, 120.0, Taper::Log, "Hz", Format::Freq).help("Crossover below which Bass Mono sums to mono."),
-        ParamDef::choice("bass_mono_audition", "Bass Mono Audition", OFF_ON, 0).reset_on_load().help("Plays only the part below the Bass Mono frequency."),
+        ParamDef::new("bass_mono_freq", "Bass Mono Freq", 50.0, 500.0, 120.0, Taper::Log, "Hz", Format::Freq)
+            .help("Crossover below which Bass Mono sums to mono."),
+        ParamDef::choice("bass_mono_audition", "Bass Mono Audition", OFF_ON, 0)
+            .reset_on_load()
+            .help("Plays only the part below the Bass Mono frequency."),
         ParamDef::choice("mute", "Mute", OFF_ON, 0).help("Silences the output."),
         ParamDef::choice("dc_filter", "DC Filter", OFF_ON, 0).label("DC").help("Removes DC offset (a very low high-pass)."),
     ],

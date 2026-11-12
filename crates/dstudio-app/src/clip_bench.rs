@@ -7,7 +7,9 @@
 //! bounce goes through plugin instances prepared on the UI thread (CHR-38).
 
 use crate::controller::Controller;
-use dstudio_core::{ClipId, ColorIndex, Command, Device, MidiClip, Note, PluginFormat, PluginKind, PluginRef, PPQ, Track, TrackId, TrackKind};
+use dstudio_core::{
+    ClipId, ColorIndex, Command, Device, MidiClip, Note, PPQ, PluginFormat, PluginKind, PluginRef, Track, TrackId, TrackKind,
+};
 
 /// Frames before the run starts the render (idle: the window the render would take).
 pub const WARMUP_FRAMES: u64 = 60;
@@ -20,12 +22,25 @@ pub fn setup(c: &mut Controller) -> ClipId {
     let mut clip = MidiClip::empty(0, 16 * PPQ);
     clip.id = ClipId(id + 1);
     clip.name = "bench".into();
-    clip.notes = (0..64).map(|i| Note { id: i as u32 + 1, pitch: 48 + ((i * 5) % 24) as u8, start: i as i64 * PPQ / 4, length: PPQ / 2, velocity: 100 }).collect();
+    clip.notes = (0..64)
+        .map(|i| Note { id: i as u32 + 1, pitch: 48 + ((i * 5) % 24) as u8, start: i as i64 * PPQ / 4, length: PPQ / 2, velocity: 100 })
+        .collect();
     let track = Track::new(TrackId(id), TrackKind::Instrument, "Bench synth", ColorIndex::FIRST);
-    c.execute(Command::Batch { label: "clip render bench".into(), commands: vec![Command::AddTrack { index: None, track }, Command::AddMidiClip { track: TrackId(id), clip }] });
+    c.execute(Command::Batch {
+        label: "clip render bench".into(),
+        commands: vec![Command::AddTrack { index: None, track }, Command::AddMidiClip { track: TrackId(id), clip }],
+    });
     if std::env::var("DSTUDIO_BENCH_PLUGINS").as_deref() == Ok("au") {
         for (code, name) in [("aufx mrev appl", "AUMatrixReverb"), ("aufx dely appl", "AUDelay")] {
-            let plugin = PluginRef { format: PluginFormat::AudioUnit, id: code.into(), path: None, name: name.into(), vendor: "Apple".into(), version: String::new(), kind: PluginKind::Effect };
+            let plugin = PluginRef {
+                format: PluginFormat::AudioUnit,
+                id: code.into(),
+                path: None,
+                name: name.into(),
+                vendor: "Apple".into(),
+                version: String::new(),
+                kind: PluginKind::Effect,
+            };
             c.execute(Command::AddDevice { track: TrackId(id), index: None, device: Device::new(plugin) });
         }
         return ClipId(id + 1);

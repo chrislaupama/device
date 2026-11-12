@@ -97,7 +97,9 @@ pub struct CurveDraw {
 fn kind(k: ShapeKey) -> ShapeKind {
     match k {
         ShapeKey::Voices => ShapeKind::Segments,
-        ShapeKey::Octave | ShapeKey::Repeat | ShapeKey::Inversion | ShapeKey::Arp | ShapeKey::ArpPattern | ShapeKey::ArpOctaves => ShapeKind::Stepper,
+        ShapeKey::Octave | ShapeKey::Repeat | ShapeKey::Inversion | ShapeKey::Arp | ShapeKey::ArpPattern | ShapeKey::ArpOctaves => {
+            ShapeKind::Stepper
+        }
         _ => ShapeKind::Slider,
     }
 }
@@ -162,7 +164,13 @@ impl Controller {
                     segs: if kind == ShapeKind::Segments { k.options().len() as i32 } else { 0 },
                     seg: k.index_of(v) as i32,
                     enabled: on,
-                    tip: if on { "" } else if k == ShapeKey::Voices { NO_VOICES } else { NOT_AVAILABLE },
+                    tip: if on {
+                        ""
+                    } else if k == ShapeKey::Voices {
+                        NO_VOICES
+                    } else {
+                        NOT_AVAILABLE
+                    },
                     selected: self.shape_ui.key == k,
                     curved: s.curve(k).is_some(),
                 }
@@ -173,7 +181,9 @@ impl Controller {
     /// The Shape tab is showing (a MIDI clip with notes, Shape picked or opening first).
     pub(crate) fn shape_tab_shown(&self) -> bool {
         let Some(c) = self.pr_clip() else { return false };
-        c.pattern.is_none() && !c.notes.is_empty() && self.composer_shape_tab.unwrap_or(c.composer.as_ref().is_none_or(|k| k.playing.is_none()))
+        c.pattern.is_none()
+            && !c.notes.is_empty()
+            && self.composer_shape_tab.unwrap_or(c.composer.as_ref().is_none_or(|k| k.playing.is_none()))
     }
 
     /// Drawing curves in the piano roll (the toolbar's Shape button, on the Shape tab).
@@ -204,7 +214,13 @@ impl Controller {
         let mut comp = c.composer.clone().unwrap_or_default();
         comp.base = if s == Shape::neutral(source) { Vec::new() } else { base };
         comp.set_shape(source, s);
-        self.execute(Command::SetComposer { clip: c.id, edit: ComposerEdit::Shape, composer: Some(comp), notes, pattern: c.pattern.clone() });
+        self.execute(Command::SetComposer {
+            clip: c.id,
+            edit: ComposerEdit::Shape,
+            composer: Some(comp),
+            notes,
+            pattern: c.pattern.clone(),
+        });
     }
 
     /// A rack row (\`shape_op\`): sliders take a 0..1 value and coalesce into one undo
@@ -331,9 +347,15 @@ impl Controller {
             .chain(std::iter::once(sel).filter(|&k| enabled(k, &base, source)))
             .map(|k| {
                 let active = k == sel;
-                let line = (0..=samples).map(|i| b0 + (i as f64 * step).min(b1 - b0)).map(|b| (v.x_of(b), value_y(v, s.at(k, b.min(clip_beats - 1e-3))))).collect();
+                let line = (0..=samples)
+                    .map(|i| b0 + (i as f64 * step).min(b1 - b0))
+                    .map(|b| (v.x_of(b), value_y(v, s.at(k, b.min(clip_beats - 1e-3)))))
+                    .collect();
                 let dots = match s.curve(k) {
-                    Some(p) if active => (0..p.len()).filter(|&i| i as f64 >= b0 && i as f64 <= b1).map(|i| (v.x_of(i as f64), value_y(v, s.at(k, i as f64)))).collect(),
+                    Some(p) if active => (0..p.len())
+                        .filter(|&i| i as f64 >= b0 && i as f64 <= b1)
+                        .map(|i| (v.x_of(i as f64), value_y(v, s.at(k, i as f64))))
+                        .collect(),
                     _ => Vec::new(),
                 };
                 let color = rgb(k.color()).map(|ch| ch * if active { alpha } else { 0.6 });

@@ -15,7 +15,20 @@ use std::time::Instant;
 
 fn project(tracks: usize, warped: bool) -> (Document, HashMap<AssetId, u64>, HashMap<AssetId, Vec<Transient>>) {
     let mut d = Document::new(Project::default());
-    d.execute(Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: "/x.wav".into(), sample_rate: 44_100.0, channels: 2, frames: 44_100 * 60 } }, Origin::User).unwrap();
+    d.execute(
+        Command::AddAsset {
+            asset: Asset {
+                id: AssetId(0),
+                relative_path: None,
+                absolute_path: "/x.wav".into(),
+                sample_rate: 44_100.0,
+                channels: 2,
+                frames: 44_100 * 60,
+            },
+        },
+        Origin::User,
+    )
+    .unwrap();
     let a = d.project().assets[0].id;
     let detected: Vec<Transient> = (0..400).map(|i| Transient { source: i * 6_615, strength: 1.0, percussive: i % 3 != 0 }).collect();
     let mut warp = ClipWarp { enabled: warped, mode: WarpMode::Auto, original_bpm: 96.0, ..ClipWarp::default() };
@@ -26,10 +39,22 @@ fn project(tracks: usize, warped: bool) -> (Document, HashMap<AssetId, u64>, Has
         let track = if t < 1 {
             d.project().tracks[0].id
         } else {
-            d.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "A", ColorIndex(1)) }, Origin::User).unwrap();
+            d.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "A", ColorIndex(1)) }, Origin::User)
+                .unwrap();
             d.project().tracks.last().unwrap().id
         };
-        let clip = Clip { id: ClipId(0), asset: a, name: "c".into(), start: 0, source_offset: 0, source_length: 44_100 * 16, gain: 1.0, warp: if warped { warp.clone() } else { ClipWarp::default() }, disabled: false, clip_loop: None };
+        let clip = Clip {
+            id: ClipId(0),
+            asset: a,
+            name: "c".into(),
+            start: 0,
+            source_offset: 0,
+            source_length: 44_100 * 16,
+            gain: 1.0,
+            warp: if warped { warp.clone() } else { ClipWarp::default() },
+            disabled: false,
+            clip_loop: None,
+        };
         d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     }
     (d, HashMap::from([(a, 1)]), HashMap::from([(a, detected)]))
@@ -70,7 +95,13 @@ fn main() {
     println!("|---:|---:|");
     for n in [100u64, 400, 2000] {
         // Eighth notes at 123 BPM with every fourth one a softer ghost note.
-        let tr: Vec<Transient> = (0..n).map(|i| Transient { source: (i as f64 * 44_100.0 * 30.0 / 123.0) as u64, strength: if i % 4 == 3 { 0.3 } else { 1.0 }, percussive: true }).collect();
+        let tr: Vec<Transient> = (0..n)
+            .map(|i| Transient {
+                source: (i as f64 * 44_100.0 * 30.0 / 123.0) as u64,
+                strength: if i % 4 == 3 { 0.3 } else { 1.0 },
+                percussive: true,
+            })
+            .collect();
         let ms = time(20, || {
             black_box(dstudio_core::warp::estimate_bpm(&tr, 44_100.0));
         }) / 1000.0;

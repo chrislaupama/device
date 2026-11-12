@@ -6,7 +6,7 @@
 use dstudio_core::automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
 use dstudio_core::snapshot::LaneSnapshot;
 use dstudio_core::*;
-use dstudio_engine::{engine_eval_lane, Config, Engine};
+use dstudio_engine::{Config, Engine, engine_eval_lane};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -37,7 +37,13 @@ fn random_lane(rng: &mut Rng, target: AutomationTarget) -> AutomationLane {
         let curve = match rng.next() % 4 {
             0 => 0.0,
             1 => 1.0 - 2.0 * rng.unit(),
-            2 => if rng.next() % 2 == 0 { 1.0 } else { -1.0 },
+            2 => {
+                if rng.next() % 2 == 0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
             _ => 1e-7,
         };
         points.push(AutoPoint { time: t, value: lo + (hi - lo) * rng.unit(), curve });
@@ -118,11 +124,7 @@ fn write_dc_wav(path: &Path, frames: u32, v: i16) {
 }
 
 fn db_gain(db: f32) -> f64 {
-    if db <= -60.0 {
-        0.0
-    } else {
-        10f64.powf(db as f64 / 20.0)
-    }
+    if db <= -60.0 { 0.0 } else { 10f64.powf(db as f64 / 20.0) }
 }
 
 #[test]
@@ -134,14 +136,41 @@ fn volume_lane_from_a_document_shapes_the_output_and_undo_restores_it() {
     let info = engine.load_file(&wav).unwrap();
     let mut doc = Document::new(Project::default());
     doc.execute(
-        Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: wav.to_string_lossy().into(), sample_rate: 48_000.0, channels: 1, frames: 72_000 } },
+        Command::AddAsset {
+            asset: Asset {
+                id: AssetId(0),
+                relative_path: None,
+                absolute_path: wav.to_string_lossy().into(),
+                sample_rate: 48_000.0,
+                channels: 1,
+                frames: 72_000,
+            },
+        },
         Origin::User,
     )
     .unwrap();
     let asset = doc.project().assets.last().unwrap().id;
     let map = HashMap::from([(asset, info.asset_id)]);
     let track = doc.project().tracks.iter().find(|t| t.kind == TrackKind::Audio).unwrap().id;
-    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 72_000, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } }, Origin::User).unwrap();
+    doc.execute(
+        Command::AddClip {
+            track,
+            clip: Clip {
+                id: ClipId(0),
+                asset,
+                name: "dc".into(),
+                start: 0,
+                source_offset: 0,
+                source_length: 72_000,
+                gain: 1.0,
+                warp: Default::default(),
+                disabled: false,
+                clip_loop: None,
+            },
+        },
+        Origin::User,
+    )
+    .unwrap();
     doc.execute(Command::SetTrackPan { track, pan: -1.0 }, Origin::User).unwrap(); // left = the fader gain
 
     let render = |doc: &Document, frames: usize| -> Vec<f32> {
@@ -170,7 +199,11 @@ fn volume_lane_from_a_document_shapes_the_output_and_undo_restores_it() {
             AutoPoint { time: 2000, value: -12.0, curve: 0.0 },
         ],
     };
-    doc.execute(Command::SetAutomationLane { track: Some(track), target: AutomationTarget::Volume, lane: Some(lane.clone()) }, Origin::User).unwrap();
+    doc.execute(
+        Command::SetAutomationLane { track: Some(track), target: AutomationTarget::Volume, lane: Some(lane.clone()) },
+        Origin::User,
+    )
+    .unwrap();
     let out = render(&doc, 60_000);
     // One tick = 25 frames: compare at tick positions against value_at.
     let mut worst = 0f64;
@@ -187,7 +220,8 @@ fn volume_lane_from_a_document_shapes_the_output_and_undo_restores_it() {
     // A disabled lane is kept in the model but not played.
     let mut disabled = lane.clone();
     disabled.enabled = false;
-    doc.execute(Command::SetAutomationLane { track: Some(track), target: AutomationTarget::Volume, lane: Some(disabled) }, Origin::User).unwrap();
+    doc.execute(Command::SetAutomationLane { track: Some(track), target: AutomationTarget::Volume, lane: Some(disabled) }, Origin::User)
+        .unwrap();
     assert_eq!(render(&doc, 60_000), before);
     doc.undo().unwrap();
 
@@ -208,15 +242,43 @@ fn master_volume_lane_reaches_the_engine() {
     let info = engine.load_file(&wav).unwrap();
     let mut doc = Document::new(Project::default());
     doc.execute(
-        Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: wav.to_string_lossy().into(), sample_rate: 48_000.0, channels: 1, frames: 24_000 } },
+        Command::AddAsset {
+            asset: Asset {
+                id: AssetId(0),
+                relative_path: None,
+                absolute_path: wav.to_string_lossy().into(),
+                sample_rate: 48_000.0,
+                channels: 1,
+                frames: 24_000,
+            },
+        },
         Origin::User,
     )
     .unwrap();
     let asset = doc.project().assets.last().unwrap().id;
     let track = doc.project().tracks.iter().find(|t| t.kind == TrackKind::Audio).unwrap().id;
-    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 24_000, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } }, Origin::User).unwrap();
+    doc.execute(
+        Command::AddClip {
+            track,
+            clip: Clip {
+                id: ClipId(0),
+                asset,
+                name: "dc".into(),
+                start: 0,
+                source_offset: 0,
+                source_length: 24_000,
+                gain: 1.0,
+                warp: Default::default(),
+                disabled: false,
+                clip_loop: None,
+            },
+        },
+        Origin::User,
+    )
+    .unwrap();
     doc.execute(Command::SetTrackPan { track, pan: -1.0 }, Origin::User).unwrap();
-    let lane = AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![AutoPoint { time: 0, value: -6.0, curve: 0.0 }] };
+    let lane =
+        AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![AutoPoint { time: 0, value: -6.0, curve: 0.0 }] };
     doc.execute(Command::SetAutomationLane { track: None, target: AutomationTarget::Volume, lane: Some(lane) }, Origin::User).unwrap();
     let (snap, _) = snapshot::build(doc.project(), 48_000.0, &HashMap::from([(asset, info.asset_id)]));
     engine.publish(&snap).unwrap();
@@ -236,14 +298,41 @@ fn plugin_lane_and_parameter_queries_through_the_document() {
     let info = engine.load_file(&wav).unwrap();
     let mut doc = Document::new(Project::default());
     doc.execute(
-        Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: wav.to_string_lossy().into(), sample_rate: 48_000.0, channels: 1, frames: 24_000 } },
+        Command::AddAsset {
+            asset: Asset {
+                id: AssetId(0),
+                relative_path: None,
+                absolute_path: wav.to_string_lossy().into(),
+                sample_rate: 48_000.0,
+                channels: 1,
+                frames: 24_000,
+            },
+        },
         Origin::User,
     )
     .unwrap();
     let asset = doc.project().assets.last().unwrap().id;
     let map = HashMap::from([(asset, info.asset_id)]);
     let track = doc.project().tracks.iter().find(|t| t.kind == TrackKind::Audio).unwrap().id;
-    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 24_000, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } }, Origin::User).unwrap();
+    doc.execute(
+        Command::AddClip {
+            track,
+            clip: Clip {
+                id: ClipId(0),
+                asset,
+                name: "dc".into(),
+                start: 0,
+                source_offset: 0,
+                source_length: 24_000,
+                gain: 1.0,
+                warp: Default::default(),
+                disabled: false,
+                clip_loop: None,
+            },
+        },
+        Origin::User,
+    )
+    .unwrap();
     doc.execute(Command::SetTrackPan { track, pan: -1.0 }, Origin::User).unwrap();
     let gain = PluginRef {
         format: PluginFormat::Clap,
@@ -275,7 +364,11 @@ fn plugin_lane_and_parameter_queries_through_the_document() {
 
     // A plugin lane: gain 0 -> 1 over 960 ticks (24000 frames).
     let target = AutomationTarget::Plugin { device: dev, param: 0, name: "Gain".into() };
-    let lane = AutomationLane { target: target.clone(), enabled: true, points: vec![AutoPoint { time: 0, value: 0.0, curve: 0.0 }, AutoPoint { time: 960, value: 1.0, curve: 0.0 }] };
+    let lane = AutomationLane {
+        target: target.clone(),
+        enabled: true,
+        points: vec![AutoPoint { time: 0, value: 0.0, curve: 0.0 }, AutoPoint { time: 960, value: 1.0, curve: 0.0 }],
+    };
     doc.execute(Command::SetAutomationLane { track: Some(track), target, lane: Some(lane.clone()) }, Origin::User).unwrap();
     publish(&doc);
     engine.seek(0).unwrap();

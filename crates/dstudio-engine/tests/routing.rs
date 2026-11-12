@@ -83,7 +83,16 @@ fn track(id: u64) -> TrackSnapshot {
 /// Track 1 plays the ramp; track 9 is a return. `route` adjusts the tracks.
 fn publish(e: &Engine, asset: u64, frames: u32, route: impl FnOnce(&mut TrackSnapshot, &mut TrackSnapshot)) {
     let mut t = track(1);
-    t.clips = vec![ClipSnapshot { clip_id: 1, engine_asset: asset, timeline_start: 0, source_offset: 0, length: frames as i64, gain: 1.0, warp: None, clip_loop: None }];
+    t.clips = vec![ClipSnapshot {
+        clip_id: 1,
+        engine_asset: asset,
+        timeline_start: 0,
+        source_offset: 0,
+        length: frames as i64,
+        gain: 1.0,
+        warp: None,
+        clip_loop: None,
+    }];
     let mut r = track(9);
     r.is_return = true;
     route(&mut t, &mut r);
@@ -154,6 +163,7 @@ fn routing_to_a_track_that_is_not_a_return_is_refused() {
     let e = engine();
     let mut t = track(1);
     t.sends.push(SendSnapshot { target: 2, gain: 1.0, pre_fader: false });
-    let snap = SessionSnapshot { tracks: vec![t, track(2)], master_gain: 1.0, master_automation: vec![], device_assets: Default::default() };
+    let snap =
+        SessionSnapshot { tracks: vec![t, track(2)], master_gain: 1.0, master_automation: vec![], device_assets: Default::default() };
     assert!(e.publish(&snap).is_err());
 }

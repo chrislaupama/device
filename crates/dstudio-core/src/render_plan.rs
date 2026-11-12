@@ -138,7 +138,8 @@ pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project
 /// or it is an instrument track (synth release). A consolidate render has no devices.
 pub fn rings_out(p: &Project, track: TrackId, mode: RenderMode) -> bool {
     let Some(t) = p.track(track) else { return false };
-    mode != RenderMode::Material && (t.kind == TrackKind::Instrument || t.devices.iter().chain(t.instrument_plugin.iter()).any(|d| d.enabled))
+    mode != RenderMode::Material
+        && (t.kind == TrackKind::Instrument || t.devices.iter().chain(t.instrument_plugin.iter()).any(|d| d.enabled))
 }
 
 /// "<first> merged", or "Merged clip" when the first clip has no name.
@@ -167,5 +168,16 @@ pub fn merge_midi(p: &Project, span: &ClipSpan) -> Option<MidiClip> {
     for (i, n) in notes.iter_mut().enumerate() {
         n.id = i as u32 + 1;
     }
-    Some(MidiClip { id: ClipId(0), name: merged_name(&first.name), start: span.start, length: span.end - span.start, notes, pattern: None, disabled: false, composer: None, scale: None, clip_loop: None })
+    Some(MidiClip {
+        id: ClipId(0),
+        name: merged_name(&first.name),
+        start: span.start,
+        length: span.end - span.start,
+        notes,
+        pattern: None,
+        disabled: false,
+        composer: None,
+        scale: None,
+        clip_loop: None,
+    })
 }

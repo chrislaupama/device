@@ -14,10 +14,10 @@
 //! the DAW works fully offline.
 
 use crate::command::{Command, EditError};
-use crate::history::{assign_ids, Document, Origin};
+use crate::history::{Document, Origin, assign_ids};
 use crate::model::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,12 +267,26 @@ fn track_name(p: &Project, id: TrackId) -> String {
 /// Plain-language sentence for an applied command.
 fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
     match cmd {
-        Command::AddTrack { track, .. } => format!("Added {} track, {}.", match track.kind { TrackKind::Audio => "an audio", TrackKind::Instrument => "an instrument", TrackKind::Return => "a return" }, track.name),
+        Command::AddTrack { track, .. } => format!(
+            "Added {} track, {}.",
+            match track.kind {
+                TrackKind::Audio => "an audio",
+                TrackKind::Instrument => "an instrument",
+                TrackKind::Return => "a return",
+            },
+            track.name
+        ),
         Command::RemoveTrack { track } => format!("Deleted {}.", track_name(before, *track)),
-        Command::RenameTrack { track, name } | Command::RestoreTrackName { track, name } => format!("Renamed {} to {}.", track_name(before, *track), name),
+        Command::RenameTrack { track, name } | Command::RestoreTrackName { track, name } => {
+            format!("Renamed {} to {}.", track_name(before, *track), name)
+        }
         Command::SetTrackGain { track, gain } => format!("Set {} volume to {:.1} dB.", track_name(after, *track), gain_to_db(*gain)),
         Command::SetTrackPan { track, pan } => {
-            let side = if pan.abs() < 0.005 { "centre".to_string() } else { format!("{:.0}% {}", pan.abs() * 100.0, if *pan < 0.0 { "left" } else { "right" }) };
+            let side = if pan.abs() < 0.005 {
+                "centre".to_string()
+            } else {
+                format!("{:.0}% {}", pan.abs() * 100.0, if *pan < 0.0 { "left" } else { "right" })
+            };
             format!("Panned {} {}.", track_name(after, *track), side)
         }
         Command::SetTrackMute { track, mute } => format!("{} {}.", if *mute { "Muted" } else { "Unmuted" }, track_name(after, *track)),

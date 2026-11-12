@@ -1,0 +1,7 @@
+# Formatting for the Rust workspace (`cargo fmt --all`; CI checks it in the lint job).
+# The code favours long, dense lines, so the width is well above rustfmt's default
+# of 100 and the "Max" heuristics keep short calls, struct literals and chains on
+# one line when they fit.
+style_edition = "2024"
+max_width = 140
+use_small_heuristics = "Max"

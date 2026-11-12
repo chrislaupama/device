@@ -290,15 +290,78 @@ pub struct Bank {
 
 pub const BANKS: [Bank; 10] = [
     Bank { name: "Free", detents: &[], q_scale: 1.0, prop_q: false, overshoot: 0.0, asymmetry: 0.15 },
-    Bank { name: "Passive Valve", detents: &[20.0, 30.0, 60.0, 100.0, 1500.0, 3000.0, 5000.0, 8000.0, 10_000.0, 12_000.0, 16_000.0], q_scale: 0.8, prop_q: false, overshoot: 0.3, asymmetry: 0.6 },
-    Bank { name: "Inductor Broad", detents: &[35.0, 60.0, 110.0, 220.0, 360.0, 700.0, 1600.0, 3200.0, 4800.0, 7200.0, 12_000.0], q_scale: 0.75, prop_q: true, overshoot: 0.15, asymmetry: 0.35 },
-    Bank { name: "Transistor Desk", detents: &[50.0, 80.0, 120.0, 200.0, 300.0, 500.0, 800.0, 1200.0, 2000.0, 3000.0, 5000.0, 8000.0, 12_000.0], q_scale: 1.0, prop_q: true, overshoot: 0.05, asymmetry: 0.1 },
-    Bank { name: "Discrete Op-Amp", detents: &[40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 10_000.0, 16_000.0], q_scale: 1.15, prop_q: false, overshoot: 0.0, asymmetry: 0.05 },
-    Bank { name: "Class A Bell", detents: &[60.0, 100.0, 200.0, 400.0, 700.0, 1000.0, 1800.0, 2700.0, 4000.0, 6000.0, 9000.0], q_scale: 0.9, prop_q: true, overshoot: 0.0, asymmetry: 0.45 },
-    Bank { name: "Class A Shelf", detents: &[30.0, 50.0, 80.0, 120.0, 200.0, 3500.0, 5000.0, 7500.0, 10_000.0, 15_000.0], q_scale: 1.0, prop_q: false, overshoot: 0.2, asymmetry: 0.45 },
-    Bank { name: "Inductor Fine", detents: &[45.0, 75.0, 150.0, 300.0, 500.0, 900.0, 1400.0, 2200.0, 3300.0, 5000.0, 7500.0, 11_000.0], q_scale: 1.4, prop_q: true, overshoot: 0.1, asymmetry: 0.3 },
-    Bank { name: "Broadcast Fixed", detents: &[80.0, 150.0, 300.0, 1000.0, 2500.0, 5000.0, 10_000.0], q_scale: 0.85, prop_q: false, overshoot: 0.0, asymmetry: 0.2 },
-    Bank { name: "Passive Mid", detents: &[200.0, 300.0, 500.0, 700.0, 1000.0, 1500.0, 2000.0, 3000.0, 4000.0, 5000.0, 7000.0], q_scale: 0.7, prop_q: false, overshoot: 0.1, asymmetry: 0.5 },
+    Bank {
+        name: "Passive Valve",
+        detents: &[20.0, 30.0, 60.0, 100.0, 1500.0, 3000.0, 5000.0, 8000.0, 10_000.0, 12_000.0, 16_000.0],
+        q_scale: 0.8,
+        prop_q: false,
+        overshoot: 0.3,
+        asymmetry: 0.6,
+    },
+    Bank {
+        name: "Inductor Broad",
+        detents: &[35.0, 60.0, 110.0, 220.0, 360.0, 700.0, 1600.0, 3200.0, 4800.0, 7200.0, 12_000.0],
+        q_scale: 0.75,
+        prop_q: true,
+        overshoot: 0.15,
+        asymmetry: 0.35,
+    },
+    Bank {
+        name: "Transistor Desk",
+        detents: &[50.0, 80.0, 120.0, 200.0, 300.0, 500.0, 800.0, 1200.0, 2000.0, 3000.0, 5000.0, 8000.0, 12_000.0],
+        q_scale: 1.0,
+        prop_q: true,
+        overshoot: 0.05,
+        asymmetry: 0.1,
+    },
+    Bank {
+        name: "Discrete Op-Amp",
+        detents: &[40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 10_000.0, 16_000.0],
+        q_scale: 1.15,
+        prop_q: false,
+        overshoot: 0.0,
+        asymmetry: 0.05,
+    },
+    Bank {
+        name: "Class A Bell",
+        detents: &[60.0, 100.0, 200.0, 400.0, 700.0, 1000.0, 1800.0, 2700.0, 4000.0, 6000.0, 9000.0],
+        q_scale: 0.9,
+        prop_q: true,
+        overshoot: 0.0,
+        asymmetry: 0.45,
+    },
+    Bank {
+        name: "Class A Shelf",
+        detents: &[30.0, 50.0, 80.0, 120.0, 200.0, 3500.0, 5000.0, 7500.0, 10_000.0, 15_000.0],
+        q_scale: 1.0,
+        prop_q: false,
+        overshoot: 0.2,
+        asymmetry: 0.45,
+    },
+    Bank {
+        name: "Inductor Fine",
+        detents: &[45.0, 75.0, 150.0, 300.0, 500.0, 900.0, 1400.0, 2200.0, 3300.0, 5000.0, 7500.0, 11_000.0],
+        q_scale: 1.4,
+        prop_q: true,
+        overshoot: 0.1,
+        asymmetry: 0.3,
+    },
+    Bank {
+        name: "Broadcast Fixed",
+        detents: &[80.0, 150.0, 300.0, 1000.0, 2500.0, 5000.0, 10_000.0],
+        q_scale: 0.85,
+        prop_q: false,
+        overshoot: 0.0,
+        asymmetry: 0.2,
+    },
+    Bank {
+        name: "Passive Mid",
+        detents: &[200.0, 300.0, 500.0, 700.0, 1000.0, 1500.0, 2000.0, 3000.0, 4000.0, 5000.0, 7000.0],
+        q_scale: 0.7,
+        prop_q: false,
+        overshoot: 0.1,
+        asymmetry: 0.5,
+    },
 ];
 
 /// The bank of a Bank parameter value (clamped).
@@ -569,7 +632,16 @@ mod tests {
         c.low_atten_db = 6.0;
         let mut d = Band::new(Shape::Bell, 2500.0, -7.5, 1.3);
         d.prop_q = true;
-        let want = [(a, 100.0, 7.843498), (a, 330.0, -0.675584), (b, 900.0, -0.567544), (b, 400.0, -47.592860), (c, 30.0, 3.508999), (c, 120.0, -0.137253), (d, 2500.0, -7.5), (d, 3500.0, -2.570398)];
+        let want = [
+            (a, 100.0, 7.843498),
+            (a, 330.0, -0.675584),
+            (b, 900.0, -0.567544),
+            (b, 400.0, -47.592860),
+            (c, 30.0, 3.508999),
+            (c, 120.0, -0.137253),
+            (d, 2500.0, -7.5),
+            (d, 3500.0, -2.570398),
+        ];
         for (band, f, db) in want {
             assert!((band_db(&band, f, FS) - db).abs() < 1e-4, "{:?} at {f}", band.shape);
         }
