@@ -417,7 +417,7 @@ impl Builder<'_> {
 fn top_items(ui: &FilesUi, folders: &[String]) -> Vec<(FileItem, String)> {
     let mut top: Vec<(FileItem, String)> = if ui.tab == TAB_PROJECTS {
         let mut ps = ui.projects.clone();
-        ps.sort_by(|a, b| b.1.cmp(&a.1));
+        ps.sort_by_key(|p| std::cmp::Reverse(p.1));
         ps.into_iter()
             .map(|(p, _)| {
                 let name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -563,11 +563,9 @@ impl Controller {
         if let FileItem::Audio(p) = &item {
             self.audition(p.clone());
         }
-        if matches!(item, FileItem::Folder(_)) || (chevron && item.expandable()) {
-            if !self.files.expanded.remove(&key) {
-                self.files.expanded.insert(key);
-                self.files_load(&item);
-            }
+        if (matches!(item, FileItem::Folder(_)) || (chevron && item.expandable())) && !self.files.expanded.remove(&key) {
+            self.files.expanded.insert(key);
+            self.files_load(&item);
         }
         self.ui_dirty = true;
     }
