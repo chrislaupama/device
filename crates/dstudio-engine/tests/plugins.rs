@@ -256,3 +256,48 @@ fn scanner_finds_test_plugins_and_blocklists_the_crash() {
     assert_eq!(again.plugins.len(), report.plugins.len());
     assert_eq!(again.failed, report.failed);
 }
+
+/// Copies a plugin bundle (a file, or a folder on macOS and for VST3) into `dir`.
+fn copy_bundle(src: &std::path::Path, dir: &std::path::Path) -> std::path::PathBuf {
+    fn copy(src: &std::path::Path, dst: &std::path::Path) {
+        if src.is_dir() {
+            std::fs::create_dir_all(dst).unwrap();
+            for e in std::fs::read_dir(src).unwrap() {
+                let e = e.unwrap();
+                copy(&e.path(), &dst.join(e.file_name()));
+            }
+        } else {
+            std::fs::copy(src, dst).unwrap();
+        }
+    }
+    let dst = dir.join(src.file_name().unwrap());
+    copy(src, &dst);
+    dst
+}
+
+/// A custom plugin folder (Settings › Plugins › Add folder) is searched like the standard
+/// ones, and a missing one is skipped without failing the scan.
+#[test]
+fn scanner_searches_custom_folders() {
+    let custom = tempfile::tempdir().unwrap();
+    let bundle = copy_bundle(&dstudio_engine::test_plugin_dir().join("DStudioTestGain.clap"), custom.path());
+    let cache_dir = tempfile::tempdir().unwrap();
+    let cache = cache_dir.path().join("plugins.json");
+    let missing = custom.path().join("not-there");
+    let report = dstudio_engine::scan_plugins_in(&cache, false, &[missing, custom.path().to_path_buf()], &mut |_| {}).unwrap();
+    let found = |r: &dstudio_engine::ScanReport| {
+        r.plugins.iter().any(|p| {
+            p.plugin.id == "studio.dstudio.test.gain"
+                && p.plugin.path.as_deref().is_some_and(|q| std::path::Path::new(q).starts_with(custom.path()))
+        })
+    };
+    assert!(
+        found(&report),
+        "gain plugin from {} not found: {:?}",
+        bundle.display(),
+        report.plugins.iter().map(|p| &p.plugin.path).collect::<Vec<_>>()
+    );
+    // Without the folder, a check for new plugins drops what it held.
+    let again = dstudio_engine::scan_plugins_in(&cache, false, &[], &mut |_| {}).unwrap();
+    assert!(!found(&again));
+}

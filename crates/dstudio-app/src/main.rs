@@ -212,6 +212,8 @@ struct Args {
     modulation_state: u8,
     /// review-settings-plugins: Settings open on the Plugins page.
     plugins_page_review: bool,
+    /// review-plugin-folders: the same with two custom plugin folders, one of them missing.
+    plugin_folders_review: bool,
     assistant_fixture: Option<PathBuf>,
     plugin_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
@@ -533,6 +535,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.plugins_page_review = true;
                 }
+                "review-plugin-folders" => {
+                    a.reference_default = true;
+                    a.plugins_page_review = true;
+                    a.plugin_folders_review = true;
+                }
                 "review-analyzers" => {
                     a.reference_default = true;
                     a.analyzers_review = true;
@@ -554,7 +561,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1733,6 +1740,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.plugins_page_review {
         let mut c = ctl.borrow_mut();
+        if args.plugin_folders_review {
+            // Review only: the preferences are not saved in --state runs.
+            let kept = std::env::temp_dir().join("Studio Plugins");
+            let _ = std::fs::create_dir_all(&kept);
+            let gone = std::env::temp_dir().join("Old Drive").join("Plugins");
+            c.settings.prefs.plugin_folders = [kept, gone].iter().map(|d| d.to_string_lossy().into_owned()).collect();
+        }
         c.open_settings();
         c.settings_page(3);
     }
@@ -2638,6 +2652,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_devmenu_pick, |c, i: i32| c.devmenu_pick(i.max(0) as usize));
     on!(on_devmenu_dismiss, |c| c.devmenu_dismiss());
     on!(on_plugins_rescan, |c, rescan: bool| c.start_plugin_scan(rescan));
+    on!(on_plugins_remove_folder, |c, dir: slint::SharedString| c.plugins_remove_folder(dir.as_str()));
+    {
+        // The folder dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
+        let ctl = ctl.clone();
+        studio.on_plugins_add_folder(move || {
+            if let Some(dir) = rfd::FileDialog::new().set_title("Add plugin folder").pick_folder() {
+                ctl.borrow_mut().plugins_add_folder(&dir);
+            }
+        });
+    }
     on!(on_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     // TODO(feedback): wire "Report a bug" / "Share your feedback" to a real channel. No-ops for now.
     on!(on_report_bug, |c| c.set_status("Report a bug: not connected yet (TODO)", 3));

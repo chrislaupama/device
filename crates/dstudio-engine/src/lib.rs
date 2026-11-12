@@ -1393,6 +1393,18 @@ pub fn test_plugin_dir() -> PathBuf {
 /// unchanged bundles (and blocklisted ones) come from the cache. Blocking:
 /// call from a worker thread. `progress` receives a short status per plugin.
 pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&str)) -> Result<ScanReport, EngineError> {
+    scan_plugins_in(cache_path, rescan, &[], progress)
+}
+
+/// [`scan_plugins`] that also searches `extra_dirs` (the user's custom plugin
+/// folders, every format), ahead of `$DSTUDIO_PLUGIN_PATH`. A folder that does
+/// not exist is skipped.
+pub fn scan_plugins_in(
+    cache_path: &Path,
+    rescan: bool,
+    extra_dirs: &[PathBuf],
+    progress: &mut dyn FnMut(&str),
+) -> Result<ScanReport, EngineError> {
     use std::io::{BufRead, Read};
     let exe = plugin_scanner_path();
     if !exe.is_file() {
@@ -1407,6 +1419,16 @@ pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&s
     cmd.arg("--scan").arg("--cache").arg(cache_path);
     if rescan {
         cmd.arg("--rescan");
+    }
+    // The scanner reads its extra folders from $DSTUDIO_PLUGIN_PATH: the custom ones go first. A
+    // folder whose path holds the list separator cannot be passed (the app refuses to add one).
+    let extra: Vec<&PathBuf> = extra_dirs.iter().filter(|d| std::env::join_paths([d]).is_ok()).collect();
+    if !extra.is_empty() {
+        let inherited = std::env::var_os("DSTUDIO_PLUGIN_PATH");
+        let all = extra.into_iter().cloned().chain(inherited.iter().flat_map(std::env::split_paths));
+        if let Ok(joined) = std::env::join_paths(all) {
+            cmd.env("DSTUDIO_PLUGIN_PATH", joined);
+        }
     }
     #[cfg(windows)]
     {

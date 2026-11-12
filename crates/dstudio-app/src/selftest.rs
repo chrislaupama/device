@@ -3774,6 +3774,107 @@ fn route_row(ctl: &Ctl, i: usize) -> (f32, f32) {
 /// Return tracks, sends and Out through the interface (spec 002, A8): a return created from the
 /// Sends tab's "+", a send level drag (one undo step), Pre, the Out menu, the mixer's Sends
 /// section, the Returns pill, removing a send, and removing the return with its routing.
+/// Settings › Plugins custom folders (issue #33): add one holding a copy of the test gain CLAP
+/// and one that does not exist, remove them again.
+fn plugin_folder_steps() -> Vec<Step> {
+    use Step::*;
+    let root = std::env::temp_dir().join(format!("dstudio-selftest-plugins-{}", std::process::id()));
+    let (kept, gone) = (root.join("Custom Plugins"), root.join("Moved Away"));
+    let (k1, k2, k3, g1, g2, r1) = (kept.clone(), kept.clone(), kept.clone(), gone.clone(), gone.clone(), root.clone());
+    let custom_rows = |a: &AppWindow| -> Vec<(usize, crate::PluginRow)> {
+        let m = a.global::<Studio>().get_scan_dirs();
+        (0..m.row_count()).filter_map(|i| m.row_data(i).map(|r| (i, r))).filter(|(_, r)| r.badge == crate::devices::CUSTOM_BADGE).collect()
+    };
+    let in_kept = move |c: &Controller, dir: &std::path::Path| {
+        c.devices.catalog.plugins.iter().any(|p| {
+            p.plugin.id == "studio.dstudio.test.gain" && p.plugin.path.as_deref().is_some_and(|q| std::path::Path::new(q).starts_with(dir))
+        })
+    };
+    vec![
+        DoC(
+            "plugin folders: Settings › Plugins, add a folder holding the test gain CLAP and one that does not exist",
+            Box::new(move |_, ctl| {
+                let _ = std::fs::create_dir_all(&k1);
+                let src = dstudio_engine::test_plugin_dir().join("DStudioTestGain.clap");
+                if src.is_file() {
+                    let _ = std::fs::copy(&src, k1.join("DStudioTestGain.clap"));
+                }
+                let mut c = ctl.borrow_mut();
+                c.settings.prefs.plugin_folders.clear();
+                c.open_settings();
+                c.settings_page(crate::settings::PLUGINS_PAGE);
+                c.plugins_add_folder(&k1);
+                c.plugins_add_folder(&g1);
+                c.plugins_add_folder(&k1); // twice: refused
+            }),
+        ),
+        Check(
+            "plugin folders: both listed last with the Custom badge, the missing one marked Missing, the scan found the copied plugin there [needs engine plugin scanning]",
+            Box::new(move |c, a| {
+                let rows = custom_rows(a);
+                let warn: Vec<bool> = rows.iter().map(|(_, r)| r.warn).collect();
+                let total = a.global::<Studio>().get_scan_dirs().row_count();
+                let last = rows.last().map_or(0, |(i, _)| *i + 1);
+                if warn != [false, true] || last != total || c.settings.prefs.plugin_folders.len() != 2 {
+                    return Err(format!(
+                        "custom rows {:?} of {total}, prefs {:?}",
+                        rows.iter().map(|(_, r)| r.name.to_string()).collect::<Vec<_>>(),
+                        c.settings.prefs.plugin_folders
+                    ));
+                }
+                if c.devices.catalog.fixture.is_some() || !dstudio_engine::test_plugin_dir().join("DStudioTestGain.clap").is_file() {
+                    return Ok(());
+                }
+                in_kept(c, &k2).then_some(()).ok_or(format!("no test gain plugin from {} in the catalogue", k2.display()))
+            }),
+        ),
+        DoC(
+            "plugin folders: click the missing folder's remove button",
+            Box::new(move |a, ctl| {
+                let Some((i, r)) = custom_rows(a).into_iter().last() else { return };
+                if i < 8 {
+                    let row_w = set_w() - 187.0 - 41.0;
+                    click(a, set_x() + 187.0 + 20.5 + row_w - 22.0 + 8.0, set_y() + 91.0 + i as f32 * 30.5 + 12.5);
+                } else {
+                    ctl.borrow_mut().plugins_remove_folder(r.detail.as_str()); // scrolled out of the 8-row list
+                }
+            }),
+        ),
+        Check(
+            "plugin folders: the missing folder is gone, the other stays",
+            Box::new(move |c, a| {
+                let want = vec![k3.to_string_lossy().into_owned()];
+                (c.settings.prefs.plugin_folders == want && custom_rows(a).len() == 1).then_some(()).ok_or(format!(
+                    "prefs {:?}, gone {}",
+                    c.settings.prefs.plugin_folders,
+                    g2.display()
+                ))
+            }),
+        ),
+        DoC(
+            "plugin folders: remove the other one, close Settings",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let all = c.settings.prefs.plugin_folders.clone();
+                for f in all {
+                    c.plugins_remove_folder(&f);
+                }
+                c.close_settings();
+            }),
+        ),
+        Check(
+            "plugin folders: none left, and the copied plugin left the catalogue with its folder",
+            Box::new(move |c, _| {
+                let _ = std::fs::remove_dir_all(&r1);
+                let dir = r1.join("Custom Plugins");
+                (c.settings.prefs.plugin_folders.is_empty() && !in_kept(c, &dir))
+                    .then_some(())
+                    .ok_or(format!("prefs {:?}", c.settings.prefs.plugin_folders))
+            }),
+        ),
+    ]
+}
+
 fn returns_steps() -> Vec<Step> {
     use Step::*;
     let u = 0.85;
@@ -13430,6 +13531,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(add_search_steps());
     all.extend(live_import_steps());
     all.extend(returns_steps());
+    all.extend(plugin_folder_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to

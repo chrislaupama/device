@@ -1160,7 +1160,9 @@ loads no plugin code), VST3/CLAP bundles in `/Library/Audio/Plug-Ins/{VST3,CLAP}
 `~/Library/Audio/Plug-Ins/{VST3,CLAP}` (Windows/Linux folders: see
 [Platforms](#platforms)) and the `$DSTUDIO_PLUGIN_PATH` entries (`:`-separated,
 `;` on Windows; directories searched up to 3 levels, or bundle
-paths). Every AU and every bundle not in the cache with the same stamp (AU
+paths). The app's custom plugin folders (Settings › Plugins › Add folder) reach the
+scanner the same way: `scan_plugins_in` puts them first in the child's
+`$DSTUDIO_PLUGIN_PATH`; a folder that does not exist is skipped. Every AU and every bundle not in the cache with the same stamp (AU
 version; newest mtime of the bundle, its Info.plist and its binaries in
 `Contents/MacOS`, `Contents/<arch>-win` or `Contents/<arch>-linux`; a
 single-file plugin's own mtime)
