@@ -1,4 +1,4 @@
-# Packages Device Studio for Windows x64: a portable .zip and an Inno Setup installer.
+# Packages Device for Windows x64: a portable .zip and an Inno Setup installer.
 #
 # Usage (from a Visual Studio x64 developer environment, after
 #   cargo build --release --locked -p dstudio-app):
@@ -19,7 +19,7 @@ $release = Join-Path $target 'release'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = Resolve-Path $OutDir
 
-$stage = Join-Path ([System.IO.Path]::GetTempPath()) "DeviceStudio-$Version"
+$stage = Join-Path ([System.IO.Path]::GetTempPath()) "Device-$Version"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Path $stage | Out-Null
 
@@ -42,7 +42,7 @@ foreach ($doc in 'LICENSE', 'README.md') {
 }
 Get-ChildItem $stage | Format-Table Name, Length
 
-$zip = Join-Path $OutDir "DeviceStudio-$Version-windows-x64.zip"
+$zip = Join-Path $OutDir "Device-$Version-windows-x64.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
 

@@ -1,6 +1,6 @@
 ---
 name: dstudio-pr
-description: Open a Device Studio pull request the project's way - one change per PR rebased on main, the local gate passing, the PR template filled with before/after screenshots and benchmark numbers, README and docs updated, then CI green and every review finding fixed. Use whenever asked to open, prepare or finish a pull request.
+description: Open a Device pull request the project's way - one change per PR rebased on main, the local gate passing, the PR template filled with before/after screenshots and benchmark numbers, README and docs updated, then CI green and every review finding fixed. Use whenever asked to open, prepare or finish a pull request.
 ---
 
 # Pull requests

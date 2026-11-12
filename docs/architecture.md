@@ -1,4 +1,4 @@
-# Device Studio: architecture specification
+# Device: architecture specification
 
 Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** have their own record in `docs/adr/`.
 

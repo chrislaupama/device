@@ -1,6 +1,6 @@
 # Specs
 
-Non-trivial work on Device Studio is spec-driven: we agree on what to build and how before writing
+Non-trivial work on Device is spec-driven: we agree on what to build and how before writing
 the code, and the spec ships in the same pull request as the change. A spec is short. Its job is to
 make the decisions visible while they are still cheap to change, and to leave a record of why the
 code is the way it is.

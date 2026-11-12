@@ -1,4 +1,4 @@
-// Device Studio main window.
+// Device main window.
 //
 // Geometry is in window-relative points at 1440x820.
 // Panels are positioned absolutely; right-hand
@@ -1070,7 +1070,7 @@ export struct LayoutAnchors {
 }
 
 export component AppWindow inherits Window {
-    title: Studio.project-name + " — Device Studio";
+    title: Studio.project-name + " — Device";
     preferred-width: 1440px;
     preferred-height: 820px;
     min-width: 960px;
@@ -1085,7 +1085,7 @@ export component AppWindow inherits Window {
     // menu after About and hides this menu (other platforms show it as is).
     MenuBar {
         Menu {
-            title: "Device Studio";
+            title: "Device";
             MenuItem { title: "Settings…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + ","); activated => { Studio.menu-key(",", true, false); } }
             MenuSeparator { }
         }

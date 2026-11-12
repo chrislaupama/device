@@ -237,7 +237,7 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v10`: channel-strip trim, width and mono (spec 004); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
+    /// (`se_session_publish_v10`: channel-strip trim, width and mono (spec 005); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -442,7 +442,7 @@ impl Engine {
             send_count: sends.len() as u32,
             sends: sends.as_ptr(),
         };
-        // Channel strip (spec 004): only tracks whose trim, width or mono change the signal.
+        // Channel strip (spec 005): only tracks whose trim, width or mono change the signal.
         let strips: Vec<ffi::se_track_strip> = s
             .tracks
             .iter()
@@ -1401,6 +1401,18 @@ pub fn test_plugin_dir() -> PathBuf {
 /// unchanged bundles (and blocklisted ones) come from the cache. Blocking:
 /// call from a worker thread. `progress` receives a short status per plugin.
 pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&str)) -> Result<ScanReport, EngineError> {
+    scan_plugins_in(cache_path, rescan, &[], progress)
+}
+
+/// [`scan_plugins`] that also searches `extra_dirs` (the user's custom plugin
+/// folders, every format), ahead of `$DSTUDIO_PLUGIN_PATH`. A folder that does
+/// not exist is skipped.
+pub fn scan_plugins_in(
+    cache_path: &Path,
+    rescan: bool,
+    extra_dirs: &[PathBuf],
+    progress: &mut dyn FnMut(&str),
+) -> Result<ScanReport, EngineError> {
     use std::io::{BufRead, Read};
     let exe = plugin_scanner_path();
     if !exe.is_file() {
@@ -1415,6 +1427,16 @@ pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&s
     cmd.arg("--scan").arg("--cache").arg(cache_path);
     if rescan {
         cmd.arg("--rescan");
+    }
+    // The scanner reads its extra folders from $DSTUDIO_PLUGIN_PATH: the custom ones go first. A
+    // folder whose path holds the list separator cannot be passed (the app refuses to add one).
+    let extra: Vec<&PathBuf> = extra_dirs.iter().filter(|d| std::env::join_paths([d]).is_ok()).collect();
+    if !extra.is_empty() {
+        let inherited = std::env::var_os("DSTUDIO_PLUGIN_PATH");
+        let all = extra.into_iter().cloned().chain(inherited.iter().flat_map(std::env::split_paths));
+        if let Ok(joined) = std::env::join_paths(all) {
+            cmd.env("DSTUDIO_PLUGIN_PATH", joined);
+        }
     }
     #[cfg(windows)]
     {

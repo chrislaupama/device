@@ -1,6 +1,6 @@
 # Channel strip trim, width and mono
 
-Status: Done · Spec: 004 · Issue: #32
+Status: Done · Spec: 005 · Issue: #32
 
 ## Problem
 

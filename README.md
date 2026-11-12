@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<h1><img alt="Device Studio. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%"></h1>
+<h1><img alt="Device. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%"></h1>
 
 <p>
   <a href="https://github.com/devicedaw/device/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/devicedaw/device/actions/workflows/ci.yml/badge.svg?branch=main"></a>
@@ -26,16 +26,16 @@
 
 ---
 
-## What is Device Studio?
+## What is Device?
 
-Device Studio is a linear, track-based music production program. You record or import audio, write parts in the piano
+Device is a linear, track-based music production program. You record or import audio, write parts in the piano
 roll, shape sounds with the built-in instruments and effects or your own AU, VST3 and CLAP plugins, automate anything,
 and mix in the mixer. The audio engine is written in C++23 and never allocates or locks on the audio thread; the
 interface is written in Rust with Slint, and the timeline, waveforms, piano roll and meters are drawn on the GPU with
 wgpu.
 
 > [!WARNING]
-> **Device Studio is pre-alpha.** There are no releases yet, features are missing, and the project format may still
+> **Device is pre-alpha.** There are no releases yet, features are missing, and the project format may still
 > change. macOS is the platform it's developed and tested on every day; Windows and Linux build, but their audio
 > backends have never run on a physical sound card (Linux runs real PipeWire streams in CI). Keep copies of anything you care about.
 
@@ -61,7 +61,8 @@ wgpu.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
   macros.
 - **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
-  is blocklisted instead of taking the app down, and their editors open in their own windows.
+  is blocklisted instead of taking the app down, and their editors open in their own windows. Besides the standard
+  plugin folders, Settings › Plugins scans any folders you add.
 - **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
   can be switched off.
 - **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
@@ -88,7 +89,7 @@ framed by <code>tools/art/render.mjs</code>.</sub>
 
 ### Built-in devices
 
-Device Studio comes with 44 devices of its own. Each one is a single declarative definition (parameters, panel layout and
+Device comes with 44 devices of its own. Each one is a single declarative definition (parameters, panel layout and
 factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
 behind it. [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
@@ -166,7 +167,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
 
-## Get Device Studio
+## Get Device
 
 | System | You need | Audio | Plugins |
 |---|---|---|---|
@@ -263,7 +264,7 @@ finishes something it describes, the same pull request updates it:
 
 - **Features** and **Built-in devices** when a feature or device lands or is removed (the device count too).
 - **Status** when an area moves between 🚧 and ✅, or a "still missing" item is done.
-- **Get Device Studio** and **Build from source** when platform support, requirements or build steps change, along
+- **Get Device** and **Build from source** when platform support, requirements or build steps change, along
   with [docs/building.md](docs/building.md).
 - **Under the hood** when the benchmark numbers in [engine/README.md](engine/README.md) change noticeably.
 - **Artwork** in `docs/assets/art/` (the banner, the close-ups, the architecture panel and the social preview) when
@@ -274,14 +275,14 @@ finishes something it describes, the same pull request updates it:
 
 ## Contributing
 
-Device Studio is not accepting outside contributions yet: issues, pull requests and comments are limited to the
+Device is not accepting outside contributions yet: issues, pull requests and comments are limited to the
 maintainer for now. You are welcome to read, build and fork the code. [CONTRIBUTING.md](CONTRIBUTING.md) describes how
 contributions will work once they open. Security problems can be reported privately at any time as described in
 [SECURITY.md](SECURITY.md).
 
 ## License
 
-Device Studio is free software: you can redistribute it and/or modify it under the terms of the
+Device is free software: you can redistribute it and/or modify it under the terms of the
 [GNU Affero General Public License](LICENSE), version 3 or (at your option) any later version. It comes with no
 warranty. In short, you may use, study, change and share it. If you distribute it, modified or not (including as a
 binary), you must offer its complete source under the same licence; if you modify it and let people use it over a

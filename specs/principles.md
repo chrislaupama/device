@@ -1,6 +1,6 @@
 # Principles
 
-The rules every change to Device Studio follows, from people and agents alike. Each one points at
+The rules every change to Device follows, from people and agents alike. Each one points at
 the document that owns it, so this file stays short and the owning document stays the authority.
 A spec's plan checks itself against this list (`plan.md` › Principles check).
 

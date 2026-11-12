@@ -2,11 +2,11 @@ name: Release
 
 # Builds the installable packages and, for a version tag, publishes them as a draft
 # GitHub release:
-#   macOS    DeviceStudio-<version>-macos-universal.dmg      (Apple silicon + Intel)
-#   Windows  DeviceStudio-<version>-windows-x64-setup.exe    (installer)
-#            DeviceStudio-<version>-windows-x64.zip          (portable)
-#   Linux    DeviceStudio-<version>-linux-x86_64.tar.gz
-#            DeviceStudio-<version>-linux-aarch64.tar.gz
+#   macOS    Device-<version>-macos-universal.dmg      (Apple silicon + Intel)
+#   Windows  Device-<version>-windows-x64-setup.exe    (installer)
+#            Device-<version>-windows-x64.zip          (portable)
+#   Linux    Device-<version>-linux-x86_64.tar.gz
+#            Device-<version>-linux-aarch64.tar.gz
 #
 # Releasing: set `version` in the root Cargo.toml to X.Y.Z, merge that to main, then push
 # the tag vX.Y.Z on that commit. The tag must be on main and match Cargo.toml, or nothing
@@ -167,19 +167,19 @@ jobs:
           DSTUDIO_MACOS_X86_DIR: build/macos-x86_64
         run: |
           bash tools/release/package-macos.sh build/macos
-          ditto -c -k --keepParent "build/macos/Device Studio.app" build/macos/DeviceStudio-app.zip
+          ditto -c -k --keepParent "build/macos/Device.app" build/macos/Device-app.zip
       # The unsigned app goes to the signing job (tags only); every other run makes an
       # ad hoc signed .dmg here, with no secrets in reach.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'push' && github.ref_type == 'tag'
         with:
           name: macos-app
-          path: build/macos/DeviceStudio-app.zip
+          path: build/macos/Device-app.zip
           if-no-files-found: error
           retention-days: 1
       - name: Package .dmg (ad hoc signed)
         if: env.IS_RELEASE != 'true'
-        run: bash tools/release/make-dmg.sh "build/macos/Device Studio.app" "${{ needs.version.outputs.version }}" dist
+        run: bash tools/release/make-dmg.sh "build/macos/Device.app" "${{ needs.version.outputs.version }}" dist
       - name: Smoke test (the packaged app starts and renders)
         if: env.IS_RELEASE != 'true'
         run: bash tools/release/smoke-macos.sh dist/*.dmg
@@ -212,7 +212,7 @@ jobs:
           name: macos-app
           path: build/macos
       - name: Unpack the app
-        run: ditto -x -k build/macos/DeviceStudio-app.zip build/macos
+        run: ditto -x -k build/macos/Device-app.zip build/macos
       - name: Import the signing certificate and the notary key
         id: cert
         if: env.HAS_SIGNING_CERTIFICATE == 'true'
@@ -246,7 +246,7 @@ jobs:
           # A tagged release must be signed and notarised. Set the repository variable
           # ALLOW_UNSIGNED_MACOS to true to publish an ad hoc signed .dmg instead.
           REQUIRE_SIGNING: ${{ vars.ALLOW_UNSIGNED_MACOS != 'true' && '1' || '' }}
-        run: bash tools/release/make-dmg.sh "build/macos/Device Studio.app" "${{ needs.version.outputs.version }}" dist
+        run: bash tools/release/make-dmg.sh "build/macos/Device.app" "${{ needs.version.outputs.version }}" dist
       - name: Remove the signing keychain and key
         if: always()
         run: |
@@ -306,7 +306,7 @@ jobs:
           SLINT_WGPU_CPU: '1' # WARP: no GPU on the runner
         run: |
           $setup = Get-ChildItem dist -Filter '*-setup.exe' | Select-Object -First 1
-          $dir = Join-Path $env:RUNNER_TEMP 'DeviceStudio'
+          $dir = Join-Path $env:RUNNER_TEMP 'Device'
           $p = Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', "/DIR=$dir" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "installer exit code $($p.ExitCode)" }
           foreach ($f in 'device-studio.exe', 'dstudio_plugin_scanner.exe', 'vcruntime140.dll') {
@@ -316,6 +316,7 @@ jobs:
           $p = Start-Process -FilePath (Join-Path $dir 'device-studio.exe') -ArgumentList '--state', 'reference-default', '--screenshot', $shot -NoNewWindow -Wait -PassThru
           "exit code: 0x{0:X8}" -f $p.ExitCode
           if (-not (Test-Path $shot)) { throw "the installed app did not render" }
+          if ($p.ExitCode -ne 0) { throw "the installed app exited with 0x{0:X8}" -f $p.ExitCode }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package-windows
@@ -420,6 +421,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
-            --title "Device Studio ${{ needs.version.outputs.version }}" \
+            --title "Device ${{ needs.version.outputs.version }}" \
             --generate-notes \
             --verify-tag

@@ -130,7 +130,7 @@ pub fn system_prompt(mode: Mode) -> String {
         }
     };
     format!(
-        "You are the assistant inside Device Studio, a desktop digital audio workstation (DAW). The window has a header with a \
+        "You are the assistant inside Device, a desktop digital audio workstation (DAW). The window has a header with a \
          transport bar (play, loop, bar/time readouts, BPM, key, time signature, metronome, master volume), a sound browser on the \
          left, a timeline with track headers (mute, solo, arm, pan knob, volume slider) and lanes holding audio clips, a master row, \
          and a bottom panel with the track inspector and devices, which can switch to a mixer. Time positions are in ticks (960 per \

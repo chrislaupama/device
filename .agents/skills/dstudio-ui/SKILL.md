@@ -1,6 +1,6 @@
 ---
 name: dstudio-ui
-description: Work on Device Studio's interface - Slint components in crates/dstudio-app/ui, the controller and panels in crates/dstudio-app/src, wgpu surfaces, design tokens, review states rendered with --state/--screenshot, and the app self-test. Use for any visible change or UI behaviour change.
+description: Work on Device's interface - Slint components in crates/dstudio-app/ui, the controller and panels in crates/dstudio-app/src, wgpu surfaces, design tokens, review states rendered with --state/--screenshot, and the app self-test. Use for any visible change or UI behaviour change.
 ---
 
 # The app and its interface

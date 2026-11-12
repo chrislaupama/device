@@ -73,7 +73,7 @@ pub struct TrackSnapshot {
     pub track_id: u64,
     pub gain: f32,
     pub pan: f32,
-    /// Channel strip (spec 004): linear trim, width (1 = unchanged) and mono fold.
+    /// Channel strip (spec 005): linear trim, width (1 = unchanged) and mono fold.
     pub trim: f32,
     pub width: f32,
     pub mono: bool,

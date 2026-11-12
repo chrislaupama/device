@@ -1,4 +1,4 @@
-; Inno Setup script for the Device Studio Windows installer.
+; Inno Setup script for the Device Windows installer.
 ; Built by tools/release/package-windows.ps1, which passes AppVersion, SourceDir (the staged
 ; app folder) and OutputDir.
 
@@ -9,14 +9,15 @@
 [Setup]
 ; A fixed id: later versions upgrade this install instead of adding a second one.
 AppId={{6C1C7F5E-3B47-4E0B-9C1F-5D2B8F0A4E61}
-AppName=Device Studio
+AppName=Device
 AppVersion={#AppVersion}
-AppVerName=Device Studio {#AppVersion}
-DefaultDirName={autopf}\Device Studio
-DefaultGroupName=Device Studio
+AppVerName=Device {#AppVersion}
+DefaultDirName={autopf}\Device
+DefaultGroupName=Device
+UsePreviousGroup=no
 UninstallDisplayIcon={app}\device-studio.exe
 OutputDir={#OutputDir}
-OutputBaseFilename=DeviceStudio-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=Device-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -36,9 +37,17 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
-Name: "{group}\Device Studio"; Filename: "{app}\device-studio.exe"
-Name: "{group}\Uninstall Device Studio"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Device Studio"; Filename: "{app}\device-studio.exe"; Tasks: desktopicon
+Name: "{group}\Device"; Filename: "{app}\device-studio.exe"
+Name: "{group}\Uninstall Device"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\Device"; Filename: "{app}\device-studio.exe"; Tasks: desktopicon
+
+; Remove the previous default shortcuts when upgrading the same AppId. Existing
+; installation directories are reused by Inno Setup; user data is not moved.
+[InstallDelete]
+Type: files; Name: "{autoprograms}\Device Studio\Device Studio.lnk"
+Type: files; Name: "{autoprograms}\Device Studio\Uninstall Device Studio.lnk"
+Type: dirifempty; Name: "{autoprograms}\Device Studio"
+Type: files; Name: "{autodesktop}\Device Studio.lnk"
 
 [Run]
-Filename: "{app}\device-studio.exe"; Description: "{cm:LaunchProgram,Device Studio}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\device-studio.exe"; Description: "{cm:LaunchProgram,Device}"; Flags: nowait postinstall skipifsilent

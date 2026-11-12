@@ -1,4 +1,4 @@
-# Device Studio audio engine (`engine/`)
+# Device audio engine (`engine/`)
 
 C++23 real-time audio engine behind the C ABI in `include/dstudio_engine.h`.
 The Rust core links the static library `dstudio_engine`. The header is the
@@ -136,9 +136,13 @@ without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software 
 are reported as skipped off macOS), as a required step; on Windows with WARP
 (DX12 software adapter) the same, also failing the job when a check fails (the
 full self-test runs on main, nightly and labelled pull requests that change
-the app; see docs/building.md): the screenshot renders and the self-test passes, but the
-process exits with code 0x87A after the run (not yet explained; macOS/Linux
-exit 0), so CI prints that exit code and checks the summary line instead.
+the app; see docs/building.md): the screenshot renders, the self-test passes and the
+exit code is checked on all three systems. On Windows the app ends its process directly
+once `run` has returned (`exit_now` in `crates/dstudio-app/src/main.rs`): with a normal
+exit, any run that had opened the window reported 0x87A instead of our code. The code is
+set after `main` returns, while the process unloads its DLLs, with or without audio, a
+screenshot or presented frames; a run that exits before the window exists returns 0.
+Seen with WARP on the hosted runner; not yet checked on a real GPU.
 Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
 debug-only lock tracing runs in a TLS destructor when Slint's thread-local
 backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
@@ -357,7 +361,7 @@ Semantics:
 * **Pan**: constant power, `θ = (pan + 1)·π/4`, `L = cos θ`, `R = sin θ`
   (centre = −3.01 dB each side, `L² + R² = 1`, hard pans are exact 1/0).
   For stereo material it acts as a balance control (L gain on the L channel).
-* **Trim, width, mono** (`se_session_publish_v10`, spec 004): after the insert chain, before pre-fader sends and
+* **Trim, width, mono** (`se_session_publish_v10`, spec 005): after the insert chain, before pre-fader sends and
   the fader, a listed track's signal is scaled by `trim` and its side signal `(L − R)/2` by `width` around the mid
   `(L + R)/2` (`mono` = width 0). Folded at publish time into `L' = aL + bR`, `R' = bL + aR`
   (`a = trim·(1 + w)/2`, `b = trim·(1 − w)/2`); an unlisted or neutral track is not touched.
@@ -1160,7 +1164,9 @@ loads no plugin code), VST3/CLAP bundles in `/Library/Audio/Plug-Ins/{VST3,CLAP}
 `~/Library/Audio/Plug-Ins/{VST3,CLAP}` (Windows/Linux folders: see
 [Platforms](#platforms)) and the `$DSTUDIO_PLUGIN_PATH` entries (`:`-separated,
 `;` on Windows; directories searched up to 3 levels, or bundle
-paths). Every AU and every bundle not in the cache with the same stamp (AU
+paths). The app's custom plugin folders (Settings › Plugins › Add folder) reach the
+scanner the same way: `scan_plugins_in` puts them first in the child's
+`$DSTUDIO_PLUGIN_PATH`; a folder that does not exist is skipped. Every AU and every bundle not in the cache with the same stamp (AU
 version; newest mtime of the bundle, its Info.plist and its binaries in
 `Contents/MacOS`, `Contents/<arch>-win` or `Contents/<arch>-linux`; a
 single-file plugin's own mtime)

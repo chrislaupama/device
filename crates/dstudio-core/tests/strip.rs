@@ -1,4 +1,4 @@
-//! Channel-strip trim, width and mono (spec 004): commands, undo, coalescing,
+//! Channel-strip trim, width and mono (spec 005): commands, undo, coalescing,
 //! validation, persistence and the snapshot the engine receives.
 use dstudio_core::*;
 use std::collections::HashMap;

@@ -517,7 +517,7 @@ private:
 
         CFMutableDictionaryRef desc = new_dict();
         dict_set_str(desc, CFSTR(kAudioAggregateDeviceUIDKey), uid);
-        dict_set_str(desc, CFSTR(kAudioAggregateDeviceNameKey), "Device Studio Duplex");
+        dict_set_str(desc, CFSTR(kAudioAggregateDeviceNameKey), "Device Duplex");
         dict_set_int(desc, CFSTR(kAudioAggregateDeviceIsPrivateKey), 1);
         dict_set_int(desc, CFSTR(kAudioAggregateDeviceIsStackedKey), 0);
         CFMutableArrayRef subs = CFArrayCreateMutable(nullptr, 0, &kCFTypeArrayCallBacks);

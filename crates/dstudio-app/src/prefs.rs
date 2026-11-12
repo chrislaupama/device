@@ -81,6 +81,10 @@ pub struct Preferences {
     /// Settings › MIDI.
     #[serde(default, skip_serializing_if = "MidiPrefs::is_default")]
     pub midi: MidiPrefs,
+    /// Settings › Plugins › Add folder: plugin folders searched besides the standard ones,
+    /// oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_folders: Vec<String>,
 }
 
 /// Settings › MIDI: MIDI inputs are on by default, including ones plugged in
@@ -203,6 +207,7 @@ mod tests {
             general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() },
             midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] },
             hide_returns: true,
+            plugin_folders: vec!["/opt/plugins".into()],
         };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
@@ -216,6 +221,7 @@ mod tests {
         assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
         assert!(!loaded.hide_returns, "files without the Returns pill state show the returns");
         assert!(loaded.midi.disabled_inputs.is_empty(), "MIDI inputs default to on");
+        assert!(loaded.plugin_folders.is_empty(), "files without custom plugin folders have none");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

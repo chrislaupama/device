@@ -107,7 +107,7 @@ pub struct Track {
     /// -1.0 (left) .. +1.0 (right).
     pub pan: f32,
     /// Channel-strip trim in dB ([Track::TRIM_RANGE_DB]), applied after the inserts and before
-    /// pre-fader sends and the fader (spec 004).
+    /// pre-fader sends and the fader (spec 005).
     #[serde(default, rename = "trim", skip_serializing_if = "is_zero")]
     pub trim_db: f32,
     /// Stereo width ([Track::WIDTH_RANGE]): 0 = mono, 1 = unchanged, 2 = side doubled.

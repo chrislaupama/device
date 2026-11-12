@@ -1,6 +1,6 @@
-# Contributing to Device Studio
+# Contributing to Device
 
-Thanks for your interest. **Device Studio is not accepting outside contributions yet.** The code is open to read,
+Thanks for your interest. **Device is not accepting outside contributions yet.** The code is open to read,
 build and fork under the [licence](LICENSE), but issues, pull requests and comments are limited to the maintainer for
 now while the project is pre-alpha and changing quickly. This page will say when that changes. Security problems can
 still be reported privately at any time through [SECURITY.md](SECURITY.md).
