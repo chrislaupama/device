@@ -56,7 +56,7 @@ std::vector<uint8_t> blob_v2(const std::vector<float>& v, const std::vector<uint
     se_builtin_state_v2 h{SE_BUILTIN_STATE_MAGIC2, static_cast<uint32_t>(v.size()), 0, 0, 0, static_cast<uint32_t>(targets.size()), 0};
     std::vector<uint8_t> out(sizeof h + 4 * v.size() + sizeof(se_mod_route) * targets.size());
     std::memcpy(out.data(), &h, sizeof h);
-    std::memcpy(out.data() + sizeof h, v.data(), 4 * v.size());
+    if (!v.empty()) std::memcpy(out.data() + sizeof h, v.data(), 4 * v.size()); // memcpy from null is UB even for 0 bytes
     for (std::size_t i = 0; i < targets.size(); ++i) {
         se_mod_route r{targets[i], 0, SE_MOD_BUILTIN, 0, 0, 0, -0.25f, 0.25f, -60.f, 0.f, 1.f, 0.f};
         std::memcpy(out.data() + sizeof h + 4 * v.size() + i * sizeof r, &r, sizeof r);
@@ -145,7 +145,7 @@ std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
     se_builtin_state h{SE_BUILTIN_STATE_MAGIC, static_cast<uint32_t>(v.size()), sc};
     std::vector<uint8_t> out(sizeof h + 4 * v.size());
     std::memcpy(out.data(), &h, sizeof h);
-    std::memcpy(out.data() + sizeof h, v.data(), 4 * v.size());
+    if (!v.empty()) std::memcpy(out.data() + sizeof h, v.data(), 4 * v.size()); // memcpy from null is UB even for 0 bytes
     return out;
 }
 
@@ -360,7 +360,7 @@ int main(int argc, char** argv) {
     const char* styles[] = {"Clean", "Opto", "Punch", "Smooth"};
     for (int st = 0; st < 4; ++st) {
         std::vector<float> v = kCompressor;
-        v[7] = static_cast<float>(st);
+        v.at(7) = static_cast<float>(st);
         char name[64];
         std::snprintf(name, sizeof name, "compressor (%s)", styles[st]);
         row(name, bench_kernel("compressor", v, blocks, 0));
@@ -409,7 +409,7 @@ int main(int argc, char** argv) {
     const char* models[] = {"Clean", "Vari-Mu", "Bus VCA", "FET", "Opto", "RMS VCA"};
     for (int m = 0; m < 6; ++m) {
         std::vector<float> v = kCharacter;
-        v[0] = static_cast<float>(m);
+        v.at(0) = static_cast<float>(m);
         char name[64];
         std::snprintf(name, sizeof name, "character-compressor (%s)", models[m]);
         row(name, bench_kernel("character-compressor", v, blocks, 0));

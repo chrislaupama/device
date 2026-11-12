@@ -90,6 +90,8 @@ jobs:
         run: tools/ci/test-changes.sh
       - name: Agent skills
         run: python3 tools/agents/check_skills.py
+      - name: Engine pin checker (offline self-test)
+        run: tools/ci/engine_pins.py --self-test
 
   tests:
     name: tests (${{ matrix.name }})
