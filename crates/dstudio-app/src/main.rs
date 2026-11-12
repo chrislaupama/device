@@ -2356,6 +2356,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_synth_pill, |c, action: i32, arg: i32, x: f32, y: f32, w: f32| c.synth_pill(action, arg.max(0) as usize, x, y, w));
     on!(on_synth_remove, |c, kind: i32, slot: i32| c.synth_remove(kind, slot.max(0) as usize));
     on!(on_synth_knob_menu, |c, id: i32, x: f32, y: f32| c.synth_knob_menu(id.max(0) as usize, x, y));
+    on!(on_strip_menu, |c, track: i32, kind: i32, x: f32, y: f32| c.strip_menu(track, kind, x, y));
+    on!(on_synth_pill_menu, |c, action: i32, arg: i32, x: f32, y: f32| c.synth_pill_menu(action, arg.max(0) as usize, x, y));
     on!(on_synth_rail, |c, src: i32, phase: i32, x: f32, y: f32| c.synth_rail(src.max(0) as usize, phase, x, y));
     on!(on_synth_scope_drag, |c, slot: i32, phase: i32, x: f32, y: f32| c.synth_scope_drag(slot.max(0) as usize, phase, x, y));
     on!(on_synth_macro_select, |c, m: i32| c.synth_macro_select(m.max(0) as usize));
@@ -2706,6 +2708,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 drop(c);
                 // Studio global is reachable through any component handle; avoid holding a strong ref.
                 LANE_CURSOR.with(|lc| lc.set(cur));
+            }
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.auto_hover(x, y);
             }
         });
     }

@@ -621,7 +621,7 @@ impl Controller {
                 t.automation = src
                     .automation
                     .iter()
-                    .filter(|l| matches!(l.target, AutomationTarget::Volume | AutomationTarget::Pan))
+                    .filter(|l| matches!(l.target, AutomationTarget::Volume | AutomationTarget::Pan | AutomationTarget::Mute))
                     .cloned()
                     .collect();
                 t.clips.push(new_clip(name, span.start));

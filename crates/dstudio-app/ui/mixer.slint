@@ -144,6 +144,7 @@ component Strip inherits Rectangle {
         value-changed(v) => { if (!root.master) { Studio.track-pan(root.s.id, v); } }
         released => { Studio.gesture-end(); }
         reset => { if (!root.master) { Studio.track-pan(root.s.id, 0); Studio.gesture-end(); } }
+        context(x, y) => { if (!root.master) { Studio.strip-menu(root.s.id, 1, x, y - Studio.menu-dy); } }
     }
     StripReadout { x: 58 * root.u; y: root.gain-y + 17 * root.u; width: 40 * root.u; text: root.gain-text; }
     StripCanvas {
@@ -153,12 +154,14 @@ component Strip inherits Rectangle {
         moved(f) => { if (root.master) { Studio.master-fader-moved(f); } else { Studio.mixer-fader(root.s.id, f); } }
         released => { Studio.gesture-end(); }
         reset => { if (root.master) { Studio.master-fader-moved(0.2); } else { Studio.mixer-fader(root.s.id, 0.2); } Studio.gesture-end(); }
+        context(x, y) => { Studio.strip-menu(root.master ? -1 : root.s.id, 0, x, y - Studio.menu-dy); }
     }
     // Foot: M / S (master: M only), peak hold readout (click resets).
     StripButton {
         x: 16 * root.u; y: root.foot-y + 1 * root.u; text: "M"; kind: 0;
         on: root.master ? Studio.master-mute : root.s.mute;
         clicked => { if (root.master) { Studio.master-mute-toggle(); } else { Studio.track-mute(root.s.id); } }
+        context(x, y) => { if (!root.master) { Studio.strip-menu(root.s.id, 2, x, y - Studio.menu-dy); } }
     }
     if !root.master: StripButton {
         x: 38 * root.u; y: root.foot-y + 1 * root.u; text: "S"; kind: 1;

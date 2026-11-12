@@ -65,8 +65,10 @@ wgpu.
   plugin folders, Settings › Plugins scans any folders you add.
 - **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
   can be switched off.
-- **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
-  record your moves with touch-write.
+- **Automation.** Right-click any device control, the channel's volume, pan or mute, or a device's power switch and
+  choose Automate. Draw lanes with points, curves or freehand, or record your moves with touch-write. Lanes read in
+  the parameter's own units (Hz, dB, ms, choice names, On/Off), and mute and device on/off lanes switch exactly on
+  their points.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
   (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
   seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.

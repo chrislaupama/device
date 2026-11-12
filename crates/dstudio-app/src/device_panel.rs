@@ -965,7 +965,7 @@ impl Controller {
             vendor: s(dstudio_core::builtin::VENDOR),
             format: s("Built-in"),
             kind: s("Audio effect"),
-            enabled: d.enabled,
+            enabled: self.device_on_now(d),
             builtin: true,
             width: width * Z,
             accent,

@@ -25,6 +25,7 @@ struct LaneView {
     const AutoPoint* p = nullptr;
     uint32_t n = 0; // > 0
     bool log = false;
+    bool step = false; // hold a.value until b (SE_AUTO_FLAG_STEPPED)
 };
 
 // ---- the evaluation contract (dstudio_core::automation, bit-for-bit) --------
@@ -70,7 +71,7 @@ inline float auto_eval(const LaneView& l, int64_t t) noexcept {
     if (i >= l.n) return p[l.n - 1].value;
     const AutoPoint& a = p[i - 1];
     const AutoPoint& b = p[i];
-    if (b.frame == a.frame) return b.value;
+    if (b.frame == a.frame || l.step) return b.frame == a.frame ? b.value : a.value;
     return auto_segment(a, b, t, l.log);
 }
 
@@ -112,7 +113,7 @@ void auto_fill(const LaneView& l, int64_t t0, uint32_t n, Map&& map, float* dst)
         const AutoPoint& a = p[idx - 1];
         const AutoPoint& b = p[idx];
         const uint32_t seg_left = static_cast<uint32_t>(std::min<int64_t>(b.frame - t, n - i));
-        if (a.value == b.value) { // flat segment (any curve)
+        if (a.value == b.value || l.step) { // flat segment (any curve, or a held value)
             flat(i + seg_left, a.value);
             continue;
         }

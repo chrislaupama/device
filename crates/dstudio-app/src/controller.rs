@@ -1111,6 +1111,10 @@ impl Controller {
     pub fn toggle_mute(&mut self, id: TrackId) {
         if let Some(t) = self.project().track(id) {
             let mute = !t.mute;
+            // An active Mute lane decides (written while armed and playing).
+            if self.auto_switch(Some(id), dstudio_core::AutomationTarget::Mute, t.mute) {
+                return;
+            }
             self.execute(Command::SetTrackMute { track: id, mute });
         }
     }
@@ -2150,7 +2154,7 @@ impl Controller {
             s.set_sel_name(t.name.clone().into());
             s.set_sel_instrument(t.kind == TrackKind::Instrument);
             s.set_sel_color(slint_color(track_color(t.color)));
-            s.set_sel_mute(t.mute);
+            s.set_sel_mute(self.switch_now(Some(t.id), &dstudio_core::AutomationTarget::Mute, t.mute));
             s.set_sel_solo(t.solo);
             s.set_sel_pan(t.pan);
             s.set_sel_pan_text(fmt_pan(t.pan).into());
@@ -2192,7 +2196,7 @@ impl Controller {
                 group_start: t.is_return() && i == first_return,
                 color: slint_color(track_color(t.color)),
                 selected: Some(t.id) == self.selected_track,
-                mute: t.mute,
+                mute: self.switch_now(Some(t.id), &dstudio_core::AutomationTarget::Mute, t.mute),
                 solo: t.solo,
                 pan: t.pan,
                 pan_text: mixer::fmt_strip_pan(t.pan).into(),

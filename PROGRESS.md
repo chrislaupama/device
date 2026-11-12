@@ -519,3 +519,20 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   pre-fader send on a rendered track becomes post-fader with its level divided by the track volume.
 - `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
   list. Not yet opened in Live itself (spec 006, T5).
+
+### 2026-11-12: automate any device control, mute and device on/off
+
+- Every device control's right-click menu starts with "Automate <parameter>": built-in device knobs, buttons, choice
+  switches and menus, plugin cards, and every Synth control (knobs, faders, pills, switches, mod matrix). A device's
+  power switch offers "Automate On"; the channel's volume, pan and M (track header, inspector, mixer) offer "Automate
+  Volume/Pan/Mute". Choosing one shows the lanes with that parameter.
+- New lane targets: Track › Mute and <device> › On (listed last under each device in the lane picker). They are
+  stepped: a value holds until the next point. Built-in choice parameters are stepped too. The M button and power
+  switches follow an active lane; clicking them while armed and playing writes one step at the playhead.
+- Lane labels read in the parameter's own units, taken from the device's own text (Hz, dB, ms, ct, choice names,
+  On/Off, the Synth's legacy parameters in Hz, ct, dB, ms and %), and a hovered or dragged point shows its value.
+- Engine: `se_auto_lane_desc.flags` (was padding) with `SE_AUTO_FLAG_STEPPED`; `SE_AUTO_MUTE` (per-sample gain before
+  the fader, replaces the static mute) and `SE_AUTO_DEVICE_ON` (per block, replaces `enabled`, with a bypass delay
+  line so switching keeps delay compensation). Tests: three engine tests in `test_automation.cpp`, core
+  `switch_lanes_*`, app `automation::tests` (units, picker, right-click menus, switches following lanes).
+- Not yet: Trim, Width and Mono lanes (they arrive with the channel strip controls).

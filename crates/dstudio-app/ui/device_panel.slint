@@ -132,6 +132,8 @@ component Latch inherits Rectangle {
     in property <color> accent;
     callback clicked();
     callback reset();
+    // Right press: the control menu (window coordinates).
+    callback context(length, length);
     property <float> zm: PanelStyle.z;
     property <bool> alt-down;
     height: 20px * zm;
@@ -150,6 +152,7 @@ component Latch inherits Rectangle {
     }
     latch-ta := TouchArea {
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); return; }
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 root.alt-down = e.modifiers.alt;
                 if (e.modifiers.alt) { root.reset(); }
@@ -208,6 +211,7 @@ export component KnobCell inherits Rectangle {
         latch-ta := TouchArea {
             enabled: !root.k.inert;
             pointer-event(e) => {
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.mod-menu(root.device, root.k.param, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); return; }
                 if (e.button != PointerEventButton.left) { return; }
                 if (e.kind == PointerEventKind.down) {
                     fs.focus();
@@ -376,6 +380,7 @@ component ButtonCell inherits Rectangle {
         width: parent.width; label: root.b.label; on: root.b.on; accent: root.accent;
         clicked => { Studio.panel-choice(root.device, root.b.param, root.b.on ? 0 : 1); }
         reset => { Studio.panel-reset(root.device, root.b.param); }
+        context(x, y) => { Studio.mod-menu(root.device, root.b.param, x, y); }
     }
     if root.b.kind == 1: Rectangle {
         border-radius: self.height / 2; background: pick-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
@@ -385,7 +390,10 @@ component ButtonCell inherits Rectangle {
             font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm; vertical-alignment: center; overflow: elide;
         }
         Icon { x: parent.width - 17px * zm; y: (parent.height - 9px * zm) / 2; width: 9px * zm; height: 9px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
-        pick-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.b.param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
+        pick-ta := TouchArea {
+            pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.mod-menu(root.device, root.b.param, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+            clicked => { Studio.panel-menu(root.device, root.b.param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); }
+        }
     }
 }
 
@@ -572,7 +580,8 @@ component PickItem inherits HorizontalLayout {
                 seg-ta := TouchArea {
                     property <bool> alt-down;
                     pointer-event(e) => {
-                        if (e.kind == PointerEventKind.down) {
+                        if ((e.kind == PointerEventKind.down && e.button == PointerEventButton.right) && root.p.kind == 1) { Studio.mod-menu(root.device, root.p.param, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); return; }
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                             self.alt-down = e.modifiers.alt;
                             if (e.modifiers.alt && root.p.kind == 1) { Studio.panel-reset(root.device, root.p.param); }
                         }
@@ -600,7 +609,8 @@ component PickItem inherits HorizontalLayout {
         menu-ta := TouchArea {
             property <bool> alt-down;
             pointer-event(e) => {
-                if (e.kind == PointerEventKind.down) {
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.mod-menu(root.device, root.p.param, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); return; }
+                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                     self.alt-down = e.modifiers.alt && root.p.param >= 0;
                     if (self.alt-down) { Studio.panel-reset(root.device, root.p.param); }
                 }
@@ -613,6 +623,7 @@ component PickItem inherits HorizontalLayout {
         label: root.p.label; on: root.p.selected == 1; accent: root.accent;
         clicked => { Studio.panel-choice(root.device, root.p.param, root.p.selected == 1 ? 0 : 1); }
         reset => { Studio.panel-reset(root.device, root.p.param); }
+        context(x, y) => { Studio.mod-menu(root.device, root.p.param, x, y); }
     }
     // Button (sampler actions).
     if root.p.kind == 6: Rectangle {
@@ -1255,7 +1266,9 @@ component EqChrome inherits Rectangle {
             font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; overflow: elide;
         }
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
-        bank-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.e.bank-param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
+        bank-ta := TouchArea {
+            pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.mod-menu(root.device, root.e.bank-param, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+            clicked => { Studio.panel-menu(root.device, root.e.bank-param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
     }
     // ---- editor row ----
     Text {
@@ -1317,7 +1330,11 @@ export component FoldedStrip inherits Rectangle {
         background: root.card.enabled ? root.card.accent : #4a4b4f;
         accessible-role: checkbox; accessible-label: "Bypass effect"; accessible-checked: root.card.enabled;
         Rectangle { x: 1px; y: root.card.enabled ? 1px : parent.height - 10px; width: 9px; height: 9px; border-radius: 4.5px; background: root.card.enabled ? #17181b : #ffffff; }
-        TouchArea { clicked => { Studio.device-power(root.card.id); } }
+        TouchArea {
+            // Right press: "Automate On" (parameter -2 = the power switch, src/device_mod.rs).
+            pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.mod-menu(root.card.id, -2, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+            clicked => { Studio.device-power(root.card.id); }
+        }
     }
     Text {
         x: (parent.width - 14px) / 2; y: 40px; width: 200px; height: 14px;
@@ -1563,7 +1580,10 @@ export component CardHeader inherits Rectangle {
             drop-shadow-blur: 4px * zm; drop-shadow-offset-y: 2px * zm; drop-shadow-color: #00000080;
             animate x { duration: 200ms; }
         }
-        power-ta := TouchArea { clicked => { Studio.device-power(root.card.id); } }
+        power-ta := TouchArea {
+            pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.mod-menu(root.card.id, -2, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+            clicked => { Studio.device-power(root.card.id); }
+        }
     }
     name := Rectangle {
         x: 44px * zm; y: 0; height: root.height;

@@ -788,6 +788,8 @@ fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_la
             let index = dstudio_core::builtin::find(device_type).and_then(|d| d.index_of(param)).map_or(u32::MAX, |i| i as u32);
             (ffi::SE_AUTO_BUILTIN, 0, device.0, index)
         }
+        AutomationTarget::Mute => (ffi::SE_AUTO_MUTE, 0, 0, 0),
+        AutomationTarget::DeviceOn { device, .. } => (ffi::SE_AUTO_DEVICE_ON, 0, device.0, 0),
     };
     ffi::se_auto_lane_desc {
         target,
@@ -797,7 +799,7 @@ fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_la
         device_id,
         points: points.as_ptr(),
         point_count: points.len() as u32,
-        _pad: 0,
+        flags: if l.target.stepped() { ffi::SE_AUTO_FLAG_STEPPED } else { 0 },
     }
 }
 

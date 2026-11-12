@@ -287,6 +287,8 @@ export component Knob inherits Rectangle {
     callback value-changed(float);
     callback released();
     callback reset();
+    // Right press: the control menu (absolute window position; callers subtract the menu bar).
+    callback context(length, length);
     property <float> start-value;
     property <float> cx: self.width / 1px / 2;
     property <float> cy: self.height / 1px / 2;
@@ -358,6 +360,7 @@ export component Knob inherits Rectangle {
     TouchArea {
         mouse-cursor: ns-resize;
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
             if (e.kind == PointerEventKind.down) { root.start-value = root.value; }
             // A cancelled drag ends its gesture too.
             if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) { root.released(); }

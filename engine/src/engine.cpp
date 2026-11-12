@@ -1831,7 +1831,7 @@ void Engine::plan_pdc(RenderGraph& g) const {
         for (uint32_t i = 0; i < node.fx_count; ++i) {
             FxSlot& slot = g.fx[node.fx_begin + i];
             const uint64_t sl = lat_of(slot.inst);
-            if (sl == 0 || slot.enabled) continue; // only bypassed slots need a line
+            if (sl == 0 || (slot.enabled && slot.on_lane < 0)) continue; // only (possibly) bypassed slots need a line
             slot.pdc_bypass_delay = cap(sl);
             p.need[p.slot_index(track_count, node.fx_begin + i)] = slot.pdc_bypass_delay;
         }

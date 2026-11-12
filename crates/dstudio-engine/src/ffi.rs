@@ -347,6 +347,9 @@ pub const SE_AUTO_PAN: u8 = 1;
 pub const SE_AUTO_SYNTH: u8 = 2;
 pub const SE_AUTO_PLUGIN: u8 = 3;
 pub const SE_AUTO_BUILTIN: u8 = 4;
+pub const SE_AUTO_MUTE: u8 = 5;
+pub const SE_AUTO_DEVICE_ON: u8 = 6;
+pub const SE_AUTO_FLAG_STEPPED: u32 = 1;
 
 // ---- built-in devices (state blob, registry)
 pub const SE_BUILTIN_STATE_MAGIC: u32 = 0x3149_4253;
@@ -447,7 +450,7 @@ pub struct se_auto_lane_desc {
     pub device_id: u64,
     pub points: *const se_auto_point,
     pub point_count: u32,
-    pub _pad: u32,
+    pub flags: u32,
 }
 
 #[repr(C)]
@@ -1336,7 +1339,7 @@ mod abi_layout {
                 offset_of!(se_auto_lane_desc, device_id),
                 offset_of!(se_auto_lane_desc, points),
                 offset_of!(se_auto_lane_desc, point_count),
-                offset_of!(se_auto_lane_desc, _pad),
+                offset_of!(se_auto_lane_desc, flags),
             ],
             [0, 1, 2, 4, 8, 16, 24, 28]
         );

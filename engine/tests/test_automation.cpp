@@ -773,3 +773,60 @@ TEST_CASE(automation_dense_lanes_do_not_allocate) {
     CHECK_EQ(rt_alloc_count() - allocs, 0);
     CHECK_EQ(rt_free_count() - frees, 0);
 }
+
+// ---------------------------------------------------------------- switches (mute, device power)
+
+TEST_CASE(automation_stepped_lanes_hold_each_value) {
+    Lane l = lane(SE_AUTO_DEVICE_ON, {{0, 0.0f, 0.5f}, {100, 1.0f, 0.0f}, {200, 0.0f, 0.0f}}, 5);
+    l.d.flags = SE_AUTO_FLAG_STEPPED;
+    l.d.points = l.points.data();
+    l.d.point_count = 3;
+    const int64_t frames[] = {-5, 50, 99, 100, 150, 199, 200, 900};
+    float out[8] = {};
+    REQUIRE(se_automation_eval(&l.d, frames, 8, out) == SE_OK);
+    const float want[] = {0, 0, 0, 1, 1, 1, 0, 0}; // no ramp, no curve
+    for (int i = 0; i < 8; ++i) CHECK_EQ(out[i], want[i]);
+    l.d.flags = 2; // unknown flag
+    CHECK(se_automation_eval(&l.d, frames, 1, out) == SE_ERR_INVALID_ARG);
+    l.d.flags = 0;
+    l.d.target = SE_AUTO_DEVICE_ON + 1;
+    CHECK(se_automation_eval(&l.d, frames, 1, out) == SE_ERR_INVALID_ARG);
+}
+
+TEST_CASE(automation_mute_lane_replaces_the_static_mute) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = dc_asset(e, 4000);
+    ASession s;
+    Lane m = lane(SE_AUTO_MUTE, {{0, 0.0f, 0.0f}, {1000, 1.0f, 0.0f}, {2000, 0.0f, 0.0f}});
+    m.d.flags = SE_AUTO_FLAG_STEPPED;
+    s.audio(1, {clip(1, a, 0, 0, 4000)}, {m});
+    s.tracks[0].d.mute = 1; // the lane replaces it
+    REQUIRE(s.publish(e) == SE_OK);
+    const std::vector<float> l = chan(play(e, 3000, 0, 256), 0);
+    CHECK_NEAR(l[999], 1.0, 1e-6);
+    CHECK_EQ(l[1000], 0.0f); // muted from its point, mid-block
+    CHECK_EQ(l[1999], 0.0f);
+    CHECK_NEAR(l[2000], 1.0, 1e-6);
+    // Without the lane the static mute is back.
+    s.tracks[0].lanes.clear();
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_EQ(chan(play(e, 300, 0), 0)[200], 0.0f);
+}
+
+TEST_CASE(automation_device_on_lane_switches_an_insert_per_block) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = dc_asset(e, 4000);
+    ASession s;
+    Lane on = lane(SE_AUTO_DEVICE_ON, {{0, 1.0f, 0.0f}, {1024, 0.0f, 0.0f}, {2100, 1.0f, 0.0f}}, 5);
+    on.d.flags = SE_AUTO_FLAG_STEPPED;
+    se_device_desc dev = clap_gain(5);
+    dev.enabled = 0; // the lane replaces the static switch
+    s.audio(1, {clip(1, a, 0, 0, 4000)}, {lane(SE_AUTO_PLUGIN, {{0, 0.25f, 0.0f}}, 5, 0), on}, {dev});
+    REQUIRE(s.publish(e) == SE_OK);
+    const std::vector<float> l = chan(play(e, 3000, 0, 256), 0);
+    CHECK_NEAR(l[500], 0.25, 1e-6);  // on: the gain plugin runs
+    CHECK_NEAR(l[1023], 0.25, 1e-6);
+    CHECK_NEAR(l[1024], 1.0, 1e-6);  // off from the block that starts on the point: bypassed
+    CHECK_NEAR(l[2303], 1.0, 1e-6);  // the switch back waits for the next block boundary (2304)
+    CHECK_NEAR(l[2304], 0.25, 1e-6);
+}

@@ -344,6 +344,10 @@ pub enum MenuPick {
     Mode(DeviceId, usize, usize),
     /// Control menu (src/device_mod.rs): show the parameter's automation lane.
     Automate(DeviceId, ModParam),
+    /// Power switch menu: show the device's on/off automation lane.
+    AutomateOn(DeviceId),
+    /// Channel control menu (volume, pan, mute): show that lane of the track (None = master).
+    AutomateTrack(Option<TrackId>, dstudio_core::AutomationTarget),
     /// Control menu: a new LFO aimed at the parameter.
     NewLfo(DeviceId, ModParam),
     /// Aim source output (source, slot) at (device, parameter).
@@ -1134,7 +1138,7 @@ impl Controller {
             vendor: if d.plugin.vendor.is_empty() { "Unknown vendor".into() } else { d.plugin.vendor.clone().into() },
             format: format_badge(d.plugin.format).into(),
             kind: if instrument { "Instrument".into() } else { "Audio effect".into() },
-            enabled: d.enabled,
+            enabled: self.device_on_now(d),
             instrument,
             error: error.into(),
             latency: fmt_latency(self.devices.latency.get(&d.id).copied().unwrap_or(0), self.rate).into(),
@@ -1206,6 +1210,11 @@ impl Controller {
     pub fn device_power(&mut self, id: DeviceId) {
         if let Some(d) = self.project().device(id) {
             let enabled = !d.enabled;
+            if let Some((t, target)) = self.device_on_target(id)
+                && self.auto_switch(Some(t), target, d.enabled)
+            {
+                return;
+            }
             self.execute(Command::SetDeviceEnabled { device: id, enabled });
         }
     }
@@ -1431,6 +1440,8 @@ impl Controller {
             Some(MenuPick::Param(device, param, v)) => return self.panel_pick_param(device, param, v),
             Some(MenuPick::Mode(device, _, mode)) => return self.panel_pick_mode(device, mode),
             Some(MenuPick::Automate(device, p)) => return self.mod_automate(device, p),
+            Some(MenuPick::AutomateOn(device)) => return self.mod_automate_on(device),
+            Some(MenuPick::AutomateTrack(key, target)) => return self.auto_choose(key, target),
             Some(MenuPick::NewLfo(device, p)) => return self.mod_new_lfo(device, p),
             Some(MenuPick::Link(source, slot, device, p)) => {
                 self.mod_link(source, slot, device, p);

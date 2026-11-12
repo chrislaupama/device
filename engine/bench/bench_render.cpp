@@ -22,7 +22,8 @@
 // An automation table renders the 32 tracks with the CLAP + VST3 gain
 // inserts and 4 lanes per track (volume, pan, and the gain parameter of each
 // insert), each with a curved point every 100 ms (se_session_publish_v6),
-// against the same session without lanes.
+// against the same session without lanes, and with 3 switch lanes more per
+// track (mute, flipping every 100 ms, and an on/off lane per insert, kept on).
 // A MIDI input table renders built-in synth tracks with live input injected
 // (se_midi_inject) to none, the focus track, or every track.
 // A note preview table renders 32 CLAP instrument tracks with piano-roll
@@ -90,7 +91,7 @@ struct Result {
 // (se_session_publish_v10, plugins 0, routing 0): 1 = trim and width on every
 // track; 2 = trim and mono on every track.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
-           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false,
+           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, int automation = 0,
            float preview_rate = 0.0f, const std::string& preview_file = {}, int routing = 0, int strip = 0) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
@@ -175,7 +176,8 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     }
     se_session_desc_v5 sd5{t5.data(), tracks, 0.5f};
     // Automation: volume, pan and one gain lane per insert, a curved point
-    // every 4800 frames.
+    // every 4800 frames; automation 2 adds a mute lane and an on/off lane per
+    // insert (stepped).
     std::vector<std::vector<se_auto_point>> points;
     std::vector<std::vector<se_auto_lane_desc>> lanes(tracks);
     std::vector<se_track_desc_v6> t6(tracks);
@@ -188,11 +190,12 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     if (automation) {
         points.reserve(static_cast<std::size_t>(tracks) * 4);
         for (uint32_t t = 0; t < tracks; ++t) {
-            const auto add = [&](uint8_t target, uint64_t device, std::vector<se_auto_point> pts) {
+            const auto add = [&](uint8_t target, uint64_t device, std::vector<se_auto_point> pts, uint32_t flags = 0) {
                 points.push_back(std::move(pts));
                 se_auto_lane_desc l{};
                 l.target = target;
                 l.device_id = device;
+                l.flags = flags;
                 l.points = points.back().data();
                 l.point_count = static_cast<uint32_t>(points.back().size());
                 lanes[t].push_back(l);
@@ -200,6 +203,11 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             add(SE_AUTO_VOLUME, 0, make_points(-24.0f, -6.0f, t));
             add(SE_AUTO_PAN, 0, make_points(-0.8f, 0.8f, t + 1));
             for (const se_device_desc& d : devices[t]) add(SE_AUTO_PLUGIN, d.device_id, make_points(0.2f, 0.9f, t + 2));
+            if (automation == 2) {
+                add(SE_AUTO_MUTE, 0, make_points(0.0f, 1.0f, t), SE_AUTO_FLAG_STEPPED);
+                for (const se_device_desc& d : devices[t])
+                    add(SE_AUTO_DEVICE_ON, d.device_id, make_points(1.0f, 1.0f, t), SE_AUTO_FLAG_STEPPED);
+            }
             t6[t] = se_track_desc_v6{};
             std::memcpy(&t6[t], &t5[t], sizeof(se_track_desc_v5));
             t6[t].lanes = lanes[t].data();
@@ -742,13 +750,15 @@ int main(int argc, char** argv) {
                         r.us_per_block_max, r.rt_ratio);
         }
     std::printf("\nAutomation: 32 audio tracks x %u clips + CLAP gain + VST3 gain, 4 lanes per track "
-                "(volume, pan, 2 plugin params; a point every 100 ms)\n",
+                "(volume, pan, 2 plugin params; a point every 100 ms), then 3 switch lanes more "
+                "(mute, 2 inserts on/off)\n",
                 clips_per_track);
     std::printf("%22s %14s %14s %14s %16s\n", "lanes", "avg us/block", "p99 us/block", "max us/block",
                 "realtime ratio");
-    for (const bool automation : {false, true}) {
+    for (const int automation : {0, 1, 2}) {
         const Result r = run(32, clips_per_track, blocks, files, features, 1, 0, true, automation);
-        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", automation ? "32 x 4 lanes" : "none (same session)",
+        const char* name = automation == 0 ? "none (same session)" : automation == 1 ? "32 x 4 lanes" : "32 x 7 lanes";
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name,
                     r.us_per_block_avg, r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
     }
     std::printf("\nReturns: 32 audio tracks x %u clips, each sending to 2 return tracks (one post-, one pre-fader)\n",

@@ -83,6 +83,8 @@ export component TrackButton inherits Rectangle {
     in property <color> on-color;
     in property <color> on-text: #ffffff;
     callback pressed();
+    // Right press: the control menu (window coordinates).
+    callback context(length, length);
     width: 10.2px;
     height: 10.2px;
     border-radius: 1.7px;
@@ -98,6 +100,7 @@ export component TrackButton inherits Rectangle {
     ta := TouchArea {
         pointer-event(e) => {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { root.pressed(); }
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
         }
     }
 }
@@ -113,6 +116,8 @@ export component TrackPan inherits Rectangle {
     callback released();
     callback reset();
     callback edit();
+    // Right press: the control menu (window coordinates).
+    callback context(length, length);
     property <bool> reset-held;
     property <float> start-value;
     property <float> angle: root.value * 135;
@@ -161,6 +166,7 @@ export component TrackPan inherits Rectangle {
     }
     if root.enabled: TouchArea {
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 root.reset-held = e.modifiers.alt;
                 if (e.modifiers.alt) { root.reset(); } else { root.start-value = root.value; }
@@ -187,6 +193,8 @@ export component TrackVolume inherits Rectangle {
     callback moved(float);
     callback released();
     callback reset();
+    // Right press: the control menu (window coordinates).
+    callback context(length, length);
     property <bool> reset-held;
     property <length> rail-y: 1.7px;
     property <length> travel: self.width - 11.9px;
@@ -213,6 +221,7 @@ export component TrackVolume inherits Rectangle {
     accessible-value: root.pos;
     ta := TouchArea {
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 root.reset-held = e.modifiers.alt;
                 if (e.modifiers.alt) { root.reset(); } else { root.moved(max(0, min(1, (self.mouse-x - 5.95px) / root.travel))); }
@@ -288,6 +297,8 @@ component ChannelControls inherits Rectangle {
     callback volume(float);
     callback volume-reset();
     callback released();
+    // Right press on the pan knob (0) or the volume slider (1), window coordinates.
+    callback context(int, length, length);
     /// Inline pan entry ("C", "30L", "30R" or a number -100..100), opened by double-clicking the knob.
     callback pan-text(string);
     /// The pan field closed from the keyboard (Enter or Escape): give focus back to the window.
@@ -303,6 +314,7 @@ component ChannelControls inherits Rectangle {
         released => { root.released(); }
         reset => { root.pan-reset(); }
         edit => { root.editing = true; }
+        context(x, y) => { root.context(1, x, y); }
     }
     // 32 x 16 px field: white 10 % fill, 1 px white 35 % outline inside, radius 2, 12 px semibold.
     if root.editing: Rectangle {
@@ -330,6 +342,7 @@ component ChannelControls inherits Rectangle {
         moved(p) => { root.volume(p); }
         released => { root.released(); }
         reset => { root.volume-reset(); }
+        context(x, y) => { root.context(0, x, y); }
     }
 }
 
@@ -383,6 +396,7 @@ export component TrackHeaderRow inherits Rectangle {
     if !root.minimal: TrackButton {
         x: 28.05px; y: root.bottom-y + 1.7px; text: "M"; label: root.t.mute ? "Unmute track" : "Mute track";
         on: root.t.mute; on-color: Tokens.accent; pressed => { Studio.track-mute(root.t.id); }
+        context(x, y) => { Studio.strip-menu(root.t.id, 2, x, y); }
     }
     if !root.minimal: TrackButton {
         x: 41.65px; y: root.bottom-y + 1.7px; text: "S"; label: root.t.solo ? "Unsolo track" : "Solo track";
@@ -409,6 +423,7 @@ export component TrackHeaderRow inherits Rectangle {
         volume(p) => { Studio.track-volume(root.t.id, p); }
         volume-reset => { Studio.track-volume(root.t.id, Tokens.slider-zero-db); Studio.gesture-end(); }
         released => { Studio.gesture-end(); }
+        context(kind, x, y) => { Studio.strip-menu(root.t.id, kind, x, y); }
     }
     // Automation row: fold button in the gutter, then the pill (16 px in from the content box).
     // Return rows automate volume and pan through the pill but have no expanded lanes to fold.

@@ -45,6 +45,9 @@ struct FxSlot {
     PluginInstance* inst = nullptr;
     uint64_t device_id = 0;
     bool enabled = true;
+    // SE_AUTO_DEVICE_ON lane of this device (RenderGraph::lanes), -1 = none:
+    // replaces `enabled`, evaluated per block.
+    int32_t on_lane = -1;
     // Delay compensation: while bypassed, the slot delays by the plugin's
     // latency instead (0 = nothing to do). See RenderGraph::pdc.
     uint32_t pdc_bypass_delay = 0;
@@ -105,6 +108,7 @@ struct AutoLane {
     uint16_t synth_param = 0;
     uint32_t param_id = 0;
     uint64_t device_id = 0;
+    bool step = false;         // SE_AUTO_FLAG_STEPPED: hold each point's value
     bool active = true;        // plugin lanes: the parameter exists
     double native_min = 0.0;   // plugin lanes: normalized -> native (VST3 0..1, CLAP/AU plain range)
     double native_max = 1.0;
@@ -140,6 +144,8 @@ struct TrackNode {
     // Automation (RenderGraph::lanes): -1 = none.
     int32_t vol_lane = -1;
     int32_t pan_lane = -1;
+    int32_t mute_lane = -1;     // SE_AUTO_MUTE (replaces the static mute)
+    int32_t iplug_on_lane = -1; // SE_AUTO_DEVICE_ON of the instrument plugin
     uint32_t synth_lane_begin = 0;
     uint32_t synth_lane_count = 0;
     uint32_t iplug_lane_begin = 0; // instrument plugin parameters
@@ -335,7 +341,7 @@ struct RenderGraph {
 
 // Lane view for evaluation.
 inline LaneView lane_view(const RenderGraph& g, const AutoLane& l) noexcept {
-    return LaneView{g.auto_points.data() + l.point_begin, l.point_count, l.log};
+    return LaneView{g.auto_points.data() + l.point_begin, l.point_count, l.log, l.step};
 }
 
 // Validates one lane description (also used by se_automation_eval).
