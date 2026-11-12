@@ -1,13 +1,14 @@
 //! Ableton Live set writer for Export › Project. Writes the gzipped XML document Live 11
 //! and later open (schema 5 / 11.0), with every element Live saves for an audio track, a
-//! MIDI track, the main and pre-hear tracks and the set itself, in Live's order, so the
+//! MIDI track, a return track, the main and pre-hear tracks and the set itself, in Live's order, so the
 //! file reads like one Live wrote. Element names and defaults were learned from sets saved
 //! by Live (structure only).
 //!
 //! [validate] parses a written document back and checks it against that structure: the
 //! required elements of every track kind and clip, unique ids below NextPointeeId, one clip
 //! slot per scene on every track, clip and note times inside their clips, the tempo and time
-//! signature envelopes, and that every referenced sample exists.
+//! signature envelopes, one send per return track on every track, and that every referenced
+//! sample exists.
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -28,7 +29,22 @@ pub struct LiveSet {
     pub loop_start: f64,
     pub loop_length: f64,
     pub tracks: Vec<SetTrack>,
+    /// Return tracks, written after the ordinary tracks. Every [SetTrack] has one send per return.
+    pub returns: Vec<SetReturn>,
 }
+
+pub struct SetReturn {
+    pub name: String,
+    pub color: u32,
+    pub on: bool,
+    pub volume: f32,
+    pub pan: f32,
+    /// Live's per-return switch: sends to it tap before the track faders.
+    pub pre: bool,
+}
+
+/// Live's send range: -70 dB (shown as -inf) ..= 0 dB.
+pub const SEND_RANGE: (f64, f64) = (0.0003162277571, 1.0);
 
 pub struct SetTrack {
     pub name: String,
@@ -40,6 +56,11 @@ pub struct SetTrack {
     pub volume: f32,
     /// -1 (left) ..= 1 (right).
     pub pan: f32,
+    /// Send level to each of the set's returns, in order (linear, clamped to [SEND_RANGE]);
+    /// missing entries are off.
+    pub sends: Vec<f32>,
+    /// Output "Sends Only": the track is heard through its sends alone, not on the master.
+    pub sends_only: bool,
     pub content: SetContent,
 }
 
@@ -534,10 +555,24 @@ impl Xml {
         self.routing("AudioOutputRouting", audio_out.0, audio_out.1, audio_out.2);
         self.routing("MidiOutputRouting", "MidiOut/None", "None", "");
     }
-    /// Mixer through SendsListWrapper; returns nothing (ids come from the counter).
-    fn mixer_body(&mut self, on: bool, volume: f32, pan: f32) {
+    /// Mixer through SendsListWrapper; ids come from the counter. "sends" is None on the main
+    /// and pre-hear tracks (no sends), else (level per return, active): one holder per return.
+    fn mixer_body(&mut self, on: bool, volume: f32, pan: f32, sends: Option<(&[f32], usize, bool)>) {
         self.device_head(false);
-        self.empty("Sends", &[]);
+        match sends {
+            Some((levels, returns, active)) if returns > 0 => {
+                self.open("Sends", &[]);
+                for i in 0..returns {
+                    self.open("TrackSendHolder", &[("Id", i.to_string())]);
+                    let level = levels.get(i).copied().unwrap_or(0.0) as f64;
+                    self.float_param("Send", level.clamp(SEND_RANGE.0, SEND_RANGE.1), SEND_RANGE, true);
+                    self.v("Active", active);
+                    self.close("TrackSendHolder");
+                }
+                self.close("Sends");
+            }
+            _ => self.empty("Sends", &[]),
+        }
         self.on_off("Speaker", on);
         self.v("SoloSink", false);
         self.v("PanMode", 0);
@@ -603,9 +638,10 @@ impl Xml {
         self.v("NeedArrangerRefreeze", true);
         self.v("PostProcessFreezeClips", 0);
         self.open("DeviceChain", &[]);
-        self.chain_head(1, ("AudioIn/External/S0", "1/2"), ("AudioOut/Master", "Master", ""));
+        let out = if t.sends_only { ("AudioOut/None", "Sends Only", "") } else { ("AudioOut/Master", "Master", "") };
+        self.chain_head(1, ("AudioIn/External/S0", "1/2"), out);
         self.open("Mixer", &[]);
-        self.mixer_body(t.on, t.volume, t.pan);
+        self.mixer_body(t.on, t.volume, t.pan, Some((&t.sends, set.returns.len(), true)));
         self.close("Mixer");
         self.open("MainSequencer", &[]);
         match &t.content {
@@ -652,6 +688,24 @@ impl Xml {
         }
         self.close(tag);
     }
+    /// A return track: no clips, its own sends present but inactive (Live's default).
+    fn return_track(&mut self, set: &LiveSet, id: u64, r: &SetReturn) {
+        self.open("ReturnTrack", &[("Id", id.to_string())]);
+        self.track_head(&r.name, &r.name, r.color, &[]);
+        self.open("DeviceChain", &[]);
+        self.chain_head(1, ("AudioIn/External/S0", "1/2"), ("AudioOut/Master", "Master", ""));
+        self.open("Mixer", &[]);
+        self.mixer_body(r.on, r.volume, r.pan, Some((&[], set.returns.len(), false)));
+        self.close("Mixer");
+        self.open("FreezeSequencer", &[]);
+        self.open("AudioSequencer", &[("Id", "0".into())]);
+        self.sample_sequencer_body(set, r.color, 0, 1, &[]);
+        self.close("AudioSequencer");
+        self.close("FreezeSequencer");
+        self.inner_chain();
+        self.close("DeviceChain");
+        self.close("ReturnTrack");
+    }
     /// The main track (tag MasterTrack in this schema) carries tempo and time signature.
     fn main_track(&mut self, set: &LiveSet) {
         // Ids are assigned in document order, but the envelopes come first and point at the
@@ -664,7 +718,7 @@ impl Xml {
         self.open("DeviceChain", &[]);
         self.chain_head(1, ("AudioIn/External/S0", "1/2"), ("AudioOut/External/S0", "Ext. Out", "1/2"));
         self.open("Mixer", &[]);
-        self.mixer_body(true, 1.0, 0.0);
+        self.mixer_body(true, 1.0, 0.0, None);
         self.open("Tempo", &[]);
         self.v("LomId", 0);
         self.v("Manual", num(set.bpm));
@@ -704,7 +758,7 @@ impl Xml {
         self.open("DeviceChain", &[]);
         self.chain_head(1, ("AudioIn/External/S0", "1/2"), ("AudioOut/External/S0", "Ext. Out", "1/2"));
         self.open("Mixer", &[]);
-        self.mixer_body(true, 1.0, 0.0);
+        self.mixer_body(true, 1.0, 0.0, None);
         self.close("Mixer");
         self.inner_chain();
         self.close("DeviceChain");
@@ -736,10 +790,21 @@ pub fn to_xml(set: &LiveSet) -> String {
     for (i, t) in set.tracks.iter().enumerate() {
         x.track(set, 10 + i as u64, t);
     }
+    for (i, r) in set.returns.iter().enumerate() {
+        x.return_track(set, 10 + (set.tracks.len() + i) as u64, r);
+    }
     x.close("Tracks");
     x.main_track(set);
     x.prehear_track();
-    x.empty("SendsPre", &[]);
+    if set.returns.is_empty() {
+        x.empty("SendsPre", &[]);
+    } else {
+        x.open("SendsPre", &[]);
+        for (i, r) in set.returns.iter().enumerate() {
+            x.empty("SendPreBool", &[("Id", i.to_string()), ("Value", r.pre.to_string())]);
+        }
+        x.close("SendsPre");
+    }
     x.open("Scenes", &[]);
     for i in 0..SCENES {
         x.open("Scene", &[("Id", i.to_string())]);
@@ -950,6 +1015,13 @@ const AUDIO_CLIP_PATHS: &[&str] = &[
 ];
 const MIDI_CLIP_PATHS: &[&str] =
     &["Notes/KeyTracks", "Notes/PerNoteEventStore", "Notes/NoteIdGenerator/NextId", "ScaleInformation/RootNote", "ExpressionGrid"];
+const RETURN_PATHS: &[&str] = &[
+    "DeviceChain/Mixer/Volume/Manual",
+    "DeviceChain/Mixer/Pan/Manual",
+    "DeviceChain/Mixer/Speaker/Manual",
+    "DeviceChain/AudioOutputRouting/Target",
+    "DeviceChain/DeviceChain/Devices",
+];
 const SET_PATHS: &[&str] = &[
     "NextPointeeId",
     "OverwriteProtectionNumber",
@@ -975,6 +1047,9 @@ pub struct SetSummary {
     pub audio_clips: usize,
     pub midi_clips: usize,
     pub notes: usize,
+    pub return_tracks: usize,
+    /// Sends above Live's minimum on ordinary tracks.
+    pub sends: usize,
 }
 
 pub(crate) fn child<'a, 'i>(n: roxmltree::Node<'a, 'i>, tag: &str) -> Option<roxmltree::Node<'a, 'i>> {
@@ -1011,9 +1086,14 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
     if scenes == 0 {
         return Err("no scenes".into());
     }
-    let mut sum = SetSummary { audio_tracks: 0, midi_tracks: 0, audio_clips: 0, midi_clips: 0, notes: 0 };
+    let mut sum = SetSummary { audio_tracks: 0, midi_tracks: 0, audio_clips: 0, midi_clips: 0, notes: 0, return_tracks: 0, sends: 0 };
     let mut track_ids = std::collections::HashSet::new();
     let tracks = path(set, "Tracks").ok_or("no Tracks")?;
+    let returns = tracks.children().filter(|c| c.has_tag_name("ReturnTrack")).count();
+    let pre = path(set, "SendsPre").map_or(0, |s| s.children().filter(|c| c.has_tag_name("SendPreBool")).count());
+    if pre != returns {
+        return Err(format!("{pre} SendPreBool entries for {returns} return tracks"));
+    }
     for t in tracks.children().filter(|c| c.is_element()) {
         let kind = t.tag_name().name();
         let what = format!("{kind} {}", t.attribute("Id").unwrap_or("?"));
@@ -1021,6 +1101,36 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
             return Err(format!("{what}: duplicate track id"));
         }
         require(t, TRACK_PATHS, &what)?;
+        // One send per return on every track, in Live's range.
+        let holders: Vec<_> =
+            path(t, "DeviceChain/Mixer/Sends").map_or(Vec::new(), |s| s.children().filter(|c| c.has_tag_name("TrackSendHolder")).collect());
+        if holders.len() != returns {
+            return Err(format!("{what}: {} sends for {returns} return tracks", holders.len()));
+        }
+        for (i, h) in holders.iter().enumerate() {
+            let level = number(*h, "Send/Manual")?;
+            let active = value(*h, "Active")?;
+            if h.attribute("Id") != Some(i.to_string().as_str())
+                || !(SEND_RANGE.0..=SEND_RANGE.1).contains(&level)
+                || path(*h, "Send/AutomationTarget").is_none()
+            {
+                return Err(format!("{what}: bad send {i} (level {level})"));
+            }
+            if kind != "ReturnTrack" && active == "true" && level > SEND_RANGE.0 {
+                sum.sends += 1;
+            }
+        }
+        if kind == "ReturnTrack" {
+            sum.return_tracks += 1;
+            require(t, RETURN_PATHS, &what)?;
+            if path(t, "DeviceChain/MainSequencer").is_some() {
+                return Err(format!("{what}: a return track with clips"));
+            }
+            continue;
+        }
+        if sum.return_tracks > 0 {
+            return Err(format!("{what} comes after a return track"));
+        }
         require(t, PLAYER_PATHS, &what)?;
         let (events, clip_tag, extra) = match kind {
             "AudioTrack" => {
@@ -1179,6 +1289,8 @@ mod tests {
                     on: true,
                     volume: 1.0,
                     pan: 0.0,
+                    sends: vec![0.5, 3.0],
+                    sends_only: false,
                     content: SetContent::Audio(vec![SetAudioClip {
                         name: "01 Bass".into(),
                         start: 0.0,
@@ -1197,6 +1309,8 @@ mod tests {
                     on: false,
                     volume: 0.5,
                     pan: -0.25,
+                    sends: vec![0.0, 0.25],
+                    sends_only: true,
                     content: SetContent::Midi(vec![SetMidiClip {
                         name: "MIDI".into(),
                         start: 4.0,
@@ -1208,7 +1322,20 @@ mod tests {
                         ],
                     }]),
                 },
-                SetTrack { name: "Empty".into(), color: 0, on: true, volume: 1.0, pan: 0.0, content: SetContent::Midi(vec![]) },
+                SetTrack {
+                    name: "Empty".into(),
+                    color: 0,
+                    on: true,
+                    volume: 1.0,
+                    pan: 0.0,
+                    sends: Vec::new(),
+                    sends_only: false,
+                    content: SetContent::Midi(vec![]),
+                },
+            ],
+            returns: vec![
+                SetReturn { name: "Return A".into(), color: 5, on: true, volume: 0.8, pan: 0.1, pre: false },
+                SetReturn { name: "Return B".into(), color: 6, on: false, volume: 1.0, pan: 0.0, pre: true },
             ],
         }
     }
@@ -1225,10 +1352,62 @@ mod tests {
     fn written_set_passes_the_structural_check() {
         let xml = to_xml(&sample_set());
         let sum = validate(&xml, None).unwrap();
-        assert_eq!(sum, SetSummary { audio_tracks: 1, midi_tracks: 2, audio_clips: 1, midi_clips: 1, notes: 3 });
+        assert_eq!(
+            sum,
+            SetSummary { audio_tracks: 1, midi_tracks: 2, audio_clips: 1, midi_clips: 1, notes: 3, return_tracks: 2, sends: 3 }
+        );
         assert!(xml.contains("<EffectiveName Value=\"Bass &amp; &lt;Drums&gt;\" />"));
         let gz = gzip(&xml).unwrap();
         assert_eq!(&gz[..2], &[0x1f, 0x8b]);
+    }
+
+    #[test]
+    fn returns_and_sends_are_written_the_way_live_saves_them() {
+        let xml = to_xml(&sample_set());
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let set = child(doc.root_element(), "LiveSet").unwrap();
+        let tracks: Vec<_> = child(set, "Tracks").unwrap().children().filter(|c| c.is_element()).collect();
+        // Returns come last, after every ordinary track, with ids of their own.
+        assert_eq!(
+            tracks.iter().map(|t| t.tag_name().name()).collect::<Vec<_>>(),
+            ["AudioTrack", "MidiTrack", "MidiTrack", "ReturnTrack", "ReturnTrack"]
+        );
+        assert_eq!(value(tracks[3], "Name/EffectiveName").unwrap(), "Return A");
+        assert_eq!(number(tracks[3], "DeviceChain/Mixer/Volume/Manual").unwrap() as f32, 0.8);
+        assert_eq!(value(tracks[4], "DeviceChain/Mixer/Speaker/Manual").unwrap(), "false");
+        let sends = |t: roxmltree::Node| -> Vec<(f64, String)> {
+            path(t, "DeviceChain/Mixer/Sends")
+                .unwrap()
+                .children()
+                .filter(|c| c.is_element())
+                .map(|h| (number(h, "Send/Manual").unwrap(), value(h, "Active").unwrap().to_string()))
+                .collect()
+        };
+        // 0.5 as is, +9.5 dB clamped to Live's 0 dB top; an unset send sits at Live's minimum.
+        assert_eq!(sends(tracks[0]), [(0.5, "true".into()), (1.0, "true".into())]);
+        assert_eq!(sends(tracks[1]), [(SEND_RANGE.0, "true".into()), (0.25, "true".into())]);
+        assert_eq!(sends(tracks[2]), [(SEND_RANGE.0, "true".into()), (SEND_RANGE.0, "true".into())]);
+        // A return's own sends exist but are inactive.
+        assert_eq!(sends(tracks[3]), [(SEND_RANGE.0, "false".into()), (SEND_RANGE.0, "false".into())]);
+        // "Sends Only" output, and the per-return pre/post switches.
+        assert_eq!(value(tracks[0], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/Master");
+        assert_eq!(value(tracks[1], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/None");
+        assert_eq!(value(tracks[1], "DeviceChain/AudioOutputRouting/UpperDisplayString").unwrap(), "Sends Only");
+        let pre: Vec<_> =
+            child(set, "SendsPre").unwrap().children().filter(|c| c.is_element()).map(|c| c.attribute("Value").unwrap()).collect();
+        assert_eq!(pre, ["false", "true"]);
+        // The main and pre-hear tracks have no sends.
+        assert!(path(set, "MasterTrack/DeviceChain/Mixer/Sends").unwrap().children().all(|c| !c.is_element()));
+    }
+
+    #[test]
+    fn a_set_without_returns_has_no_sends() {
+        let mut s = sample_set();
+        s.returns.clear();
+        let xml = to_xml(&s);
+        let sum = validate(&xml, None).unwrap();
+        assert_eq!((sum.return_tracks, sum.sends), (0, 0));
+        assert!(xml.contains("<SendsPre />") && !xml.contains("TrackSendHolder"));
     }
 
     #[test]
@@ -1239,6 +1418,10 @@ mod tests {
             xml.replacen("<CurrentEnd Value=\"28\"", "<CurrentEnd Value=\"0\"", 1),
             xml.replacen("NoteId=\"2\"", "NoteId=\"1\"", 1),
             xml.replacen("<Scene Id=\"7\">", "<Scene Id=\"7\" />\n<Scene Id=\"8\">", 1),
+            // A send too many, a missing pre/post switch, a send above 0 dB.
+            xml.replacen("<TrackSendHolder Id=\"1\">", "<TrackSendHolder Id=\"2\">", 1),
+            xml.replacen("<SendPreBool Id=\"1\" Value=\"true\" />", "", 1),
+            xml.replacen("<Manual Value=\"0.5\" />", "<Manual Value=\"1.5\" />", 1),
         ];
         for (i, b) in broken.iter().enumerate() {
             assert_ne!(b, &xml, "case {i} changed nothing");

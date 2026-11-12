@@ -507,3 +507,15 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Existing `.dsproj` format, preferences/cache/project/scratch paths, executable, crate names,
   platform identities and installer AppId remain stable; see `docs/building.md` › Compatibility names.
 - Historical entries retain the name used at the time. See spec 004 for requirements and verification.
+
+### 2026-11-12: return tracks and sends in the Live set export (spec 006)
+
+- Export › Project now writes return tracks and sends into the Live set (they were dropped). Each return is a Live
+  return track with its volume, pan and on/off state; every track has one send per return at its level. A track whose
+  Out is a return is "Sends Only" with a full send. Tracks are still rendered dry.
+- A return with devices that a playing track feeds is also rendered (wet) onto "<return> (rendered)", and its Live
+  return is written turned off so nothing sounds twice. `stem_snapshot` given a return solos it for that pass.
+- Approximations, each listed per track in the notes file: sends above 0 dB are set to 0 dB (Live's maximum), and a
+  pre-fader send on a rendered track becomes post-fader with its level divided by the track volume.
+- `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
+  list. Not yet opened in Live itself (spec 006, T5).
