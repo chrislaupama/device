@@ -319,7 +319,13 @@ impl Controller {
         std::thread::Builder::new()
             .name("recorded-takes".into())
             .spawn(move || {
-                let takes = takes.into_iter().map(|t| { let r = load_and_analyse(&engine, &t.path); (t, r) }).collect();
+                let takes = takes
+                    .into_iter()
+                    .map(|t| {
+                        let r = load_and_analyse(&engine, &t.path);
+                        (t, r)
+                    })
+                    .collect();
                 let _ = tx.send(JobResult::Recorded { doc_epoch: epoch, takes, midi });
             })
             .expect("spawn take loader");
@@ -346,7 +352,12 @@ impl Controller {
 
     /// Worker finished loading the takes of one pass: ONE undoable `Batch` "Record"
     /// (audio takes, then the pass's MIDI clips).
-    pub(crate) fn finish_recorded(&mut self, doc_epoch: u64, takes: Vec<(RecordedTake, Result<(AssetInfo, Pyramid), String>)>, midi: Vec<Command>) {
+    pub(crate) fn finish_recorded(
+        &mut self,
+        doc_epoch: u64,
+        takes: Vec<(RecordedTake, Result<(AssetInfo, Pyramid), String>)>,
+        midi: Vec<Command>,
+    ) {
         if doc_epoch != self.doc_epoch {
             for (_, r) in takes {
                 if let Ok((info, _)) = r {
@@ -379,7 +390,8 @@ impl Controller {
                 continue;
             };
             let rate = if take.sample_rate > 0.0 { take.sample_rate } else { info.source_sample_rate };
-            let frames = if take.frames > 0 { take.frames } else { (info.frames as f64 * info.source_sample_rate / self.rate).round() as u64 };
+            let frames =
+                if take.frames > 0 { take.frames } else { (info.frames as f64 * info.source_sample_rate / self.rate).round() as u64 };
             if frames == 0 {
                 let _ = self.engine.release_asset(info.asset_id);
                 continue;
@@ -400,14 +412,31 @@ impl Controller {
                 frames,
             };
             let start = self.project().frames_to_ticks(take.start_frame.max(0), rate);
-            let clip = Clip { id: ClipId(alloc()), asset: asset_id, name, start, source_offset: skip, source_length: frames - skip, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None };
+            let clip = Clip {
+                id: ClipId(alloc()),
+                asset: asset_id,
+                name,
+                start,
+                source_offset: skip,
+                source_length: frames - skip,
+                gain: 1.0,
+                warp: Default::default(),
+                disabled: false,
+                clip_loop: None,
+            };
             cmds.push(Command::AddAsset { asset });
             cmds.push(Command::AddClip { track, clip });
             loaded.push((asset_id, info.asset_id, pyr));
         }
         if cmds.is_empty() {
             if midi.is_empty() {
-                self.set_status(format!("Recording produced no usable takes{}", if errors.is_empty() { String::new() } else { format!(": {}", errors.join("; ")) }), 6);
+                self.set_status(
+                    format!(
+                        "Recording produced no usable takes{}",
+                        if errors.is_empty() { String::new() } else { format!(": {}", errors.join("; ")) }
+                    ),
+                    6,
+                );
             } else {
                 self.finish_midi_only(midi, &errors);
             }
@@ -504,7 +533,18 @@ impl Controller {
         let len = (to - from).max(1);
         let rel: Vec<(dstudio_core::Note, bool)> = notes
             .iter()
-            .map(|n| (dstudio_core::Note { id: 0, pitch: n.pitch, start: ticks(n.start) - from, length: (ticks(n.end) - ticks(n.start)).max(1), velocity: n.velocity }, false))
+            .map(|n| {
+                (
+                    dstudio_core::Note {
+                        id: 0,
+                        pitch: n.pitch,
+                        start: ticks(n.start) - from,
+                        length: (ticks(n.end) - ticks(n.start)).max(1),
+                        velocity: n.velocity,
+                    },
+                    false,
+                )
+            })
             .collect();
         let mini = crate::controller::mini_notes(&rel, 0, len);
         for &t in &pass.tracks {
@@ -558,7 +598,15 @@ impl Controller {
 mod tests {
     use super::*;
     fn dev(ch: u32) -> AudioDeviceInfo {
-        AudioDeviceInfo { id: "x".into(), name: "X".into(), input_channels: ch, output_channels: 0, sample_rates: vec![], is_default_input: false, is_default_output: false }
+        AudioDeviceInfo {
+            id: "x".into(),
+            name: "X".into(),
+            input_channels: ch,
+            output_channels: 0,
+            sample_rates: vec![],
+            is_default_input: false,
+            is_default_output: false,
+        }
     }
     #[test]
     fn choices() {

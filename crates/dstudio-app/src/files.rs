@@ -8,10 +8,10 @@
 //! out here, in design units, so the UI only draws them.
 
 use crate::controller::{Controller, ImportTarget, JobResult, gain_from_slider, header_meter, slider_from_gain, sync_model};
-use dstudio_engine::AssetInfo;
 use crate::{FileGuide, FileRow, Studio};
-use slint::Model;
 use dstudio_core::{ClipId, Command, MidiClip, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, persist};
+use dstudio_engine::AssetInfo;
+use slint::Model;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -170,9 +170,7 @@ impl Default for FilesUi {
     fn default() -> Self {
         let projects_dir = std::env::var_os("DSTUDIO_PROJECTS_DIR")
             .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Documents").join("Device Studio"))
-            });
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Documents").join("Device Studio")));
         FilesUi {
             nav: Nav::new(Loc { section: SECTION_DEVICES, tab: 0 }),
             section: SECTION_DEVICES,
@@ -204,7 +202,8 @@ pub fn dialog_exts() -> Vec<String> {
     AUDIO_EXT
         .iter()
         .flat_map(|e| {
-            (0..1u32 << e.len()).map(move |m| e.char_indices().map(|(i, c)| if m >> i & 1 == 1 { c.to_ascii_uppercase() } else { c }).collect::<String>())
+            (0..1u32 << e.len())
+                .map(move |m| e.char_indices().map(|(i, c)| if m >> i & 1 == 1 { c.to_ascii_uppercase() } else { c }).collect::<String>())
         })
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
@@ -237,7 +236,10 @@ pub fn scan_projects(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
         .map(|e| e.path())
         .filter(|p| p.is_dir() && p.extension().is_some_and(|e| e == persist::EXTENSION))
         .map(|p| {
-            let t = std::fs::metadata(p.join(persist::PROJECT_FILE)).or_else(|_| std::fs::metadata(&p)).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+            let t = std::fs::metadata(p.join(persist::PROJECT_FILE))
+                .or_else(|_| std::fs::metadata(&p))
+                .and_then(|m| m.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
             (p, t)
         })
         .collect()
@@ -307,14 +309,34 @@ impl Builder<'_> {
             FileItem::Project(dir) => match self.ui.project_cache.get(dir)? {
                 Err(e) => Contents::Note(e.clone()),
                 Ok(p) => {
-                    let tracks = p.tracks.iter().map(|t| (FileItem::Track { project: dir.clone(), track: t.id }, t.name.clone(), String::new(), if t.kind == TrackKind::Instrument { 4 } else { 3 })).collect();
+                    let tracks = p
+                        .tracks
+                        .iter()
+                        .map(|t| {
+                            (
+                                FileItem::Track { project: dir.clone(), track: t.id },
+                                t.name.clone(),
+                                String::new(),
+                                if t.kind == TrackKind::Instrument { 4 } else { 3 },
+                            )
+                        })
+                        .collect();
                     let audio = p.assets.iter().map(|a| {
                         let path = PathBuf::from(&a.absolute_path);
                         let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
                         (FileItem::Audio(path.clone()), file_name(&path), ext, 1)
                     });
-                    let midi = p.tracks.iter().flat_map(|t| t.midi_clips.iter()).map(|c| (FileItem::Midi { project: dir.clone(), clip: c.id }, c.name.clone(), String::new(), 5)).collect();
-                    let groups = vec![Group { label: Some("Tracks"), rows: tracks }, Group { label: Some("Audio files"), rows: audio.collect() }, Group { label: Some("MIDI clips"), rows: midi }];
+                    let midi = p
+                        .tracks
+                        .iter()
+                        .flat_map(|t| t.midi_clips.iter())
+                        .map(|c| (FileItem::Midi { project: dir.clone(), clip: c.id }, c.name.clone(), String::new(), 5))
+                        .collect();
+                    let groups = vec![
+                        Group { label: Some("Tracks"), rows: tracks },
+                        Group { label: Some("Audio files"), rows: audio.collect() },
+                        Group { label: Some("MIDI clips"), rows: midi },
+                    ];
                     if groups.iter().all(|g| g.rows.is_empty()) {
                         Contents::Note("Nothing in this project".into())
                     } else {
@@ -343,7 +365,13 @@ impl Builder<'_> {
     fn row_group(&mut self, item: FileItem, label: String, detail: String, glyph: i32, depth: i32, filter: bool) {
         let open = item.expandable() && (self.ui.expanded.contains(&item.key()) || (filter && !self.matches(&label)));
         let filter_below = filter && !self.matches(&label);
-        let expander = if !item.expandable() { 0 } else if open { 2 } else { 1 };
+        let expander = if !item.expandable() {
+            0
+        } else if open {
+            2
+        } else {
+            1
+        };
         let contents = if open { self.contents(&item) } else { None };
         self.push(0, depth, ROW_H, label, detail, glyph, expander, Some(item));
         let x = ROW_X + depth as f32 * INDENT + 4.25;
@@ -407,7 +435,12 @@ fn top_items(ui: &FilesUi, folders: &[String]) -> Vec<(FileItem, String)> {
 
 /// Rows of the open tab. `folders`: the added folders, oldest first (preferences).
 pub fn build(ui: &FilesUi, folders: &[String]) -> Built {
-    let mut b = Builder { ui, q: ui.search.trim().to_lowercase(), out: Built { rows: Vec::new(), items: Vec::new(), guides: Vec::new(), height: 0.0, count: 0 }, y: PAD_TOP };
+    let mut b = Builder {
+        ui,
+        q: ui.search.trim().to_lowercase(),
+        out: Built { rows: Vec::new(), items: Vec::new(), guides: Vec::new(), height: 0.0, count: 0 },
+        y: PAD_TOP,
+    };
     let top = top_items(ui, folders);
     let filter = !b.q.is_empty();
     let mut first = true;
@@ -590,7 +623,10 @@ impl Controller {
             None => {
                 let id = TrackId(next);
                 next += 1;
-                commands.push(Command::AddTrack { index: None, track: Track::new(id, TrackKind::Instrument, "Instrument", crate::controller::next_track_color(p)) });
+                commands.push(Command::AddTrack {
+                    index: None,
+                    track: Track::new(id, TrackKind::Instrument, "Instrument", crate::controller::next_track_color(p)),
+                });
                 id
             }
         };
@@ -643,7 +679,9 @@ impl Controller {
                 let index = track.and_then(|t| p.track_index(t)).map(|i| i + 1);
                 match d.item {
                     FileItem::Audio(path) => {
-                        let target = track.filter(|t| p.track(*t).is_some_and(|t| t.kind == TrackKind::Audio)).map_or(ImportTarget::NewTrack, ImportTarget::Track);
+                        let target = track
+                            .filter(|t| p.track(*t).is_some_and(|t| t.kind == TrackKind::Audio))
+                            .map_or(ImportTarget::NewTrack, ImportTarget::Track);
                         self.import_files(vec![path], target, Some(at));
                     }
                     FileItem::Track { project, track } => self.files_add_track(&project, track, index),
@@ -856,7 +894,9 @@ impl Controller {
         s.set_files_list_y(list_y);
         let total = top_items(&self.files, &self.settings.prefs.browser_folders).len();
         let (one, many) = if self.files.tab == TAB_PROJECTS { ("project", "projects") } else { ("folder", "folders") };
-        s.set_files_meta(if total == 0 { String::new() } else { format!("{} {}", built.count, if built.count == 1 { one } else { many }) }.into());
+        s.set_files_meta(
+            if total == 0 { String::new() } else { format!("{} {}", built.count, if built.count == 1 { one } else { many }) }.into(),
+        );
         s.set_files_sort(if self.files.sort_name { "Name" } else { "Recent" }.into());
         s.set_files_sort_index(self.files.sort_name as i32);
         s.set_files_sort_open(self.files.sort_open && self.files.section == SECTION_FILES && s.get_files_meta() != "");
@@ -927,7 +967,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dstudio-files-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("kit/drums")).unwrap();
-        for f in ["kit/b.wav", "kit/A.WAV", "kit/c.flac", "kit/d.MP3", "kit/e.ogg", "kit/f.aif", "kit/notes.txt", "kit/.hidden.wav", "kit/drums/kick.wav"] {
+        for f in [
+            "kit/b.wav",
+            "kit/A.WAV",
+            "kit/c.flac",
+            "kit/d.MP3",
+            "kit/e.ogg",
+            "kit/f.aif",
+            "kit/notes.txt",
+            "kit/.hidden.wav",
+            "kit/drums/kick.wav",
+        ] {
             std::fs::write(dir.join(f), b"").unwrap();
         }
         let kit = dir.join("kit");
@@ -978,7 +1028,17 @@ mod tests {
         ui.project_cache.insert(path.clone(), persist::load(&path).map(|l| l.project).map_err(|e| e.to_string()));
         let b = build(&ui, &[]);
         let labels: Vec<_> = b.rows.iter().map(|r| (r.kind, r.label.to_string())).collect();
-        assert_eq!(labels, [(0, "Song".into()), (1, "Tracks".into()), (0, "Audio".into()), (0, "Instrument".into()), (1, "MIDI clips".into()), (0, "MIDI".into())]);
+        assert_eq!(
+            labels,
+            [
+                (0, "Song".into()),
+                (1, "Tracks".into()),
+                (0, "Audio".into()),
+                (0, "Instrument".into()),
+                (1, "MIDI clips".into()),
+                (0, "MIDI".into())
+            ]
+        );
         assert!(matches!(b.items[2], Some(FileItem::Track { .. })));
         assert!(matches!(b.items[5], Some(FileItem::Midi { .. })));
         let _ = std::fs::remove_dir_all(&dir);

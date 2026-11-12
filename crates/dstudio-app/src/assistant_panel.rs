@@ -60,7 +60,16 @@ pub struct AssistantState {
 
 impl Default for AssistantState {
     fn default() -> Self {
-        AssistantState { mode: Mode::Assist, entries: Vec::new(), notice_visible: true, busy: None, highlights: Vec::new(), context_removed: None, rev: 0, fresh_from: 0 }
+        AssistantState {
+            mode: Mode::Assist,
+            entries: Vec::new(),
+            notice_visible: true,
+            busy: None,
+            highlights: Vec::new(),
+            context_removed: None,
+            rev: 0,
+            fresh_from: 0,
+        }
     }
 }
 
@@ -193,7 +202,14 @@ impl Controller {
             && let Some((ti, ci)) = p.find_midi_clip(c)
         {
             let t = &p.tracks[ti];
-            return Some(format!("MIDI clip \"{}\" (id {}) on track {} \"{}\" (id {})", t.midi_clips[ci].name, c.0, ti + 1, t.name, t.id.0));
+            return Some(format!(
+                "MIDI clip \"{}\" (id {}) on track {} \"{}\" (id {})",
+                t.midi_clips[ci].name,
+                c.0,
+                ti + 1,
+                t.name,
+                t.id.0
+            ));
         }
         let id = self.selected_track?;
         let i = p.track_index(id)?;
@@ -212,10 +228,23 @@ impl Controller {
         }
         let mut state = assistant::describe_state(self.project());
         state["next_id_hint"] = serde_json::json!(self.project().next_id);
-        let req = crate::assistant_provider::Request { mode: self.assistant.mode, prompt: prompt.clone(), state, selection: self.selection_description(), history: self.assistant.history() };
+        let req = crate::assistant_provider::Request {
+            mode: self.assistant.mode,
+            prompt: prompt.clone(),
+            state,
+            selection: self.selection_description(),
+            history: self.assistant.history(),
+        };
         let point = self.assistant.mode == Mode::Teach;
         self.assistant.push(Entry { kind: EntryKind::User, text: prompt, lines: Vec::new(), secs: 0.0, expanded: false, point });
-        self.assistant.entries.push(Entry { kind: EntryKind::Pending, text: "Reasoning".into(), lines: Vec::new(), secs: 0.0, expanded: false, point: false });
+        self.assistant.entries.push(Entry {
+            kind: EntryKind::Pending,
+            text: "Reasoning".into(),
+            lines: Vec::new(),
+            secs: 0.0,
+            expanded: false,
+            point: false,
+        });
         self.assistant.rev += 1;
         let started = Instant::now();
         self.assistant.busy = Some(started);
@@ -230,7 +259,14 @@ impl Controller {
         if let Err(e) = spawned {
             self.pending_jobs -= 1;
             self.assistant.busy = None;
-            self.assistant.push(Entry { kind: EntryKind::Error, text: format!("Could not start the request: {e}"), lines: Vec::new(), secs: 0.0, expanded: false, point: false });
+            self.assistant.push(Entry {
+                kind: EntryKind::Error,
+                text: format!("Could not start the request: {e}"),
+                lines: Vec::new(),
+                secs: 0.0,
+                expanded: false,
+                point: false,
+            });
         }
         self.ui_dirty = true;
         true
@@ -259,9 +295,7 @@ impl Controller {
             Ok(p) => p,
             Err(e) => return error(self, format!("Nothing was changed: {e}.")),
         };
-        if mode == Mode::Assist
-            && plan.batch.is_some()
-        {
+        if mode == Mode::Assist && plan.batch.is_some() {
             if let Err(e) = assistant::commit(&mut self.doc, &plan) {
                 return error(self, format!("Nothing was changed: {e}."));
             }
@@ -270,7 +304,11 @@ impl Controller {
         let until = Instant::now() + Duration::from_secs_f32(HIGHLIGHT_SECS);
         self.assistant.highlights = plan.highlights.iter().map(|(t, n)| Highlight { target: t.clone(), note: n.clone(), until }).collect();
         let mut lines = plan.summary.clone();
-        lines.extend(plan.highlights.iter().map(|(t, n)| if n.is_empty() { format!("Look at {}.", target_label(t)) } else { format!("{}: {n}", target_label(t)) }));
+        lines.extend(
+            plan.highlights
+                .iter()
+                .map(|(t, n)| if n.is_empty() { format!("Look at {}.", target_label(t)) } else { format!("{}: {n}", target_label(t)) }),
+        );
         let mut text = plan.explanations.join("\n\n");
         if text.is_empty() && lines.is_empty() {
             text = "No changes were needed.".into();
@@ -293,13 +331,24 @@ impl Controller {
         self.assistant.mode = if point { Mode::Teach } else { Mode::Assist };
         let ask = if point { "How do I change the tempo?" } else { "Make me a short plucky synth lead" };
         let steps = ["Added an instrument track, Synth.", "Loaded Synth on Synth."];
-        let reply = if point { "The tempo lives in the transport bar. Double-click it and type a new value." } else { "Added an instrument track, Synth, and gave it a short plucky lead sound." };
+        let reply = if point {
+            "The tempo lives in the transport bar. Double-click it and type a new value."
+        } else {
+            "Added an instrument track, Synth, and gave it a short plucky lead sound."
+        };
         let mut e = vec![entry(EntryKind::User, ask, &[], 0.0, false, point)];
         match name {
             "empty" => e.clear(),
             "turn" | "point" | "draft" => e.push(entry(EntryKind::Reply, reply, if point { &[] } else { &steps }, 4.8, false, false)),
             "steps" => e.push(entry(EntryKind::Reply, reply, &steps, 4.8, true, false)),
-            "error" => e.push(entry(EntryKind::Error, "Nothing was changed: Point mode cannot modify the project (action 1).", &[], 1.2, false, false)),
+            "error" => e.push(entry(
+                EntryKind::Error,
+                "Nothing was changed: Point mode cannot modify the project (action 1).",
+                &[],
+                1.2,
+                false,
+                false,
+            )),
             "busy" => {
                 e.push(entry(EntryKind::Pending, "Reasoning", &[], 0.0, false, false));
                 self.assistant.busy = Some(Instant::now());
@@ -307,7 +356,8 @@ impl Controller {
             "highlight" => {
                 e.push(entry(EntryKind::Reply, reply, &[], 2.1, false, false));
                 let until = Instant::now() + Duration::from_secs(3600);
-                self.assistant.highlights = vec![Highlight { target: "transport.bpm".into(), note: "Double-click the tempo and type a new value.".into(), until }];
+                self.assistant.highlights =
+                    vec![Highlight { target: "transport.bpm".into(), note: "Double-click the tempo and type a new value.".into(), until }];
             }
             _ => return Err(format!("unknown assistant demo {name} (empty, turn, point, draft, steps, error, busy, highlight)")),
         }
@@ -319,7 +369,17 @@ impl Controller {
     }
 
     pub fn highlight_layout(&self, w: f32, h: f32, sounds: bool) -> Layout {
-        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, chat_w: self.chat_w_at(w, sounds), clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
+        Layout {
+            w,
+            h,
+            sounds,
+            mixer: self.mixer_open,
+            assistant: self.assistant_open,
+            chat_w: self.chat_w_at(w, sounds),
+            clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip,
+            scroll_y: self.view.scroll_y as f32,
+            bottom: self.bottom_h(),
+        }
     }
 
     /// Current highlight rects (expired ones dropped). Unknown-to-layout targets are skipped.
@@ -335,10 +395,23 @@ impl Controller {
             .highlights
             .iter()
             .filter_map(|h| {
-                let t = highlight::target_rect(layout, &h.target, |id| p.track_index(dstudio_core::TrackId(id)).map(|i| (self.view.track_offset(i), self.view.pitch(i) - 0.5)))?;
+                let t = highlight::target_rect(layout, &h.target, |id| {
+                    p.track_index(dstudio_core::TrackId(id)).map(|i| (self.view.track_offset(i), self.view.pitch(i) - 0.5))
+                })?;
                 let r = highlight::ring(t, layout.w, layout.h);
                 let (bx, by, above) = highlight::bubble_anchor(r, layout.h);
-                Some(HighlightRect { x: r.0, y: r.1, w: r.2, h: r.3, r: r.4, bx, by, above, title: target_label(&h.target).into(), note: h.note.clone().into() })
+                Some(HighlightRect {
+                    x: r.0,
+                    y: r.1,
+                    w: r.2,
+                    h: r.3,
+                    r: r.4,
+                    bx,
+                    by,
+                    above,
+                    title: target_label(&h.target).into(),
+                    note: h.note.clone().into(),
+                })
             })
             .collect()
     }
@@ -402,7 +475,14 @@ mod tests {
     fn fresh_marks_only_new_entries() {
         let mut s = AssistantState::default();
         s.push(Entry { kind: EntryKind::User, text: "a".into(), lines: vec![], secs: 0.0, expanded: true, point: false });
-        s.entries.push(Entry { kind: EntryKind::Pending, text: "Reasoning".into(), lines: vec![], secs: 0.0, expanded: true, point: false });
+        s.entries.push(Entry {
+            kind: EntryKind::Pending,
+            text: "Reasoning".into(),
+            lines: vec![],
+            secs: 0.0,
+            expanded: true,
+            point: false,
+        });
         assert!(s.to_model().iter().all(|r| r.fresh));
         s.fresh_from = s.entries.len();
         s.push(Entry { kind: EntryKind::Reply, text: "".into(), lines: vec!["Did x.".into()], secs: 1.0, expanded: false, point: false });

@@ -210,8 +210,11 @@ impl Controller {
     pub fn open_send_menu(&mut self, track: TrackId, x: f32, y: f32) {
         let p = self.project();
         let Some(t) = p.track(track).filter(|t| !t.is_return()) else { return };
-        let mut items: Vec<(String, RouteItem, bool)> =
-            p.returns().filter(|r| !t.sends.iter().any(|s| s.target == r.id)).map(|r| (r.name.clone(), RouteItem::Send(r.id), false)).collect();
+        let mut items: Vec<(String, RouteItem, bool)> = p
+            .returns()
+            .filter(|r| !t.sends.iter().any(|s| s.target == r.id))
+            .map(|r| (r.name.clone(), RouteItem::Send(r.id), false))
+            .collect();
         if p.returns().count() < MAX_RETURNS {
             items.push(("New return track".into(), RouteItem::NewReturn, false));
         }

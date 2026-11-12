@@ -41,7 +41,12 @@ impl AudioPrefs {
     }
 
     pub fn device_config(&self) -> dstudio_engine::DeviceConfig {
-        dstudio_engine::DeviceConfig { output: self.output.clone(), input: self.input.clone(), sample_rate: self.sample_rate, buffer_size: self.buffer_size }
+        dstudio_engine::DeviceConfig {
+            output: self.output.clone(),
+            input: self.input.clone(),
+            sample_rate: self.sample_rate,
+            buffer_size: self.buffer_size,
+        }
     }
 }
 
@@ -111,7 +116,13 @@ pub struct GeneralPrefs {
 
 impl Default for GeneralPrefs {
     fn default() -> Self {
-        GeneralPrefs { load_last_session: false, stop_in_place: false, show_plugin_windows: true, show_builtin_windows: false, plugin_windows_on_top: true }
+        GeneralPrefs {
+            load_last_session: false,
+            stop_in_place: false,
+            show_plugin_windows: true,
+            show_builtin_windows: false,
+            plugin_windows_on_top: true,
+        }
     }
 }
 
@@ -181,7 +192,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dstudio-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.dsproj".into()], recent_resolved: vec!["/private/tmp/Song.dsproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() }, midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] }, hide_returns: true };
+        let p = Preferences {
+            audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() },
+            interface_zoom: 110,
+            browser_folders: vec!["/tmp/kit".into()],
+            preview_volume: Some(0.5),
+            assistant_width: 400.0,
+            recent_projects: vec!["/tmp/Song.dsproj".into()],
+            recent_resolved: vec!["/private/tmp/Song.dsproj".into()],
+            general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() },
+            midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] },
+            hide_returns: true,
+        };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());

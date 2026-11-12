@@ -3,11 +3,11 @@
 //! render at the engine sample rate. A stem is one track played alone: DStudio has no
 //! returns, groups or master devices, so that is the post-effects track
 //! render.
+use crate::ChoiceItem;
 use crate::Studio;
 use crate::controller::{Controller, sync_model};
 use crate::resample::Resampler;
 use crate::wavgen;
-use crate::ChoiceItem;
 use dstudio_core::{Project, Ticks, TrackId};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -458,9 +458,15 @@ impl Controller {
                     let names: Vec<(Option<TrackId>, String)> = tracks
                         .iter()
                         .enumerate()
-                        .map(|(i, id)| (Some(*id), stem_file_name(i, p.track(*id).map_or("", |t| t.name.as_str())).trim_end_matches(".wav").to_string()))
+                        .map(|(i, id)| {
+                            (
+                                Some(*id),
+                                stem_file_name(i, p.track(*id).map_or("", |t| t.name.as_str())).trim_end_matches(".wav").to_string(),
+                            )
+                        })
                         .collect();
-                    free_folder(&self.export.dir, &format!("{base} Stems")).and_then(|dir| self.export_plan(&dir, &names, self.export_rate()))
+                    free_folder(&self.export.dir, &format!("{base} Stems"))
+                        .and_then(|dir| self.export_plan(&dir, &names, self.export_rate()))
                 } else {
                     self.export_plan(&self.export.dir.clone(), &[(Some(tracks[0]), base)], self.export_rate())
                 }
@@ -471,7 +477,7 @@ impl Controller {
             Ok((written, restart)) => {
                 self.export.open = false;
                 self.export.tracks_menu = false;
-        self.export.range_menu = false;
+                self.export.range_menu = false;
                 let what = match written.as_slice() {
                     [one] => one.display().to_string(),
                     many => format!("{} files to {}", many.len(), many[0].parent().map_or(String::new(), |d| d.display().to_string())),
@@ -506,7 +512,11 @@ impl Controller {
         let has_clips = |t: &dstudio_core::Track| !t.clips.is_empty() || !t.midi_clips.is_empty();
         // A return with devices is rendered too (its wet sound, since Live can't load the
         // devices), when a track that plays feeds it.
-        let fed = |p: &Project, r: TrackId| p.tracks.iter().any(|t| has_clips(t) && !t.mute && (t.output == Some(r) || t.sends.iter().any(|s| s.target == r && s.level > 0.0)));
+        let fed = |p: &Project, r: TrackId| {
+            p.tracks
+                .iter()
+                .any(|t| has_clips(t) && !t.mute && (t.output == Some(r) || t.sends.iter().any(|s| s.target == r && s.level > 0.0)))
+        };
         let rendered: Vec<(TrackId, String)> = self
             .project()
             .tracks
@@ -518,7 +528,8 @@ impl Controller {
         let restart = if rendered.is_empty() {
             Ok(())
         } else {
-            let files: Vec<(Option<TrackId>, String)> = rendered.iter().map(|(id, f)| (Some(*id), f.trim_end_matches(".wav").to_string())).collect();
+            let files: Vec<(Option<TrackId>, String)> =
+                rendered.iter().map(|(id, f)| (Some(*id), f.trim_end_matches(".wav").to_string())).collect();
             // The set records the renders' length and rate as the engine made them.
             let rate = self.engine.sample_rate().round() as u32;
             self.export_plan(&folder.join(RENDERS), &files, rate)?.1
@@ -589,7 +600,16 @@ impl Controller {
             if t.is_return() {
                 // The return's wet sound as audio, next to the (turned off) Live return.
                 rendered_returns.push(t.name.clone());
-                tracks.push(SetTrack { name: format!("{} (rendered)", t.name), color, on: !t.mute, volume: 1.0, pan: 0.0, sends: Vec::new(), sends_only: false, content });
+                tracks.push(SetTrack {
+                    name: format!("{} (rendered)", t.name),
+                    color,
+                    on: !t.mute,
+                    volume: 1.0,
+                    pan: 0.0,
+                    sends: Vec::new(),
+                    sends_only: false,
+                    content,
+                });
                 continue;
             }
             if t.mute {
@@ -601,21 +621,35 @@ impl Controller {
             tracks.push(SetTrack { name: t.name.clone(), color, on: !t.mute, volume, pan, sends, sends_only, content });
             if render.is_some() && !t.midi_clips.is_empty() {
                 for (k, lane) in midi_lanes(&t.midi_clips).iter().enumerate() {
-                let clips = lane
-                    .iter()
-                    .map(|c| SetMidiClip {
-                        name: c.name.clone(),
-                        start: beats(c.start),
-                        length: beats(c.length),
-                        notes: if c.pattern.is_some() { c.notes.clone() } else { c.tiled_notes() }
-                            .iter()
-                            .filter(|n| n.start >= 0 && n.start < c.length && n.length > 0)
-                            .map(|n| SetNote { pitch: n.pitch.min(127), time: beats(n.start), duration: beats(n.length.min(c.length - n.start)), velocity: n.velocity.clamp(1, 127) })
-                            .collect(),
-                    })
-                    .collect();
-                let label = if k == 0 { format!("{} (MIDI)", t.name) } else { format!("{} (MIDI {})", t.name, k + 1) };
-                tracks.push(SetTrack { name: label, color, on: false, volume: t.gain, pan: t.pan, sends: Vec::new(), sends_only: false, content: SetContent::Midi(clips) });
+                    let clips = lane
+                        .iter()
+                        .map(|c| SetMidiClip {
+                            name: c.name.clone(),
+                            start: beats(c.start),
+                            length: beats(c.length),
+                            notes: if c.pattern.is_some() { c.notes.clone() } else { c.tiled_notes() }
+                                .iter()
+                                .filter(|n| n.start >= 0 && n.start < c.length && n.length > 0)
+                                .map(|n| SetNote {
+                                    pitch: n.pitch.min(127),
+                                    time: beats(n.start),
+                                    duration: beats(n.length.min(c.length - n.start)),
+                                    velocity: n.velocity.clamp(1, 127),
+                                })
+                                .collect(),
+                        })
+                        .collect();
+                    let label = if k == 0 { format!("{} (MIDI)", t.name) } else { format!("{} (MIDI {})", t.name, k + 1) };
+                    tracks.push(SetTrack {
+                        name: label,
+                        color,
+                        on: false,
+                        volume: t.gain,
+                        pan: t.pan,
+                        sends: Vec::new(),
+                        sends_only: false,
+                        content: SetContent::Midi(clips),
+                    });
                 }
             }
         }
@@ -665,7 +699,11 @@ impl Controller {
         let _ = writeln!(notes, "\nNot carried over: automation and device settings. Track colours are not matched to Live's palette.");
         if !returns.is_empty() {
             let names: Vec<&str> = returns.iter().map(|r| r.name.as_str()).collect();
-            let _ = writeln!(notes, "\nReturn tracks ({}) are Live return tracks with their volume and pan, and every track keeps its sends. Tracks are rendered dry, so the returns are fed inside Live.", names.join(", "));
+            let _ = writeln!(
+                notes,
+                "\nReturn tracks ({}) are Live return tracks with their volume and pan, and every track keeps its sends. Tracks are rendered dry, so the returns are fed inside Live.",
+                names.join(", ")
+            );
             if !rendered_returns.is_empty() {
                 let _ = writeln!(
                     notes,
@@ -677,7 +715,11 @@ impl Controller {
                 let _ = writeln!(notes, "Out set to a return, so set to Sends Only with a full send in Live: {}.", to_return.join(", "));
             }
             if !pre_sends.is_empty() {
-                let _ = writeln!(notes, "Pre-fader sends became post-fader sends with the level raised or lowered by the track's volume (the render already carries it), and follow the track's pan: {}.", pre_sends.join(", "));
+                let _ = writeln!(
+                    notes,
+                    "Pre-fader sends became post-fader sends with the level raised or lowered by the track's volume (the render already carries it), and follow the track's pan: {}.",
+                    pre_sends.join(", ")
+                );
             }
             if !clamped.is_empty() {
                 let _ = writeln!(notes, "Sends above 0 dB were set to 0 dB, Live's maximum: {}.", clamped.join(", "));
@@ -690,7 +732,12 @@ impl Controller {
     /// Opens every destination file first (never an existing one), then renders and writes each
     /// pass at `rate` Hz. Returns the written files and the device restart result, which does not
     /// undo them.
-    fn export_plan(&mut self, dir: &Path, files: &[(Option<TrackId>, String)], rate: u32) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
+    fn export_plan(
+        &mut self,
+        dir: &Path,
+        files: &[(Option<TrackId>, String)],
+        rate: u32,
+    ) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
         let (start, frames) = self.export_span();
         let frames = frames as usize;
         let engine_rate = self.engine.sample_rate().round() as u32;
@@ -732,16 +779,21 @@ impl Controller {
     /// click) and writes it as stereo PCM at `out_rate` Hz, converted by `resampler` when the
     /// engine runs at another rate. The audio device is paused for the renders; transport, mutes
     /// and the device are restored afterwards.
-    fn render_passes(&mut self, passes: Vec<Pass>, start: i64, frames: usize, out_rate: u32, resampler: &Resampler) -> (Result<(), String>, Result<(), String>) {
+    fn render_passes(
+        &mut self,
+        passes: Vec<Pass>,
+        start: i64,
+        frames: usize,
+        out_rate: u32,
+        resampler: &Resampler,
+    ) -> (Result<(), String>, Result<(), String>) {
         let rate = self.engine.sample_rate();
         let bits = if self.export.bits24 { 24 } else { 16 };
         let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
         let solo_passes = passes.iter().any(|p| p.track.is_some());
         let e = self.engine.clone();
         let was_running = e.device_running();
-        if was_running
-            && let Err(err) = e.stop_device()
-        {
+        if was_running && let Err(err) = e.stop_device() {
             return (Err(err.to_string()), Ok(()));
         }
         let metronome_was = std::mem::replace(&mut self.metronome_on, false);
@@ -784,8 +836,17 @@ impl Controller {
     /// current, 2 undone.
     fn undo_history_rows(&self) -> Vec<crate::UndoHistoryRow> {
         let depth = self.doc.undo_depth();
-        let state = |i: usize| if i < depth { 0 } else if i == depth { 1 } else { 2 };
-        let base = crate::UndoHistoryRow { number: 1, label: "Open Project".into(), date: "—".into(), time: "—".into(), state: state(0) };
+        let state = |i: usize| {
+            if i < depth {
+                0
+            } else if i == depth {
+                1
+            } else {
+                2
+            }
+        };
+        let base =
+            crate::UndoHistoryRow { number: 1, label: "Open Project".into(), date: "—".into(), time: "—".into(), state: state(0) };
         let steps = self.doc.history_steps().into_iter().enumerate().map(|(i, (label, made))| {
             let made = chrono::DateTime::<chrono::Local>::from(made);
             crate::UndoHistoryRow {
@@ -866,7 +927,8 @@ impl Controller {
         use slint::Model as _;
         let recent = &self.settings.prefs.recent_projects;
         let names = s.get_recent_projects();
-        let unchanged = names.row_count() == recent.len() && recent.iter().enumerate().all(|(i, p)| names.row_data(i).is_some_and(|n| n == recent_name(p)));
+        let unchanged = names.row_count() == recent.len()
+            && recent.iter().enumerate().all(|(i, p)| names.row_data(i).is_some_and(|n| n == recent_name(p)));
         if !unchanged {
             let rows: Vec<slint::SharedString> = recent.iter().map(|p| recent_name(p).into()).collect();
             s.set_recent_projects(slint::ModelRc::new(slint::VecModel::from(rows)));
@@ -897,15 +959,24 @@ impl Controller {
         s.set_export_files_text(format!("{files} {plural}").into());
         let range = self.export_range();
         s.set_export_bars_text(range_bars_text(p, range).into());
-        s.set_export_range_label(match range {
-            ExportRange::Project => "Full project",
-            ExportRange::Loop => "Loop region",
-        }.into());
+        s.set_export_range_label(
+            match range {
+                ExportRange::Project => "Full project",
+                ExportRange::Loop => "Loop region",
+            }
+            .into(),
+        );
         s.set_export_range_menu_open(self.export.range_menu);
         if self.export.range_menu {
             let rows = vec![
                 ChoiceItem { label: "Full project".into(), checked: range == ExportRange::Project, hint: false, y: MENU_PAD, h: MENU_ROW },
-                ChoiceItem { label: "Loop region".into(), checked: range == ExportRange::Loop, hint: loop_region(p).is_none(), y: MENU_PAD + MENU_ROW, h: MENU_ROW },
+                ChoiceItem {
+                    label: "Loop region".into(),
+                    checked: range == ExportRange::Loop,
+                    hint: loop_region(p).is_none(),
+                    y: MENU_PAD + MENU_ROW,
+                    h: MENU_ROW,
+                },
             ];
             s.set_export_range_menu_h(MENU_PAD * 2.0 + MENU_ROW * 2.0);
             sync_model(&self.export_range_model, rows);
@@ -929,12 +1000,24 @@ impl Controller {
                 y += h;
             };
             row("All individual tracks".into(), self.export.stems == StemsPick::AllTracks, false, MENU_ROW, &mut rows);
-            row("Selected tracks only".into(), self.export.stems == StemsPick::Selected, self.selected_track.is_none(), MENU_ROW, &mut rows);
+            row(
+                "Selected tracks only".into(),
+                self.export.stems == StemsPick::Selected,
+                self.selected_track.is_none(),
+                MENU_ROW,
+                &mut rows,
+            );
             row(String::new(), false, true, MENU_GAP, &mut rows);
             // Returns hold no clips of their own, so they are never a stem.
             for t in p.tracks.iter().filter(|t| !t.is_return()) {
                 let name = t.name.trim();
-                row(if name.is_empty() { "Track".into() } else { name.into() }, self.export.stems == StemsPick::Track(t.id), false, MENU_ROW, &mut rows);
+                row(
+                    if name.is_empty() { "Track".into() } else { name.into() },
+                    self.export.stems == StemsPick::Track(t.id),
+                    false,
+                    MENU_ROW,
+                    &mut rows,
+                );
             }
             s.set_export_tracks_menu_h(y + MENU_PAD);
             sync_model(&self.export_tracks_model, rows);

@@ -25,7 +25,11 @@ fn create(d: &mut Document, c: ClipId, part: PartType, genre: u8) {
     let made = MadeSet { part: Some(part), genre, set: 0, last: 0 };
     let comp = Composer { part, genre, made: vec![made], playing: Some(0), kept: m.notes.clone(), ..Default::default() };
     let first = library::patterns_of(made, None, m.length, 4 * PPQ).remove(0);
-    d.execute(Command::SetComposer { clip: c, edit: ComposerEdit::Create, composer: Some(comp), notes: first.notes, pattern: first.pattern }, Origin::User).unwrap();
+    d.execute(
+        Command::SetComposer { clip: c, edit: ComposerEdit::Create, composer: Some(comp), notes: first.notes, pattern: first.pattern },
+        Origin::User,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -50,7 +54,11 @@ fn original_brings_the_kept_notes_back() {
     let mut comp = clip(&d, c).composer.unwrap();
     comp.playing = None;
     let kept = std::mem::take(&mut comp.kept);
-    d.execute(Command::SetComposer { clip: c, edit: ComposerEdit::Original, composer: Some(comp), notes: kept, pattern: None }, Origin::User).unwrap();
+    d.execute(
+        Command::SetComposer { clip: c, edit: ComposerEdit::Original, composer: Some(comp), notes: kept, pattern: None },
+        Origin::User,
+    )
+    .unwrap();
     assert_eq!(d.undo_label(), Some("Load Original"));
     assert_eq!(clip(&d, c).notes, before);
 }
@@ -75,7 +83,13 @@ fn composer_state_survives_save_and_load_and_bad_state_is_dropped() {
 fn invalid_composer_edits_are_refused() {
     let (mut d, c) = doc();
     let bad = Composer { genre: 200, ..Composer::default() };
-    assert!(d.execute(Command::SetComposer { clip: c, edit: ComposerEdit::Genre, composer: Some(bad), notes: Vec::new(), pattern: None }, Origin::User).is_err());
+    assert!(
+        d.execute(
+            Command::SetComposer { clip: c, edit: ComposerEdit::Genre, composer: Some(bad), notes: Vec::new(), pattern: None },
+            Origin::User
+        )
+        .is_err()
+    );
 }
 
 #[test]

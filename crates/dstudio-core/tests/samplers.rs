@@ -6,7 +6,14 @@ use dstudio_core::*;
 use std::collections::HashMap;
 
 fn add_asset(d: &mut Document, id: u64) -> AssetId {
-    let asset = Asset { id: AssetId(id), relative_path: None, absolute_path: format!("/tmp/s{id}.wav"), sample_rate: 48_000.0, channels: 2, frames: 48_000 };
+    let asset = Asset {
+        id: AssetId(id),
+        relative_path: None,
+        absolute_path: format!("/tmp/s{id}.wav"),
+        sample_rate: 48_000.0,
+        channels: 2,
+        frames: 48_000,
+    };
     d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
     AssetId(id)
 }
@@ -23,7 +30,10 @@ fn instruments_go_in_the_instrument_slot_not_the_chain() {
         let def = builtin::find(id).unwrap();
         assert_eq!(def.kind, PluginKind::Instrument);
         assert!(d.execute(Command::AddDevice { track: a, index: None, device: def.instantiate() }, Origin::User).is_err());
-        assert!(d.execute(Command::SetInstrumentPlugin { track: a, device: Some(def.instantiate()) }, Origin::User).is_err(), "audio track");
+        assert!(
+            d.execute(Command::SetInstrumentPlugin { track: a, device: Some(def.instantiate()) }, Origin::User).is_err(),
+            "audio track"
+        );
         d.execute(Command::SetInstrumentPlugin { track: i, device: Some(def.instantiate()) }, Origin::User).unwrap();
         assert_eq!(d.project().track(i).unwrap().instrument_plugin.as_ref().unwrap().plugin.id, id);
     }
@@ -35,7 +45,8 @@ fn sample_slots_load_replace_clear_with_undo_and_guard_assets() {
     let mut d = Document::new(Project::default());
     let i = d.project().tracks[1].id;
     let (s1, s2) = (add_asset(&mut d, 500), add_asset(&mut d, 501));
-    d.execute(Command::SetInstrumentPlugin { track: i, device: Some(builtin::find("drum-rack").unwrap().instantiate()) }, Origin::User).unwrap();
+    d.execute(Command::SetInstrumentPlugin { track: i, device: Some(builtin::find("drum-rack").unwrap().instantiate()) }, Origin::User)
+        .unwrap();
     let dev = d.project().track(i).unwrap().instrument_plugin.as_ref().unwrap().id;
 
     d.execute(Command::SetDeviceSample { device: dev, slot: 9, sample: Some(sample(9, s1)) }, Origin::User).unwrap();
@@ -47,7 +58,11 @@ fn sample_slots_load_replace_clear_with_undo_and_guard_assets() {
         Command::SetDeviceSample { device: dev, slot: 128, sample: Some(sample(128, s1)) },
         Command::SetDeviceSample { device: dev, slot: 3, sample: Some(sample(4, s1)) },
         Command::SetDeviceSample { device: dev, slot: 3, sample: Some(sample(3, AssetId(999))) },
-        Command::SetDeviceSample { device: dev, slot: 3, sample: Some(DeviceSample { slices: vec![Slice::at(0.5), Slice::at(0.2)], ..sample(3, s1) }) },
+        Command::SetDeviceSample {
+            device: dev,
+            slot: 3,
+            sample: Some(DeviceSample { slices: vec![Slice::at(0.5), Slice::at(0.2)], ..sample(3, s1) }),
+        },
     ] {
         let before = d.project().clone();
         assert!(d.execute(bad, Origin::User).is_err());
@@ -70,7 +85,11 @@ fn sample_slots_load_replace_clear_with_undo_and_guard_assets() {
 
     // Slices and samples persist.
     let sl = vec![Slice::at(0.0), Slice { start: 0.25, gain: -6.0, pan: 0.5, pitch: 3.0 }];
-    d.execute(Command::SetDeviceSample { device: dev, slot: 9, sample: Some(DeviceSample { slices: sl.clone(), ..sample(9, s1) }) }, Origin::User).unwrap();
+    d.execute(
+        Command::SetDeviceSample { device: dev, slot: 9, sample: Some(DeviceSample { slices: sl.clone(), ..sample(9, s1) }) },
+        Origin::User,
+    )
+    .unwrap();
     let dir = tempfile::tempdir().unwrap();
     persist::save(d.project(), dir.path()).unwrap();
     let l = persist::load(dir.path()).unwrap();

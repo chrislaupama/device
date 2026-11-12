@@ -68,9 +68,30 @@ const PCT: Format = Format::Custom(TextFn(percent_text));
 macro_rules! level_band {
     ($n:literal, $freq:literal) => {
         [
-            ParamDef::choice(concat!("level", $n, "_enabled"), concat!("Level ", $n, " Enabled"), OFF_ON, 0).help("Turns this weighting band of the level detector on."),
-            ParamDef::new(concat!("level", $n, "_freq"), concat!("Level ", $n, " Freq"), 20.0, 20000.0, $freq, Taper::Linear { skew: 0.25 }, "Hz", Format::Freq).help("Centre of this weighting band."),
-            ParamDef::new(concat!("level", $n, "_q"), concat!("Level ", $n, " Q"), 0.1, 12.0, 1.0, Taper::Linear { skew: 0.35 }, "", Format::Plain(2)).help("Width of this weighting band."),
+            ParamDef::choice(concat!("level", $n, "_enabled"), concat!("Level ", $n, " Enabled"), OFF_ON, 0)
+                .help("Turns this weighting band of the level detector on."),
+            ParamDef::new(
+                concat!("level", $n, "_freq"),
+                concat!("Level ", $n, " Freq"),
+                20.0,
+                20000.0,
+                $freq,
+                Taper::Linear { skew: 0.25 },
+                "Hz",
+                Format::Freq,
+            )
+            .help("Centre of this weighting band."),
+            ParamDef::new(
+                concat!("level", $n, "_q"),
+                concat!("Level ", $n, " Q"),
+                0.1,
+                12.0,
+                1.0,
+                Taper::Linear { skew: 0.35 },
+                "",
+                Format::Plain(2),
+            )
+            .help("Width of this weighting band."),
             ParamDef::new(concat!("level", $n, "_weight"), concat!("Level ", $n, " Weight"), -24.0, 0.0, 0.0, LINEAR, "dB", Format::Db)
                 .step(0.1)
                 .help("How much less this band counts towards the long-term level."),
@@ -90,40 +111,82 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
     category: "Dynamics",
     purpose: "A compressor with six circuit models, from transparent to coloured: tube, console bus, FET, optical and RMS behaviour with matching drive.",
     params: &[
-        ParamDef::choice("model", "Model", MODELS, 0).not_automatable().help("Circuit model: sets the curve, timing behaviour and colour, and which controls apply."),
-        ParamDef::new("threshold", "Threshold", -60.0, 0.0, -18.0, LINEAR, "dB", DB).step(0.1).help("Level above which gain reduction starts."),
-        ParamDef::new("ratio", "Ratio", 1.0, 30.0, 4.0, Taper::Linear { skew: 0.35 }, ":1", Format::Custom(TextFn(ratio_text))).help("How strongly level above the threshold is reduced."),
-        ParamDef::new("knee", "Knee", 0.0, 24.0, 6.0, LINEAR, "dB", DB).step(0.1).help("Width of the soft transition around the threshold (Clean model)."),
-        ParamDef::new("attack", "Attack", 0.02, 250.0, 10.0, Taper::Linear { skew: 0.22 }, "ms", Format::Custom(TextFn(attack_text))).help("How fast reduction sets in."),
-        ParamDef::new("release", "Release", 20.0, 8000.0, 200.0, Taper::Linear { skew: 0.3 }, "ms", Format::Custom(TextFn(release_text))).help("How fast reduction lets go."),
+        ParamDef::choice("model", "Model", MODELS, 0)
+            .not_automatable()
+            .help("Circuit model: sets the curve, timing behaviour and colour, and which controls apply."),
+        ParamDef::new("threshold", "Threshold", -60.0, 0.0, -18.0, LINEAR, "dB", DB)
+            .step(0.1)
+            .help("Level above which gain reduction starts."),
+        ParamDef::new("ratio", "Ratio", 1.0, 30.0, 4.0, Taper::Linear { skew: 0.35 }, ":1", Format::Custom(TextFn(ratio_text)))
+            .help("How strongly level above the threshold is reduced."),
+        ParamDef::new("knee", "Knee", 0.0, 24.0, 6.0, LINEAR, "dB", DB)
+            .step(0.1)
+            .help("Width of the soft transition around the threshold (Clean model)."),
+        ParamDef::new("attack", "Attack", 0.02, 250.0, 10.0, Taper::Linear { skew: 0.22 }, "ms", Format::Custom(TextFn(attack_text)))
+            .help("How fast reduction sets in."),
+        ParamDef::new("release", "Release", 20.0, 8000.0, 200.0, Taper::Linear { skew: 0.3 }, "ms", Format::Custom(TextFn(release_text)))
+            .help("How fast reduction lets go."),
         ParamDef::choice("adapt", "Adapt", OFF_ON, 0).help("Program-dependent release: sustained reduction recovers more slowly."),
-        ParamDef::new("hold", "Hold", 0.0, 500.0, 0.0, Taper::Linear { skew: 0.5 }, "ms", Format::Custom(TextFn(release_text))).help("Time the reduction is held before it releases."),
+        ParamDef::new("hold", "Hold", 0.0, 500.0, 0.0, Taper::Linear { skew: 0.5 }, "ms", Format::Custom(TextFn(release_text)))
+            .help("Time the reduction is held before it releases."),
         ParamDef::new("range", "Range", 0.0, 24.0, 24.0, LINEAR, "dB", Format::Db).step(0.1).help("Largest gain reduction allowed."),
-        ParamDef::new("drive", "Drive", 0.0, 2.0, 1.0, LINEAR, "", Format::Plain(2)).help("Amount of the model's saturation; 1 is the model's normal colour."),
-        ParamDef::new("mix", "Mix", 0.0, 200.0, 100.0, LINEAR, "%", PCT).help("Blend of dry and compressed signal; above 100% the compression is exaggerated."),
+        ParamDef::new("drive", "Drive", 0.0, 2.0, 1.0, LINEAR, "", Format::Plain(2))
+            .help("Amount of the model's saturation; 1 is the model's normal colour."),
+        ParamDef::new("mix", "Mix", 0.0, 200.0, 100.0, LINEAR, "%", PCT)
+            .help("Blend of dry and compressed signal; above 100% the compression is exaggerated."),
         ParamDef::new("makeup", "Makeup", -12.0, 24.0, 0.0, LINEAR, "dB", Format::Db).step(0.1).help("Gain after compression."),
         ParamDef::choice("auto_gain", "Auto Gain", OFF_ON, 0).help("Adds make-up gain that follows the threshold and ratio."),
-        ParamDef::new("lookahead", "Lookahead", 0.0, 20.0, 0.0, LINEAR, "ms", Format::Time).step(0.1).help("Delays the audio so the detector reacts before peaks arrive (adds latency)."),
+        ParamDef::new("lookahead", "Lookahead", 0.0, 20.0, 0.0, LINEAR, "ms", Format::Time)
+            .step(0.1)
+            .help("Delays the audio so the detector reacts before peaks arrive (adds latency)."),
         ParamDef::choice("oversampling", "Oversampling", &["2x", "4x"], 0).help("Oversampling of the saturation stage."),
-        ParamDef::new("stereo_link", "Stereo Link", 0.0, 100.0, 100.0, LINEAR, "%", PCT).help("How much both channels share one gain reduction."),
+        ParamDef::new("stereo_link", "Stereo Link", 0.0, 100.0, 100.0, LINEAR, "%", PCT)
+            .help("How much both channels share one gain reduction."),
         ParamDef::choice("ms_mode", "M/S Mode", &["Stereo", "Mid-Side"], 0).help("Compress left / right or mid / side."),
-        ParamDef::choice("sc_source", "SC Source", &["Internal", "External"], 0).not_automatable().help("Set while a sidechain source is picked."),
+        ParamDef::choice("sc_source", "SC Source", &["Internal", "External"], 0)
+            .not_automatable()
+            .help("Set while a sidechain source is picked."),
         ParamDef::choice("sc_hpf_on", "SC HPF", OFF_ON, 0).help("High-pass filter in the detector path."),
-        ParamDef::new("sc_hpf_freq", "SC HPF Freq", 20.0, 500.0, 80.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Freq).help("Cutoff of the detector high-pass filter."),
-        ParamDef::new("sc_eq_freq", "SC EQ Freq", 100.0, 10000.0, 1000.0, Taper::Linear { skew: 0.3 }, "Hz", Format::Freq).help("Centre of the detector EQ band."),
-        ParamDef::new("sc_eq_gain", "SC EQ Gain", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).step(0.1).help("Boost or cut of the detector EQ band."),
-        ParamDef::new("sc_eq_q", "SC EQ Q", 0.3, 4.0, 1.0, Taper::Linear { skew: 0.5 }, "", Format::Plain(2)).help("Width of the detector EQ band."),
+        ParamDef::new("sc_hpf_freq", "SC HPF Freq", 20.0, 500.0, 80.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Freq)
+            .help("Cutoff of the detector high-pass filter."),
+        ParamDef::new("sc_eq_freq", "SC EQ Freq", 100.0, 10000.0, 1000.0, Taper::Linear { skew: 0.3 }, "Hz", Format::Freq)
+            .help("Centre of the detector EQ band."),
+        ParamDef::new("sc_eq_gain", "SC EQ Gain", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db)
+            .step(0.1)
+            .help("Boost or cut of the detector EQ band."),
+        ParamDef::new("sc_eq_q", "SC EQ Q", 0.3, 4.0, 1.0, Taper::Linear { skew: 0.5 }, "", Format::Plain(2))
+            .help("Width of the detector EQ band."),
         ParamDef::choice("sc_listen", "SC Listen", OFF_ON, 0).reset_on_load().help("Play the detector signal instead of the output."),
         ParamDef::choice("bypass", "Bypass", OFF_ON, 0).not_automatable().help("Internal bypass switch."),
-        ParamDef::choice("level_enabled", "Level", OFF_ON, 0).help("Slow level rider that moves the long-term level towards the threshold."),
-        ParamDef::new("level_amount", "Level Amount", 0.0, 100.0, 50.0, LINEAR, "%", PCT).help("How much of the long-term level difference the rider corrects."),
-        ParamDef::new("level_response", "Level Response", 1.0, 30.0, 8.0, Taper::Linear { skew: 0.4 }, "s", Format::Plain(0)).help("Averaging time of the level rider."),
-        ParamDef::new("level_tilt", "Level Tilt", -6.0, 6.0, 0.0, LINEAR, "dB", Format::Db).step(0.1).help("Tilts the level detector towards highs (positive) or lows (negative)."),
-        L1[0], L1[1], L1[2], L1[3],
-        L2[0], L2[1], L2[2], L2[3],
-        L3[0], L3[1], L3[2], L3[3],
-        L4[0], L4[1], L4[2], L4[3],
-        ParamDef::choice("delta_monitor", "Delta Monitor", OFF_ON, 0).not_automatable().reset_on_load().help("Play only what the compressor removes."),
+        ParamDef::choice("level_enabled", "Level", OFF_ON, 0)
+            .help("Slow level rider that moves the long-term level towards the threshold."),
+        ParamDef::new("level_amount", "Level Amount", 0.0, 100.0, 50.0, LINEAR, "%", PCT)
+            .help("How much of the long-term level difference the rider corrects."),
+        ParamDef::new("level_response", "Level Response", 1.0, 30.0, 8.0, Taper::Linear { skew: 0.4 }, "s", Format::Plain(0))
+            .help("Averaging time of the level rider."),
+        ParamDef::new("level_tilt", "Level Tilt", -6.0, 6.0, 0.0, LINEAR, "dB", Format::Db)
+            .step(0.1)
+            .help("Tilts the level detector towards highs (positive) or lows (negative)."),
+        L1[0],
+        L1[1],
+        L1[2],
+        L1[3],
+        L2[0],
+        L2[1],
+        L2[2],
+        L2[3],
+        L3[0],
+        L3[1],
+        L3[2],
+        L3[3],
+        L4[0],
+        L4[1],
+        L4[2],
+        L4[3],
+        ParamDef::choice("delta_monitor", "Delta Monitor", OFF_ON, 0)
+            .not_automatable()
+            .reset_on_load()
+            .help("Play only what the compressor removes."),
     ],
     layout: Layout {
         picker: &[Control::Dropdown("model"), Control::Sidechain],
@@ -147,27 +210,180 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
         ..Layout::EMPTY
     },
     factory: &[
-        FactoryPreset { name: "Clear Lead Vocal", values: &[("model", 4.0), ("threshold", -27.0), ("ratio", 3.0), ("drive", 0.9), ("makeup", 9.5)] },
-        FactoryPreset { name: "Forward Rap Vocal", values: &[("model", 3.0), ("threshold", -21.0), ("ratio", 8.0), ("attack", 0.55), ("release", 200.0), ("drive", 0.7), ("makeup", 8.0)] },
-        FactoryPreset { name: "Tube Bus Cream", values: &[("model", 1.0), ("threshold", -16.0), ("ratio", 2.0), ("attack", 0.4), ("release", 2000.0), ("drive", 1.2), ("makeup", 2.5)] },
-        FactoryPreset { name: "Console Bus Lock", values: &[("model", 2.0), ("threshold", -13.0), ("ratio", 4.0), ("attack", 10.0), ("release", 2000.0), ("adapt", 1.0), ("drive", 0.6), ("makeup", 2.0)] },
-        FactoryPreset { name: "Snare Crack", values: &[("model", 3.0), ("threshold", -18.0), ("ratio", 4.0), ("attack", 0.8), ("release", 110.0), ("drive", 1.1), ("makeup", 5.0)] },
-        FactoryPreset { name: "Room Mic Smash", values: &[("model", 3.0), ("threshold", -34.0), ("ratio", 30.0), ("attack", 0.05), ("release", 50.0), ("drive", 1.6), ("makeup", 16.0), ("mix", 70.0)] },
-        FactoryPreset { name: "Steady Bass Line", values: &[("model", 5.0), ("threshold", -26.0), ("ratio", 4.0), ("drive", 1.1), ("makeup", 9.0)] },
-        FactoryPreset { name: "Parallel Thump", values: &[("model", 5.0), ("threshold", -34.0), ("ratio", 8.0), ("drive", 1.3), ("makeup", 14.0), ("mix", 40.0)] },
-        FactoryPreset { name: "Soft Piano Even", values: &[("model", 4.0), ("threshold", -31.0), ("ratio", 3.0), ("drive", 1.0), ("makeup", 10.0)] },
-        FactoryPreset { name: "Acoustic Guitar Polish", values: &[("model", 1.0), ("threshold", -22.0), ("ratio", 4.0), ("attack", 0.2), ("release", 800.0), ("drive", 0.9), ("makeup", 4.0)] },
-        FactoryPreset { name: "Transparent Peak Shave", values: &[("model", 0.0), ("threshold", -4.0), ("ratio", 20.0), ("knee", 3.0), ("attack", 0.5), ("release", 90.0), ("lookahead", 3.0)] },
-        FactoryPreset { name: "Gentle Clean Leveling", values: &[("model", 0.0), ("threshold", -24.0), ("ratio", 2.0), ("knee", 12.0), ("attack", 25.0), ("release", 400.0), ("adapt", 1.0), ("makeup", 3.5)] },
-        FactoryPreset { name: "Ignore The Low End", values: &[("model", 0.0), ("threshold", -20.0), ("ratio", 3.5), ("attack", 12.0), ("release", 160.0), ("sc_hpf_on", 1.0), ("sc_hpf_freq", 150.0), ("makeup", 3.0)] },
-        FactoryPreset { name: "Side Channel Control", values: &[("model", 0.0), ("threshold", -26.0), ("ratio", 2.5), ("release", 250.0), ("ms_mode", 1.0), ("stereo_link", 0.0), ("makeup", 4.0)] },
+        FactoryPreset {
+            name: "Clear Lead Vocal",
+            values: &[("model", 4.0), ("threshold", -27.0), ("ratio", 3.0), ("drive", 0.9), ("makeup", 9.5)],
+        },
+        FactoryPreset {
+            name: "Forward Rap Vocal",
+            values: &[
+                ("model", 3.0),
+                ("threshold", -21.0),
+                ("ratio", 8.0),
+                ("attack", 0.55),
+                ("release", 200.0),
+                ("drive", 0.7),
+                ("makeup", 8.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Tube Bus Cream",
+            values: &[
+                ("model", 1.0),
+                ("threshold", -16.0),
+                ("ratio", 2.0),
+                ("attack", 0.4),
+                ("release", 2000.0),
+                ("drive", 1.2),
+                ("makeup", 2.5),
+            ],
+        },
+        FactoryPreset {
+            name: "Console Bus Lock",
+            values: &[
+                ("model", 2.0),
+                ("threshold", -13.0),
+                ("ratio", 4.0),
+                ("attack", 10.0),
+                ("release", 2000.0),
+                ("adapt", 1.0),
+                ("drive", 0.6),
+                ("makeup", 2.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Snare Crack",
+            values: &[
+                ("model", 3.0),
+                ("threshold", -18.0),
+                ("ratio", 4.0),
+                ("attack", 0.8),
+                ("release", 110.0),
+                ("drive", 1.1),
+                ("makeup", 5.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Room Mic Smash",
+            values: &[
+                ("model", 3.0),
+                ("threshold", -34.0),
+                ("ratio", 30.0),
+                ("attack", 0.05),
+                ("release", 50.0),
+                ("drive", 1.6),
+                ("makeup", 16.0),
+                ("mix", 70.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Steady Bass Line",
+            values: &[("model", 5.0), ("threshold", -26.0), ("ratio", 4.0), ("drive", 1.1), ("makeup", 9.0)],
+        },
+        FactoryPreset {
+            name: "Parallel Thump",
+            values: &[("model", 5.0), ("threshold", -34.0), ("ratio", 8.0), ("drive", 1.3), ("makeup", 14.0), ("mix", 40.0)],
+        },
+        FactoryPreset {
+            name: "Soft Piano Even",
+            values: &[("model", 4.0), ("threshold", -31.0), ("ratio", 3.0), ("drive", 1.0), ("makeup", 10.0)],
+        },
+        FactoryPreset {
+            name: "Acoustic Guitar Polish",
+            values: &[
+                ("model", 1.0),
+                ("threshold", -22.0),
+                ("ratio", 4.0),
+                ("attack", 0.2),
+                ("release", 800.0),
+                ("drive", 0.9),
+                ("makeup", 4.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Transparent Peak Shave",
+            values: &[
+                ("model", 0.0),
+                ("threshold", -4.0),
+                ("ratio", 20.0),
+                ("knee", 3.0),
+                ("attack", 0.5),
+                ("release", 90.0),
+                ("lookahead", 3.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Gentle Clean Leveling",
+            values: &[
+                ("model", 0.0),
+                ("threshold", -24.0),
+                ("ratio", 2.0),
+                ("knee", 12.0),
+                ("attack", 25.0),
+                ("release", 400.0),
+                ("adapt", 1.0),
+                ("makeup", 3.5),
+            ],
+        },
+        FactoryPreset {
+            name: "Ignore The Low End",
+            values: &[
+                ("model", 0.0),
+                ("threshold", -20.0),
+                ("ratio", 3.5),
+                ("attack", 12.0),
+                ("release", 160.0),
+                ("sc_hpf_on", 1.0),
+                ("sc_hpf_freq", 150.0),
+                ("makeup", 3.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Side Channel Control",
+            values: &[
+                ("model", 0.0),
+                ("threshold", -26.0),
+                ("ratio", 2.5),
+                ("release", 250.0),
+                ("ms_mode", 1.0),
+                ("stereo_link", 0.0),
+                ("makeup", 4.0),
+            ],
+        },
         FactoryPreset {
             name: "Broadcast Rider",
-            values: &[("model", 0.0), ("threshold", -18.0), ("ratio", 2.5), ("attack", 15.0), ("release", 220.0), ("adapt", 1.0), ("level_enabled", 1.0), ("level_amount", 65.0), ("level_response", 10.0), ("level1_enabled", 1.0), ("level1_freq", 120.0), ("level1_q", 0.8), ("level1_weight", -10.0), ("makeup", 2.0)],
+            values: &[
+                ("model", 0.0),
+                ("threshold", -18.0),
+                ("ratio", 2.5),
+                ("attack", 15.0),
+                ("release", 220.0),
+                ("adapt", 1.0),
+                ("level_enabled", 1.0),
+                ("level_amount", 65.0),
+                ("level_response", 10.0),
+                ("level1_enabled", 1.0),
+                ("level1_freq", 120.0),
+                ("level1_q", 0.8),
+                ("level1_weight", -10.0),
+                ("makeup", 2.0),
+            ],
         },
         FactoryPreset {
             name: "Long-Term Leveler",
-            values: &[("model", 0.0), ("threshold", -10.0), ("ratio", 1.0), ("level_enabled", 1.0), ("level_amount", 75.0), ("level_response", 16.0), ("level_tilt", 1.5), ("level2_enabled", 1.0), ("level2_freq", 3000.0), ("level2_q", 0.9), ("level2_weight", -8.0)],
+            values: &[
+                ("model", 0.0),
+                ("threshold", -10.0),
+                ("ratio", 1.0),
+                ("level_enabled", 1.0),
+                ("level_amount", 75.0),
+                ("level_response", 16.0),
+                ("level_tilt", 1.5),
+                ("level2_enabled", 1.0),
+                ("level2_freq", 3000.0),
+                ("level2_q", 0.9),
+                ("level2_weight", -8.0),
+            ],
         },
     ],
     sidechain: true,
@@ -188,8 +404,25 @@ fn value_of(def: &DeviceDef, d: &Device, id: &str) -> f32 {
 fn overlay(model: u32) -> &'static [(&'static str, f32)] {
     match model {
         CLEAN => &[("threshold", -18.0), ("ratio", 4.0), ("knee", 6.0), ("attack", 10.0), ("release", 200.0)],
-        VARI_MU => &[("threshold", -24.0), ("ratio", 4.0), ("attack", 0.2), ("release", 2000.0), ("drive", 1.0), ("stereo_link", 100.0), ("mix", 100.0)],
-        BUS_VCA => &[("threshold", -15.0), ("ratio", 4.0), ("attack", 30.0), ("release", 2000.0), ("adapt", 1.0), ("drive", 1.0), ("stereo_link", 100.0), ("mix", 100.0)],
+        VARI_MU => &[
+            ("threshold", -24.0),
+            ("ratio", 4.0),
+            ("attack", 0.2),
+            ("release", 2000.0),
+            ("drive", 1.0),
+            ("stereo_link", 100.0),
+            ("mix", 100.0),
+        ],
+        BUS_VCA => &[
+            ("threshold", -15.0),
+            ("ratio", 4.0),
+            ("attack", 30.0),
+            ("release", 2000.0),
+            ("adapt", 1.0),
+            ("drive", 1.0),
+            ("stereo_link", 100.0),
+            ("mix", 100.0),
+        ],
         FET => &[("ratio", 4.0), ("attack", 0.35), ("release", 200.0), ("drive", 1.0), ("mix", 100.0)],
         OPTO => &[("threshold", -30.0), ("ratio", 3.0), ("drive", 1.0), ("mix", 100.0)],
         _ => &[("threshold", -20.0), ("ratio", 4.0), ("drive", 1.0), ("mix", 100.0)],
@@ -237,11 +470,21 @@ pub(super) fn linked(def: &DeviceDef, d: &Device, p: &ParamDef, v: f32) -> Vec<(
         // (release) moves the release (attack) to the closest matching pair.
         (VARI_MU, "attack") => {
             let rel = value_of(def, d, "release");
-            VARI_MU_PAIRS.iter().filter(|(a, _)| close(*a, v)).min_by(|x, y| (x.1 - rel).abs().total_cmp(&(y.1 - rel).abs())).map(|(_, r)| vec![("release", *r)]).unwrap_or_default()
+            VARI_MU_PAIRS
+                .iter()
+                .filter(|(a, _)| close(*a, v))
+                .min_by(|x, y| (x.1 - rel).abs().total_cmp(&(y.1 - rel).abs()))
+                .map(|(_, r)| vec![("release", *r)])
+                .unwrap_or_default()
         }
         (VARI_MU, "release") => {
             let att = value_of(def, d, "attack");
-            VARI_MU_PAIRS.iter().filter(|(_, r)| close(*r, v)).min_by(|x, y| (x.0 - att).abs().total_cmp(&(y.0 - att).abs())).map(|(a, _)| vec![("attack", *a)]).unwrap_or_default()
+            VARI_MU_PAIRS
+                .iter()
+                .filter(|(_, r)| close(*r, v))
+                .min_by(|x, y| (x.0 - att).abs().total_cmp(&(y.0 - att).abs()))
+                .map(|(a, _)| vec![("attack", *a)])
+                .unwrap_or_default()
         }
         (BUS_VCA, "release") => vec![("adapt", if v > AUTO_RELEASE_FROM { 1.0 } else { 0.0 })],
         _ => Vec::new(),
@@ -249,12 +492,17 @@ pub(super) fn linked(def: &DeviceDef, d: &Device, p: &ParamDef, v: f32) -> Vec<(
 }
 
 fn latch(def: &DeviceDef, d: &Device, p: &ParamDef) -> Option<Latch> {
-    (model_of(def, d) == OPTO && p.id == "ratio").then(|| Latch { labels: ["Comp", "Limit"], values: [OPTO_COMP, OPTO_LIMIT], on: value_of(def, d, "ratio") >= OPTO_LIMIT_FROM })
+    (model_of(def, d) == OPTO && p.id == "ratio").then(|| Latch {
+        labels: ["Comp", "Limit"],
+        values: [OPTO_COMP, OPTO_LIMIT],
+        on: value_of(def, d, "ratio") >= OPTO_LIMIT_FROM,
+    })
 }
 
 fn transfer(def: &DeviceDef, d: &Device) -> Option<Transfer> {
     let model = model_of(def, d);
-    let (thr, ratio, knee, range) = (value_of(def, d, "threshold"), value_of(def, d, "ratio"), value_of(def, d, "knee"), value_of(def, d, "range"));
+    let (thr, ratio, knee, range) =
+        (value_of(def, d, "threshold"), value_of(def, d, "ratio"), value_of(def, d, "knee"), value_of(def, d, "range"));
     let (lo, hi) = (thr - 12.0, (thr + 24.0).max(0.0));
     let n = 48;
     let points = (0..=n)

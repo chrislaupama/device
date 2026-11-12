@@ -12,7 +12,7 @@
 use crate::controller::Controller;
 use crate::device_panel::{VIEW_SELECT, Z};
 use crate::{PanelBand, PanelBands, PanelFreq, PanelPick, PanelTick, PanelXover};
-use dstudio_core::builtin::{multiband_gain, DeviceDef, Transfer, View, MULTIBAND_BANDS};
+use dstudio_core::builtin::{DeviceDef, MULTIBAND_BANDS, Transfer, View, multiband_gain};
 use dstudio_core::{Device, DeviceId};
 use slint::{ModelRc, SharedString, VecModel};
 use std::rc::Rc;
@@ -138,7 +138,16 @@ impl Controller {
         thread_local! {
             static NAMES: ModelRc<SharedString> = ModelRc::from(Rc::new(VecModel::from(BAND_NAMES.iter().map(|n| SharedString::from(*n)).collect::<Vec<_>>())));
         }
-        Some(PanelPick { kind: 1, param: VIEW_SELECT, label: s("Band"), choices: NAMES.with(|n| n.clone()), selected: self.view_state(d.id).band as i32, enabled: true, width: crate::device_panel::segment_width(&BAND_NAMES) * crate::device_panel::Z, ..Default::default() })
+        Some(PanelPick {
+            kind: 1,
+            param: VIEW_SELECT,
+            label: s("Band"),
+            choices: NAMES.with(|n| n.clone()),
+            selected: self.view_state(d.id).band as i32,
+            enabled: true,
+            width: crate::device_panel::segment_width(&BAND_NAMES) * crate::device_panel::Z,
+            ..Default::default()
+        })
     }
 
     /// The parameter a dial-row slot edits: the multiband card's knobs are
@@ -245,10 +254,16 @@ impl Controller {
                 let p = def.param(id);
                 // Norm per px: the axis is log 20 Hz..20 kHz, the parameter log over its own range.
                 let rate = p.map_or(0.0, |p| (F_HI / F_LO).ln() / g.w / (p.max / p.min).ln());
-                PanelXover { x: edges[if *id == "low_crossover" { 1 } else { 2 }], param: idx(id), text: s(p.map(|p| p.format(*f)).unwrap_or_default()), rate }
+                PanelXover {
+                    x: edges[if *id == "low_crossover" { 1 } else { 2 }],
+                    param: idx(id),
+                    text: s(p.map(|p| p.format(*f)).unwrap_or_default()),
+                    rate,
+                }
             })
             .collect();
-        let ticks: Vec<PanelTick> = [-20.0f32, -40.0, -60.0].iter().map(|db| PanelTick { y: g.y_of(*db), text: s(db_label(*db)), rule: true }).collect();
+        let ticks: Vec<PanelTick> =
+            [-20.0f32, -40.0, -60.0].iter().map(|db| PanelTick { y: g.y_of(*db), text: s(db_label(*db)), rule: true }).collect();
         let mut freqs = vec![PanelFreq { x: 0.0, text: s("Hz"), grid: false }];
         for (hz, label) in [(100.0, "100"), (1000.0, "1k"), (10000.0, "10k")] {
             freqs.push(PanelFreq { x: g.x_of(hz), text: s(label), grid: true });
@@ -288,7 +303,13 @@ impl Controller {
                 if value < g.ladder {
                     return;
                 }
-                if value < g.x_of(v("low_crossover")) { 0 } else if value < g.x_of(v("high_crossover")) { 1 } else { 2 }
+                if value < g.x_of(v("low_crossover")) {
+                    0
+                } else if value < g.x_of(v("high_crossover")) {
+                    1
+                } else {
+                    2
+                }
             }
             _ => (value.round().max(0.0) as usize).min(2),
         };

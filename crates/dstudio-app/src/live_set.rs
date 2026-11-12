@@ -602,7 +602,13 @@ impl Xml {
         self.transform_view_state();
         self.close("ArrangerAutomation");
         self.close("Sample");
-        for t in ["VolumeModulationTarget", "TranspositionModulationTarget", "GrainSizeModulationTarget", "FluxModulationTarget", "SampleOffsetModulationTarget"] {
+        for t in [
+            "VolumeModulationTarget",
+            "TranspositionModulationTarget",
+            "GrainSizeModulationTarget",
+            "FluxModulationTarget",
+            "SampleOffsetModulationTarget",
+        ] {
             self.target(t);
         }
         self.v("PitchViewScrollPosition", -1073741824);
@@ -766,7 +772,13 @@ pub fn to_xml(set: &LiveSet) -> String {
     x.s.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     x.open(
         "Ableton",
-        &[("MajorVersion", MAJOR_VERSION.into()), ("MinorVersion", MINOR_VERSION.into()), ("SchemaChangeCount", "3".into()), ("Creator", "Device Studio".into()), ("Revision", String::new())],
+        &[
+            ("MajorVersion", MAJOR_VERSION.into()),
+            ("MinorVersion", MINOR_VERSION.into()),
+            ("SchemaChangeCount", "3".into()),
+            ("Creator", "Device Studio".into()),
+            ("Revision", String::new()),
+        ],
     );
     x.open("LiveSet", &[]);
     // Filled in once every id is known.
@@ -957,15 +969,75 @@ const TRACK_PATHS: &[&str] = &[
     "DeviceChain/Mixer/CrossFadeState/Manual",
     "DeviceChain/DeviceChain/Devices",
 ];
-const PLAYER_PATHS: &[&str] = &["DeviceChain/FreezeSequencer", "SavedPlayingSlot", "Freeze", "DeviceChain/MainSequencer/ClipSlotList", "DeviceChain/MainSequencer/Recorder/IsArmed", "DeviceChain/FreezeSequencer/ClipSlotList"];
-const AUDIO_PATHS: &[&str] = &["DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events", "DeviceChain/MainSequencer/VolumeModulationTarget"];
-const MIDI_PATHS: &[&str] = &["DeviceChain/MainSequencer/ClipTimeable/ArrangerAutomation/Events", "DeviceChain/MainSequencer/MidiControllers", "PitchbendRange"];
-const MAIN_PATHS: &[&str] = &["DeviceChain/Mixer/Tempo/Manual", "DeviceChain/Mixer/TimeSignature/Manual", "DeviceChain/Mixer/GlobalGrooveAmount", "DeviceChain/FreezeSequencer/AudioSequencer/Sample"];
-const CLIP_PATHS: &[&str] = &["CurrentStart", "CurrentEnd", "Loop/LoopStart", "Loop/LoopEnd", "Loop/OutMarker", "Name", "Color", "TimeSignature/TimeSignatures/RemoteableTimeSignature/Numerator", "Envelopes/Envelopes", "FollowAction/FollowActionA", "Grid/FixedDenominator", "IsWarped", "TakeId"];
-const AUDIO_CLIP_PATHS: &[&str] = &["SampleRef/FileRef/RelativePathType", "SampleRef/FileRef/RelativePath", "SampleRef/FileRef/Path", "SampleRef/DefaultDuration", "SampleRef/DefaultSampleRate", "WarpMode", "Fades/FadeInLength", "SampleVolume", "WarpMarkers"];
-const MIDI_CLIP_PATHS: &[&str] = &["Notes/KeyTracks", "Notes/PerNoteEventStore", "Notes/NoteIdGenerator/NextId", "ScaleInformation/RootNote", "ExpressionGrid"];
-const RETURN_PATHS: &[&str] = &["DeviceChain/Mixer/Volume/Manual", "DeviceChain/Mixer/Pan/Manual", "DeviceChain/Mixer/Speaker/Manual", "DeviceChain/AudioOutputRouting/Target", "DeviceChain/DeviceChain/Devices"];
-const SET_PATHS: &[&str] = &["NextPointeeId", "OverwriteProtectionNumber", "Tracks", "MasterTrack", "PreHearTrack", "SendsPre", "Scenes", "Transport/LoopOn", "Transport/LoopStart", "Transport/LoopLength", "Grid", "Locators/Locators", "GroovePool/Grooves", "ViewStates"];
+const PLAYER_PATHS: &[&str] = &[
+    "DeviceChain/FreezeSequencer",
+    "SavedPlayingSlot",
+    "Freeze",
+    "DeviceChain/MainSequencer/ClipSlotList",
+    "DeviceChain/MainSequencer/Recorder/IsArmed",
+    "DeviceChain/FreezeSequencer/ClipSlotList",
+];
+const AUDIO_PATHS: &[&str] =
+    &["DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events", "DeviceChain/MainSequencer/VolumeModulationTarget"];
+const MIDI_PATHS: &[&str] =
+    &["DeviceChain/MainSequencer/ClipTimeable/ArrangerAutomation/Events", "DeviceChain/MainSequencer/MidiControllers", "PitchbendRange"];
+const MAIN_PATHS: &[&str] = &[
+    "DeviceChain/Mixer/Tempo/Manual",
+    "DeviceChain/Mixer/TimeSignature/Manual",
+    "DeviceChain/Mixer/GlobalGrooveAmount",
+    "DeviceChain/FreezeSequencer/AudioSequencer/Sample",
+];
+const CLIP_PATHS: &[&str] = &[
+    "CurrentStart",
+    "CurrentEnd",
+    "Loop/LoopStart",
+    "Loop/LoopEnd",
+    "Loop/OutMarker",
+    "Name",
+    "Color",
+    "TimeSignature/TimeSignatures/RemoteableTimeSignature/Numerator",
+    "Envelopes/Envelopes",
+    "FollowAction/FollowActionA",
+    "Grid/FixedDenominator",
+    "IsWarped",
+    "TakeId",
+];
+const AUDIO_CLIP_PATHS: &[&str] = &[
+    "SampleRef/FileRef/RelativePathType",
+    "SampleRef/FileRef/RelativePath",
+    "SampleRef/FileRef/Path",
+    "SampleRef/DefaultDuration",
+    "SampleRef/DefaultSampleRate",
+    "WarpMode",
+    "Fades/FadeInLength",
+    "SampleVolume",
+    "WarpMarkers",
+];
+const MIDI_CLIP_PATHS: &[&str] =
+    &["Notes/KeyTracks", "Notes/PerNoteEventStore", "Notes/NoteIdGenerator/NextId", "ScaleInformation/RootNote", "ExpressionGrid"];
+const RETURN_PATHS: &[&str] = &[
+    "DeviceChain/Mixer/Volume/Manual",
+    "DeviceChain/Mixer/Pan/Manual",
+    "DeviceChain/Mixer/Speaker/Manual",
+    "DeviceChain/AudioOutputRouting/Target",
+    "DeviceChain/DeviceChain/Devices",
+];
+const SET_PATHS: &[&str] = &[
+    "NextPointeeId",
+    "OverwriteProtectionNumber",
+    "Tracks",
+    "MasterTrack",
+    "PreHearTrack",
+    "SendsPre",
+    "Scenes",
+    "Transport/LoopOn",
+    "Transport/LoopStart",
+    "Transport/LoopLength",
+    "Grid",
+    "Locators/Locators",
+    "GroovePool/Grooves",
+    "ViewStates",
+];
 
 /// What [validate] found in a valid set.
 #[derive(Debug, PartialEq)]
@@ -1030,14 +1102,18 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
         }
         require(t, TRACK_PATHS, &what)?;
         // One send per return on every track, in Live's range.
-        let holders: Vec<_> = path(t, "DeviceChain/Mixer/Sends").map_or(Vec::new(), |s| s.children().filter(|c| c.has_tag_name("TrackSendHolder")).collect());
+        let holders: Vec<_> =
+            path(t, "DeviceChain/Mixer/Sends").map_or(Vec::new(), |s| s.children().filter(|c| c.has_tag_name("TrackSendHolder")).collect());
         if holders.len() != returns {
             return Err(format!("{what}: {} sends for {returns} return tracks", holders.len()));
         }
         for (i, h) in holders.iter().enumerate() {
             let level = number(*h, "Send/Manual")?;
             let active = value(*h, "Active")?;
-            if h.attribute("Id") != Some(i.to_string().as_str()) || !(SEND_RANGE.0..=SEND_RANGE.1).contains(&level) || path(*h, "Send/AutomationTarget").is_none() {
+            if h.attribute("Id") != Some(i.to_string().as_str())
+                || !(SEND_RANGE.0..=SEND_RANGE.1).contains(&level)
+                || path(*h, "Send/AutomationTarget").is_none()
+            {
                 return Err(format!("{what}: bad send {i} (level {level})"));
             }
             if kind != "ReturnTrack" && active == "true" && level > SEND_RANGE.0 {
@@ -1070,7 +1146,8 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
             other => return Err(format!("unexpected track kind {other}")),
         };
         for seq in ["MainSequencer", "FreezeSequencer"] {
-            let slots = path(t, &format!("DeviceChain/{seq}/ClipSlotList")).map_or(0, |l| l.children().filter(|c| c.has_tag_name("ClipSlot")).count());
+            let slots = path(t, &format!("DeviceChain/{seq}/ClipSlotList"))
+                .map_or(0, |l| l.children().filter(|c| c.has_tag_name("ClipSlot")).count());
             if slots != scenes {
                 return Err(format!("{what}: {seq} has {slots} clip slots for {scenes} scenes"));
             }
@@ -1120,8 +1197,16 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
                     if !(0.0..=127.0).contains(&key) {
                         return Err(format!("{cw}: key {key}"));
                     }
-                    for n in child(k, "Notes").ok_or(format!("{cw}: KeyTrack without Notes"))?.children().filter(|n| n.has_tag_name("MidiNoteEvent")) {
-                        let attr = |a: &str| n.attribute(a).ok_or(format!("{cw}: note without {a}")).and_then(|v| v.parse::<f64>().map_err(|e| format!("{cw} {a}: {e}")));
+                    for n in child(k, "Notes")
+                        .ok_or(format!("{cw}: KeyTrack without Notes"))?
+                        .children()
+                        .filter(|n| n.has_tag_name("MidiNoteEvent"))
+                    {
+                        let attr = |a: &str| {
+                            n.attribute(a)
+                                .ok_or(format!("{cw}: note without {a}"))
+                                .and_then(|v| v.parse::<f64>().map_err(|e| format!("{cw} {a}: {e}")))
+                        };
                         let (t0, d, vel, id) = (attr("Time")?, attr("Duration")?, attr("Velocity")?, attr("NoteId")?);
                         for a in ["VelocityDeviation", "OffVelocity", "Probability", "IsEnabled"] {
                             n.attribute(a).ok_or(format!("{cw}: note without {a}"))?;
@@ -1152,7 +1237,12 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
     let mut max = 0u64;
     for n in set.descendants().filter(|n| n.is_element()) {
         let tag = n.tag_name().name();
-        if tag == "AutomationTarget" || tag == "ModulationTarget" || tag == "Pointee" || tag.ends_with("ModulationTarget") || tag.starts_with("ControllerTargets.") {
+        if tag == "AutomationTarget"
+            || tag == "ModulationTarget"
+            || tag == "Pointee"
+            || tag.ends_with("ModulationTarget")
+            || tag.starts_with("ControllerTargets.")
+        {
             let id: u64 = n.attribute("Id").ok_or(format!("{tag} without Id"))?.parse().map_err(|e| format!("{tag} Id: {e}"))?;
             if !ids.insert(id) {
                 return Err(format!("pointee id {id} is used twice"));
@@ -1165,9 +1255,14 @@ pub fn validate(xml: &str, project_dir: Option<&Path>) -> Result<SetSummary, Str
     }
     // The tempo and time signature envelopes point at the main track's targets.
     let target_id = |p: &str| path(main, p).and_then(|n| n.attribute("Id")).map(str::to_string);
-    let (tempo_target, ts_target) = (target_id("DeviceChain/Mixer/Tempo/AutomationTarget"), target_id("DeviceChain/Mixer/TimeSignature/AutomationTarget"));
+    let (tempo_target, ts_target) =
+        (target_id("DeviceChain/Mixer/Tempo/AutomationTarget"), target_id("DeviceChain/Mixer/TimeSignature/AutomationTarget"));
     let pointees: Vec<String> = path(main, "AutomationEnvelopes/Envelopes")
-        .map(|e| e.children().filter_map(|a| path(a, "EnvelopeTarget/PointeeId").and_then(|p| p.attribute("Value")).map(str::to_string)).collect())
+        .map(|e| {
+            e.children()
+                .filter_map(|a| path(a, "EnvelopeTarget/PointeeId").and_then(|p| p.attribute("Value")).map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     if tempo_target.is_none_or(|t| !pointees.contains(&t)) || ts_target.is_none_or(|t| !pointees.contains(&t)) {
         return Err("the main track's tempo and time signature envelopes are missing".into());
@@ -1227,7 +1322,16 @@ mod tests {
                         ],
                     }]),
                 },
-                SetTrack { name: "Empty".into(), color: 0, on: true, volume: 1.0, pan: 0.0, sends: Vec::new(), sends_only: false, content: SetContent::Midi(vec![]) },
+                SetTrack {
+                    name: "Empty".into(),
+                    color: 0,
+                    on: true,
+                    volume: 1.0,
+                    pan: 0.0,
+                    sends: Vec::new(),
+                    sends_only: false,
+                    content: SetContent::Midi(vec![]),
+                },
             ],
             returns: vec![
                 SetReturn { name: "Return A".into(), color: 5, on: true, volume: 0.8, pan: 0.1, pre: false },
@@ -1248,7 +1352,10 @@ mod tests {
     fn written_set_passes_the_structural_check() {
         let xml = to_xml(&sample_set());
         let sum = validate(&xml, None).unwrap();
-        assert_eq!(sum, SetSummary { audio_tracks: 1, midi_tracks: 2, audio_clips: 1, midi_clips: 1, notes: 3, return_tracks: 2, sends: 3 });
+        assert_eq!(
+            sum,
+            SetSummary { audio_tracks: 1, midi_tracks: 2, audio_clips: 1, midi_clips: 1, notes: 3, return_tracks: 2, sends: 3 }
+        );
         assert!(xml.contains("<EffectiveName Value=\"Bass &amp; &lt;Drums&gt;\" />"));
         let gz = gzip(&xml).unwrap();
         assert_eq!(&gz[..2], &[0x1f, 0x8b]);
@@ -1261,12 +1368,20 @@ mod tests {
         let set = child(doc.root_element(), "LiveSet").unwrap();
         let tracks: Vec<_> = child(set, "Tracks").unwrap().children().filter(|c| c.is_element()).collect();
         // Returns come last, after every ordinary track, with ids of their own.
-        assert_eq!(tracks.iter().map(|t| t.tag_name().name()).collect::<Vec<_>>(), ["AudioTrack", "MidiTrack", "MidiTrack", "ReturnTrack", "ReturnTrack"]);
+        assert_eq!(
+            tracks.iter().map(|t| t.tag_name().name()).collect::<Vec<_>>(),
+            ["AudioTrack", "MidiTrack", "MidiTrack", "ReturnTrack", "ReturnTrack"]
+        );
         assert_eq!(value(tracks[3], "Name/EffectiveName").unwrap(), "Return A");
         assert_eq!(number(tracks[3], "DeviceChain/Mixer/Volume/Manual").unwrap() as f32, 0.8);
         assert_eq!(value(tracks[4], "DeviceChain/Mixer/Speaker/Manual").unwrap(), "false");
         let sends = |t: roxmltree::Node| -> Vec<(f64, String)> {
-            path(t, "DeviceChain/Mixer/Sends").unwrap().children().filter(|c| c.is_element()).map(|h| (number(h, "Send/Manual").unwrap(), value(h, "Active").unwrap().to_string())).collect()
+            path(t, "DeviceChain/Mixer/Sends")
+                .unwrap()
+                .children()
+                .filter(|c| c.is_element())
+                .map(|h| (number(h, "Send/Manual").unwrap(), value(h, "Active").unwrap().to_string()))
+                .collect()
         };
         // 0.5 as is, +9.5 dB clamped to Live's 0 dB top; an unset send sits at Live's minimum.
         assert_eq!(sends(tracks[0]), [(0.5, "true".into()), (1.0, "true".into())]);
@@ -1278,7 +1393,8 @@ mod tests {
         assert_eq!(value(tracks[0], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/Master");
         assert_eq!(value(tracks[1], "DeviceChain/AudioOutputRouting/Target").unwrap(), "AudioOut/None");
         assert_eq!(value(tracks[1], "DeviceChain/AudioOutputRouting/UpperDisplayString").unwrap(), "Sends Only");
-        let pre: Vec<_> = child(set, "SendsPre").unwrap().children().filter(|c| c.is_element()).map(|c| c.attribute("Value").unwrap()).collect();
+        let pre: Vec<_> =
+            child(set, "SendsPre").unwrap().children().filter(|c| c.is_element()).map(|c| c.attribute("Value").unwrap()).collect();
         assert_eq!(pre, ["false", "true"]);
         // The main and pre-hear tracks have no sends.
         assert!(path(set, "MasterTrack/DeviceChain/Mixer/Sends").unwrap().children().all(|c| !c.is_element()));

@@ -207,16 +207,19 @@ impl Ctx {
     /// Voice a chord close to middle C: each tone moved by octaves into 55..=72.
     fn voiced(&self, degree: i32, seventh: bool) -> Vec<i32> {
         let n = if seventh { 4 } else { 3 };
-        let mut v: Vec<i32> = Self::tones(degree)[..n].iter().map(|&s| {
-            let mut p = self.scale.pitch(s);
-            while p < 55 {
-                p += 12;
-            }
-            while p > 72 {
-                p -= 12;
-            }
-            p
-        }).collect();
+        let mut v: Vec<i32> = Self::tones(degree)[..n]
+            .iter()
+            .map(|&s| {
+                let mut p = self.scale.pitch(s);
+                while p < 55 {
+                    p += 12;
+                }
+                while p > 72 {
+                    p -= 12;
+                }
+                p
+            })
+            .collect();
         v.sort_unstable();
         v
     }
@@ -438,9 +441,15 @@ fn broken_thirds(c: &mut Ctx) {
 
 fn styles(part: PartType) -> &'static [Style] {
     match part {
-        PartType::Chords => &[("Held chords", held), ("Pulsing chords", pulsing), ("Off-beat stabs", stabs), ("Pushed chords", tresillo_chords)],
-        PartType::Bass => &[("Root bass", root_notes), ("Octave bass", octave_bounce), ("Walking bass", walking), ("Syncopated bass", syncopated_bass)],
-        PartType::Lead => &[("Stepwise lead", stepwise), ("Rising hook", rising_hook), ("Call and answer", call_response), ("Sparse hook", sparse_hook)],
+        PartType::Chords => {
+            &[("Held chords", held), ("Pulsing chords", pulsing), ("Off-beat stabs", stabs), ("Pushed chords", tresillo_chords)]
+        }
+        PartType::Bass => {
+            &[("Root bass", root_notes), ("Octave bass", octave_bounce), ("Walking bass", walking), ("Syncopated bass", syncopated_bass)]
+        }
+        PartType::Lead => {
+            &[("Stepwise lead", stepwise), ("Rising hook", rising_hook), ("Call and answer", call_response), ("Sparse hook", sparse_hook)]
+        }
         PartType::Arp => &[("Up arp", arp_up), ("Down arp", arp_down), ("Up-down arp", arp_up_down), ("Broken thirds", broken_thirds)],
     }
 }
@@ -477,7 +486,8 @@ pub fn create_set(part: PartType, genre: usize, key: Option<ProjectKey>, set: u3
             let mut c = Ctx { scale: Scale::new(key, fe.minor), feel: fe, chords: spans(prog, clip, ticks_per_bar), rng, out: Vec::new() };
             play(&mut c);
             let end = clip.max(PPQ);
-            let mut notes: Vec<Note> = c.out.into_iter().filter(|n| n.start < end).map(|n| Note { length: n.length.min(end - n.start), ..n }).collect();
+            let mut notes: Vec<Note> =
+                c.out.into_iter().filter(|n| n.start < end).map(|n| Note { length: n.length.min(end - n.start), ..n }).collect();
             midi::sort_notes(&mut notes);
             for (id, n) in notes.iter_mut().enumerate() {
                 n.id = id as u32 + 1;
@@ -494,16 +504,40 @@ pub fn create_set(part: PartType, genre: usize, key: Option<ProjectKey>, set: u3
 type Groove = (&'static str, [&'static str; 6]);
 
 const GROOVES: [Groove; 10] = [
-    ("Four on the floor", ["x---x---x---x---", "----x-------x---", "--x---x---x---x-", "------------x---", "----------------", "-------o-------o"]),
+    (
+        "Four on the floor",
+        ["x---x---x---x---", "----x-------x---", "--x---x---x---x-", "------------x---", "----------------", "-------o-------o"],
+    ),
     ("Boom bap", ["x------x-x------", "----x-------x---", "x-x-x-x-x-x-x-x-", "----------------", "----------------", "---o------o-----"]),
-    ("Trap rolls", ["x-------x-x-----", "--------x-------", "x-x-xxx-x-x-x-xx", "----------------", "--------x-------", "------o-------o-"]),
-    ("Two-step break", ["x---------x-----", "----x-------x---", "x-x-x-x-x-x-x-x-", "-------x--------", "----------------", "--o-------o--o--"]),
-    ("Afro swing", ["x-----x---x-----", "------x-------x-", "x-xxx-xxx-xxx-xx", "----------------", "----x-------x---", "--o--o----o--o--"]),
-    ("Drill slide", ["x------x--x-----", "------x-------x-", "x-x-x-x-xxx-x-x-", "----------------", "------x-------x-", "---o-------o----"]),
-    ("Half-time float", ["x-------------x-", "--------x-------", "x---x---x---x---", "------x---------", "----------------", "------o-----o---"]),
-    ("Folk shuffle", ["x-------x-------", "----x-------x---", "x--x--x-x--x--x-", "----------------", "----x-------x---", "--o-------o-----"]),
+    (
+        "Trap rolls",
+        ["x-------x-x-----", "--------x-------", "x-x-xxx-x-x-x-xx", "----------------", "--------x-------", "------o-------o-"],
+    ),
+    (
+        "Two-step break",
+        ["x---------x-----", "----x-------x---", "x-x-x-x-x-x-x-x-", "-------x--------", "----------------", "--o-------o--o--"],
+    ),
+    (
+        "Afro swing",
+        ["x-----x---x-----", "------x-------x-", "x-xxx-xxx-xxx-xx", "----------------", "----x-------x---", "--o--o----o--o--"],
+    ),
+    (
+        "Drill slide",
+        ["x------x--x-----", "------x-------x-", "x-x-x-x-xxx-x-x-", "----------------", "------x-------x-", "---o-------o----"],
+    ),
+    (
+        "Half-time float",
+        ["x-------------x-", "--------x-------", "x---x---x---x---", "------x---------", "----------------", "------o-----o---"],
+    ),
+    (
+        "Folk shuffle",
+        ["x-------x-------", "----x-------x---", "x--x--x-x--x--x-", "----------------", "----x-------x---", "--o-------o-----"],
+    ),
     ("Dembow", ["x---x---x---x---", "---x--x----x--x-", "x-x-x-x-x-x-x-x-", "----------------", "----------------", "-o-----o-o-----o"]),
-    ("Warehouse pulse", ["x---x---x---x---", "----o-------o---", "x-x-x-x-x-x-x-x-", "--x---x---x---x-", "----x-------x---", "-o--o--o-o--o--o"]),
+    (
+        "Warehouse pulse",
+        ["x---x---x---x---", "----o-------o---", "x-x-x-x-x-x-x-x-", "--x---x---x---x-", "----x-------x---", "-o--o--o-o--o--o"],
+    ),
 ];
 
 fn grooves_for(genre: usize) -> &'static [usize] {
@@ -697,7 +731,11 @@ mod tests {
                         midi::validate_notes(&p.notes).unwrap();
                         assert!(p.notes.iter().all(|n| n.start < clip));
                         let d_minor = [2, 4, 5, 7, 9, 10, 0];
-                        assert!(p.notes.iter().all(|n| d_minor.contains(&(n.pitch as i32 % 12)) || part == PartType::Bass), "{part:?} {} out of key", p.name);
+                        assert!(
+                            p.notes.iter().all(|n| d_minor.contains(&(n.pitch as i32 % 12)) || part == PartType::Bass),
+                            "{part:?} {} out of key",
+                            p.name
+                        );
                     }
                 }
             }
@@ -717,7 +755,8 @@ mod tests {
 
     #[test]
     fn saved_genre_indices_keep_their_genre() {
-        let before = ["Any", "Afrobeats", "Ambient", "Drill", "Drum & bass", "EDM", "Electronic", "Experimental", "Folk", "Future bass", "Hip-hop"];
+        let before =
+            ["Any", "Afrobeats", "Ambient", "Drill", "Drum & bass", "EDM", "Electronic", "Experimental", "Folk", "Future bass", "Hip-hop"];
         assert_eq!(GENRES[..before.len()], before);
         assert_eq!(grooves_for(0), &[0, 1, 2, 3, 4, 5, 6, 7], "Any's drum sets are unchanged");
     }

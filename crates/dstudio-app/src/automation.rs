@@ -236,7 +236,11 @@ pub struct AutoScene {
 pub fn norm_of(t: &AutomationTarget, v: f32) -> f32 {
     let n = match t {
         AutomationTarget::Volume => {
-            if v <= VOLUME_MIN_DB { 0.0 } else { db_to_gain(v) / db_to_gain(VOLUME_MAX_DB) }
+            if v <= VOLUME_MIN_DB {
+                0.0
+            } else {
+                db_to_gain(v) / db_to_gain(VOLUME_MAX_DB)
+            }
         }
         AutomationTarget::Pan => (v + 1.0) / 2.0,
         AutomationTarget::Synth { param } => {
@@ -528,7 +532,9 @@ impl Controller {
         let pinned_from = self.project().ordinary_track_count().min(n);
         let extra: Vec<f32> = if self.auto.shown {
             let ids: Vec<TrackId> = self.project().tracks.iter().take(pinned_from).map(|t| t.id).collect();
-            ids.iter().map(|id| if self.auto.expanded.contains(id) { self.extra_targets(*id).len() as f32 * EXTRA_PITCH } else { 0.0 }).collect()
+            ids.iter()
+                .map(|id| if self.auto.expanded.contains(id) { self.extra_targets(*id).len() as f32 * EXTRA_PITCH } else { 0.0 })
+                .collect()
         } else {
             Vec::new()
         };
@@ -577,11 +583,27 @@ impl Controller {
             rows.push(Row { key, target: self.auto_target(key), y0: top, h: rh, master: false, extra: false, pinned });
             if self.auto.expanded.contains(&t.id) && !v.is_pinned(i) {
                 for (k, target) in self.extra_targets(t.id).into_iter().enumerate() {
-                    rows.push(Row { key, target, y0: top + v.pitch(i) + k as f32 * EXTRA_PITCH, h: EXTRA_H, master: false, extra: true, pinned: false });
+                    rows.push(Row {
+                        key,
+                        target,
+                        y0: top + v.pitch(i) + k as f32 * EXTRA_PITCH,
+                        h: EXTRA_H,
+                        master: false,
+                        extra: true,
+                        pinned: false,
+                    });
                 }
             }
         }
-        rows.push(Row { key: None, target: AutomationTarget::Volume, y0: h - v.master_h + 1.0, h: v.master_h - 1.0, master: true, extra: false, pinned: false });
+        rows.push(Row {
+            key: None,
+            target: AutomationTarget::Volume,
+            y0: h - v.master_h + 1.0,
+            h: v.master_h - 1.0,
+            master: true,
+            extra: false,
+            pinned: false,
+        });
         rows
     }
 
@@ -630,7 +652,18 @@ impl Controller {
             let empty = lane.as_ref().is_none_or(|l| l.points.is_empty());
             let x0 = v.x_of(0.0);
             let start_dot = (empty && x0 > -3.0 && x0 < w).then(|| (x0, row.y_of(norm_of(&row.target, stat))));
-            out.rows.push(RowDraw { y0: row.y0, h: row.h, master: row.master || row.pinned, overlay: !row.master, extra: row.extra, style, hue: self.lane_hue(&row.target), poly, handles, start_dot });
+            out.rows.push(RowDraw {
+                y0: row.y0,
+                h: row.h,
+                master: row.master || row.pinned,
+                overlay: !row.master,
+                extra: row.extra,
+                style,
+                hue: self.lane_hue(&row.target),
+                poly,
+                handles,
+                start_dot,
+            });
         }
         if let Some(Gesture::Marquee { x0, y0, x1, y1, .. }) = &self.auto.gesture {
             out.marquee = Some([x0.min(*x1), y0.min(*y1), (x1 - x0).abs(), (y1 - y0).abs()]);
@@ -685,7 +718,10 @@ impl Controller {
         if !self.auto.armed {
             self.auto_write_end(|_| true);
         }
-        self.set_status(if self.auto.armed { "Automation armed: control moves write automation while playing" } else { "Automation arm off" }, 3);
+        self.set_status(
+            if self.auto.armed { "Automation armed: control moves write automation while playing" } else { "Automation arm off" },
+            3,
+        );
         self.ui_dirty = true;
     }
 
@@ -981,7 +1017,8 @@ impl Controller {
         match g {
             Gesture::Points { row, base, idx, grab, grab_time, alt, .. } => {
                 let raw = self.ticks_at(x, false) - self.ticks_at(grab.0, false);
-                let mut delta = if alt { grab_time + raw } else { ((grab_time + raw) as f64 / PPQ as f64).round() as Ticks * PPQ } - grab_time;
+                let mut delta =
+                    if alt { grab_time + raw } else { ((grab_time + raw) as f64 / PPQ as f64).round() as Ticks * PPQ } - grab_time;
                 // Keep the moved points between their unmoved neighbours (and at t >= 0).
                 let pts = &base.points;
                 for &i in &idx {
@@ -1141,7 +1178,14 @@ impl Controller {
             Some(i) => i,
             None => {
                 let base = self.model_lane(key, &target).cloned().unwrap_or_else(|| AutomationLane::new(target.clone()));
-                self.auto.writes.push(WritePass { key, target: target.clone(), start: now, samples: Vec::new(), base, last: Instant::now() });
+                self.auto.writes.push(WritePass {
+                    key,
+                    target: target.clone(),
+                    start: now,
+                    samples: Vec::new(),
+                    base,
+                    last: Instant::now(),
+                });
                 self.auto.writes.len() - 1
             }
         };
@@ -1175,7 +1219,10 @@ impl Controller {
         for w in done {
             let Some(&(end, _)) = w.samples.last() else { continue };
             let norm: Vec<(Ticks, f32)> = w.samples.iter().map(|&(t, v)| (t, norm_of(&w.target, v))).collect();
-            let thinned: Vec<(Ticks, f32)> = thin(&norm, THIN_TOLERANCE).into_iter().map(|(t, n)| (t, w.samples.iter().find(|s| s.0 == t).map(|s| s.1).unwrap_or_else(|| value_of(&w.target, n)))).collect();
+            let thinned: Vec<(Ticks, f32)> = thin(&norm, THIN_TOLERANCE)
+                .into_iter()
+                .map(|(t, n)| (t, w.samples.iter().find(|s| s.0 == t).map(|s| s.1).unwrap_or_else(|| value_of(&w.target, n))))
+                .collect();
             let mut lane = touch_merge(&w.base, w.start, end, &thinned);
             lane.enabled = true;
             cmds.push(Command::SetAutomationLane { track: w.key, target: w.target.clone(), lane: Some(lane) });
@@ -1204,7 +1251,13 @@ impl Controller {
             }
             let Some((ti, _)) = self.project().find_device(ch.device) else { continue };
             let track = self.project().tracks[ti].id;
-            let name = self.engine.plugin_params(ch.device).into_iter().find(|p| p.id == ch.param).map(|p| p.name).unwrap_or_else(|| format!("Parameter {}", ch.param));
+            let name = self
+                .engine
+                .plugin_params(ch.device)
+                .into_iter()
+                .find(|p| p.id == ch.param)
+                .map(|p| p.name)
+                .unwrap_or_else(|| format!("Parameter {}", ch.param));
             let target = AutomationTarget::Plugin { device: ch.device, param: ch.param, name };
             let at = self.project().frames_to_ticks(ch.frame, self.rate);
             self.auto_record(Some(track), target.clone(), ch.normalized.clamp(0.0, 1.0), Some(at));
@@ -1290,7 +1343,13 @@ impl Controller {
         // Synth knobs (built-in Synth of the selected instrument track) follow their lanes.
         if let (Some(t), Some(device)) = (self.synth_track(), self.synth_device()) {
             let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
-            let targets: Vec<AutomationTarget> = self.project().track(t).map_or(Vec::new(), |tr| tr.automation.iter().filter(|l| matches!(&l.target, AutomationTarget::Builtin { device: d, .. } if *d == device)).map(|l| l.target.clone()).collect());
+            let targets: Vec<AutomationTarget> = self.project().track(t).map_or(Vec::new(), |tr| {
+                tr.automation
+                    .iter()
+                    .filter(|l| matches!(&l.target, AutomationTarget::Builtin { device: d, .. } if *d == device))
+                    .map(|l| l.target.clone())
+                    .collect()
+            });
             let mut followed = vec![false; def.params.len()];
             for target in targets {
                 let AutomationTarget::Builtin { param, .. } = &target else { continue };
@@ -1340,7 +1399,11 @@ impl Controller {
                     id: t.id.0 as i32,
                     number: i as i32 + 1,
                     is_return: t.is_return(),
-                    letter: if t.is_return() { dstudio_core::return_letter(i - first_return).to_string().into() } else { Default::default() },
+                    letter: if t.is_return() {
+                        dstudio_core::return_letter(i - first_return).to_string().into()
+                    } else {
+                        Default::default()
+                    },
                     name: t.name.clone().into(),
                     instrument: t.kind == TrackKind::Instrument,
                     color: crate::controller::slint_color(crate::controller::track_color(t.color)),
@@ -1352,7 +1415,11 @@ impl Controller {
                     volume_pos: slider_from_gain(gain),
                     pan,
                     // Pinned rows (return tracks) are placed inside the pinned band.
-                    y: if self.view.is_pinned(i) { self.view.track_offset(i) - self.view.track_offset(self.view.pinned_from) } else { self.view.track_offset(i) },
+                    y: if self.view.is_pinned(i) {
+                        self.view.track_offset(i) - self.view.track_offset(self.view.pinned_from)
+                    } else {
+                        self.view.track_offset(i)
+                    },
                     pinned: self.view.is_pinned(i),
                     h: self.view.track_span(i),
                     row_h: self.view.pitch(i) - 0.5,
@@ -1545,7 +1612,15 @@ mod tests {
 
     #[test]
     fn touch_merge_replaces_range_and_returns_to_curve() {
-        let base = AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![AutoPoint { time: 0, value: -12.0, curve: 0.0 }, AutoPoint { time: 1000, value: -12.0, curve: 0.0 }, AutoPoint { time: 2000, value: 0.0, curve: 0.0 }] };
+        let base = AutomationLane {
+            target: AutomationTarget::Volume,
+            enabled: true,
+            points: vec![
+                AutoPoint { time: 0, value: -12.0, curve: 0.0 },
+                AutoPoint { time: 1000, value: -12.0, curve: 0.0 },
+                AutoPoint { time: 2000, value: 0.0, curve: 0.0 },
+            ],
+        };
         let m = touch_merge(&base, 500, 1500, &[(500, -30.0), (1500, -20.0)]);
         m.validate().unwrap();
         assert_eq!(m.value_at(0), Some(-12.0));
@@ -1579,7 +1654,8 @@ mod tests {
         }
         assert_eq!(Hue::of(&AutomationTarget::Synth { param: SynthParam::FilterCutoff }, none), Hue::Indigo);
         // Plugin parameters: same device + parameter name → same hue on every track.
-        let p = |device: u64, param: u32| AutomationTarget::Plugin { device: dstudio_core::DeviceId(device), param, name: "B1 Freq".into() };
+        let p =
+            |device: u64, param: u32| AutomationTarget::Plugin { device: dstudio_core::DeviceId(device), param, name: "B1 Freq".into() };
         assert_eq!(Hue::of(&p(1, 3), "Character EQ"), Hue::of(&p(7, 9), "Character EQ"));
     }
 }

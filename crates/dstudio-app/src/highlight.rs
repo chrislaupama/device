@@ -176,7 +176,17 @@ mod tests {
     use dstudio_core::assistant::UI_TARGETS;
 
     fn default_layout() -> Layout {
-        Layout { w: 1440.0, h: 820.0, sounds: true, mixer: false, assistant: false, chat_w: crate::splitters::CHAT_MIN_W, clip_tab: false, scroll_y: 0.0, bottom: DEFAULT_BOTTOM_H }
+        Layout {
+            w: 1440.0,
+            h: 820.0,
+            sounds: true,
+            mixer: false,
+            assistant: false,
+            chat_w: crate::splitters::CHAT_MIN_W,
+            clip_tab: false,
+            scroll_y: 0.0,
+            bottom: DEFAULT_BOTTOM_H,
+        }
     }
 
     #[test]
@@ -197,7 +207,10 @@ mod tests {
         l.assistant = true;
         let ruler = target_rect(&l, "timeline.ruler", |_| None).unwrap();
         assert!((ruler.0 + ruler.2 - (1440.0 - 5.0 - crate::splitters::CHAT_MIN_W - ASSISTANT_GAP)).abs() < 1e-3);
-        assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some((0.0, TRACK_H))), Some((262.65 + 115.7, 144.5 + 41.65, 68.0, 11.9)));
+        assert_eq!(
+            target_rect(&l, "track:7:volume", |id| (id == 7).then_some((0.0, TRACK_H))),
+            Some((262.65 + 115.7, 144.5 + 41.65, 68.0, 11.9))
+        );
         assert_eq!(target_rect(&l, "track:7:volume", |_| None), None);
         l.scroll_y = 1000.0;
         assert_eq!(target_rect(&l, "track:7:header", |_| Some((0.0, TRACK_H))), None, "scrolled out");

@@ -30,12 +30,12 @@ pub mod snapshot;
 pub mod steps;
 pub mod warp;
 
-pub use command::{Command, EditError};
-pub use history::{Document, Origin};
 pub use automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
+pub use command::{Command, EditError};
 pub use device::{Device, DeviceId, DeviceSample, ModLink, ModParam, PluginFormat, PluginKind, PluginRef, Slice};
+pub use history::{Document, Origin};
 pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};
-pub use steps::{StepCell, StepLane, StepPattern, StepRate, StepRows};
 pub use model::*;
+pub use steps::{StepCell, StepLane, StepPattern, StepRate, StepRows};
 pub use warp::{ClipWarp, Transient, WarpMarker, WarpMode};

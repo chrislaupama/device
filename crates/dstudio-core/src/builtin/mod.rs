@@ -29,49 +29,49 @@ mod auto_filter;
 mod autopanner;
 mod bitcrusher;
 mod channel_eq;
+mod character_compressor;
 mod character_eq;
 pub mod character_mod;
-mod character_compressor;
 mod chorus;
 mod compressor;
-pub mod delay;
-mod gate;
-mod glue_compressor;
-mod limiter;
-mod mastering_limiter;
-mod transient_shaper;
-pub mod lfo;
-pub mod rack;
-pub mod drum_rack;
-pub mod pad_sampler;
-pub mod sampler;
 mod declipper;
 mod deesser;
 mod dehummer;
+pub mod delay;
 mod denoiser;
 mod distortion;
+pub mod drum_rack;
 pub mod echo;
 pub mod eq;
 mod flanger;
+mod gate;
+mod glue_compressor;
 pub mod grains;
+pub mod lfo;
+mod limiter;
+mod mastering_limiter;
 mod multiband_compressor;
+pub mod pad_sampler;
 mod phaser;
+mod pitch_corrector;
 pub mod pitch_shifter;
+pub mod rack;
 pub mod reverb;
 mod ring_mod;
+pub mod sampler;
 pub mod shaper;
 mod soft_clipper;
+mod spectrum;
 mod tape_saturation;
 pub mod trance_gate;
+mod transient_shaper;
 mod tremolo;
-mod pitch_corrector;
-mod spectrum;
 mod tuner;
 
 pub use tuner::TUNING_STRINGS;
+pub mod synth_v2;
 mod utility;
 mod widener;
-pub mod synth_v2;
 
 pub use bitcrusher::crush_picture;
 pub use distortion::distortion_transfer;
@@ -79,9 +79,9 @@ pub use soft_clipper::{clipper_open, clipper_transfer};
 pub use tape_saturation::tape_transfer;
 pub use widener::widener_response;
 
-pub use auto_filter::{dj_map, filter_response, FilterSetting};
+pub use auto_filter::{FilterSetting, dj_map, filter_response};
 pub use character_compressor::character_transfer;
-pub use multiband_compressor::{multiband_gain, MULTIBAND_BANDS};
+pub use multiband_compressor::{MULTIBAND_BANDS, multiband_gain};
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -235,13 +235,66 @@ pub struct ParamDef {
 impl ParamDef {
     /// A continuous parameter with defaults for the optional fields.
     #[allow(clippy::too_many_arguments)]
-    pub const fn new(id: &'static str, name: &'static str, min: f32, max: f32, default: f32, taper: Taper, unit: &'static str, format: Format) -> ParamDef {
-        ParamDef { id, name, label: name, min, max, default, taper, step: 0.0, unit, format, choices: &[], automatable: true, reset_on_load: false, preset_lock: false, help: "", reversed: false, latch: None, momentary: false, locks: &[], max_text: "", overlays: &[] }
+    pub const fn new(
+        id: &'static str,
+        name: &'static str,
+        min: f32,
+        max: f32,
+        default: f32,
+        taper: Taper,
+        unit: &'static str,
+        format: Format,
+    ) -> ParamDef {
+        ParamDef {
+            id,
+            name,
+            label: name,
+            min,
+            max,
+            default,
+            taper,
+            step: 0.0,
+            unit,
+            format,
+            choices: &[],
+            automatable: true,
+            reset_on_load: false,
+            preset_lock: false,
+            help: "",
+            reversed: false,
+            latch: None,
+            momentary: false,
+            locks: &[],
+            max_text: "",
+            overlays: &[],
+        }
     }
 
     /// A discrete parameter: plain value = index into `choices`.
     pub const fn choice(id: &'static str, name: &'static str, choices: &'static [&'static str], default: u32) -> ParamDef {
-        ParamDef { id, name, label: name, min: 0.0, max: (choices.len() - 1) as f32, default: default as f32, taper: LINEAR, step: 1.0, unit: "", format: Format::Choice, choices, automatable: true, reset_on_load: false, preset_lock: false, help: "", reversed: false, latch: None, momentary: false, locks: &[], max_text: "", overlays: &[] }
+        ParamDef {
+            id,
+            name,
+            label: name,
+            min: 0.0,
+            max: (choices.len() - 1) as f32,
+            default: default as f32,
+            taper: LINEAR,
+            step: 1.0,
+            unit: "",
+            format: Format::Choice,
+            choices,
+            automatable: true,
+            reset_on_load: false,
+            preset_lock: false,
+            help: "",
+            reversed: false,
+            latch: None,
+            momentary: false,
+            locks: &[],
+            max_text: "",
+            overlays: &[],
+        }
     }
 
     pub const fn label(mut self, label: &'static str) -> ParamDef {
@@ -429,7 +482,9 @@ impl ParamDef {
             (Format::MsAuto, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
             (Format::Degrees, "°" | "deg" | "degrees") => {}
             (Format::SignedBareZero(_), u) if u == self.unit.to_lowercase() => {}
-            (Format::Db | Format::DbNoPlus | Format::DbOrInf | Format::DbCut, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
+            (Format::Db | Format::DbNoPlus | Format::DbOrInf | Format::DbCut, "db")
+            | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%")
+            | (Format::Factor, "x") => {}
             (Format::Fraction | Format::SignedFraction, "%" | "percent") => {}
             (Format::Seconds, "s" | "sec" | "secs" | "second" | "seconds") => {}
             (Format::Seconds, "ms" | "msec" | "msecs") => v /= 1000.0,
@@ -492,11 +547,21 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         Format::DbOrInf => format_value(Format::Db, v, unit, choices, range),
         Format::Percent0 => format!("{:.0}%", v.round() + 0.0),
         Format::Factor => {
-            if v < 9.95 { format!("{v:.1}x") } else { format!("{v:.0}x") }
+            if v < 9.95 {
+                format!("{v:.1}x")
+            } else {
+                format!("{v:.0}x")
+            }
         }
         Format::Balance => {
             let r = v.round();
-            if r == 0.0 { "C".into() } else if r < 0.0 { format!("{:.0}L", -r) } else { format!("{r:.0}R") }
+            if r == 0.0 {
+                "C".into()
+            } else if r < 0.0 {
+                format!("{:.0}L", -r)
+            } else {
+                format!("{r:.0}R")
+            }
         }
         Format::Freq => {
             if v >= 999.5 {
@@ -510,12 +575,22 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             }
         }
         Format::MsAuto => {
-            if v >= 99.95 { format!("{v:.0} ms") } else { format!("{v:.1} ms") }
+            if v >= 99.95 {
+                format!("{v:.0} ms")
+            } else {
+                format!("{v:.1} ms")
+            }
         }
         Format::SignedBareZero(d) => {
             let a = format!("{:.*}", d as usize, v.abs());
             let zero = a.chars().all(|c| c == '0' || c == '.');
-            let sign = if zero { String::new() } else if v < 0.0 { MINUS.to_string() } else { "+".into() };
+            let sign = if zero {
+                String::new()
+            } else if v < 0.0 {
+                MINUS.to_string()
+            } else {
+                "+".into()
+            };
             if unit.is_empty() { format!("{sign}{a}") } else { format!("{sign}{a} {unit}") }
         }
         Format::Degrees => format!("{:.0}°", v.round() + 0.0),
@@ -531,7 +606,13 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         }
         Format::SignedPercent => {
             let r = v.round();
-            if r == 0.0 { "0%".into() } else if r < 0.0 { format!("{MINUS}{}%", -r) } else { format!("+{r}%") }
+            if r == 0.0 {
+                "0%".into()
+            } else if r < 0.0 {
+                format!("{MINUS}{}%", -r)
+            } else {
+                format!("+{r}%")
+            }
         }
         Format::Choice => {
             let i = v.round().max(0.0) as usize;
@@ -567,7 +648,13 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         Format::SignedFraction => {
             let r = (v * 1000.0).round() / 10.0;
             let body = if r.fract() == 0.0 { format!("{:.0}%", r.abs()) } else { format!("{:.1}%", r.abs()) };
-            if r == 0.0 { body } else if r < 0.0 { format!("{MINUS}{body}") } else { format!("+{body}") }
+            if r == 0.0 {
+                body
+            } else if r < 0.0 {
+                format!("{MINUS}{body}")
+            } else {
+                format!("+{body}")
+            }
         }
         Format::Seconds => {
             if v < 1.0 {
@@ -594,15 +681,31 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         }
         Format::Semitones => {
             let a = (v.abs() * 10.0).round() / 10.0;
-            let sign = if a == 0.0 { "" } else if v < 0.0 { "\u{2212}" } else { "+" };
+            let sign = if a == 0.0 {
+                ""
+            } else if v < 0.0 {
+                "\u{2212}"
+            } else {
+                "+"
+            };
             format!("{sign}{a:.1} st")
         }
         Format::Cents => {
             let r = v.round();
-            if r == 0.0 { "0 ct".into() } else if r < 0.0 { format!("{MINUS}{} ct", -r) } else { format!("+{r} ct") }
+            if r == 0.0 {
+                "0 ct".into()
+            } else if r < 0.0 {
+                format!("{MINUS}{} ct", -r)
+            } else {
+                format!("+{r} ct")
+            }
         }
         Format::Rate => {
-            if v < 10.0 { format!("{v:.2} Hz") } else { format!("{v:.1} Hz") }
+            if v < 10.0 {
+                format!("{v:.2} Hz")
+            } else {
+                format!("{v:.1} Hz")
+            }
         }
         Format::Custom(f) => (f.0)(v),
     }
@@ -718,7 +821,14 @@ impl Control {
     /// The (first) parameter of the control.
     pub fn param(&self) -> Option<&'static str> {
         match *self {
-            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Segments(p, _) | Control::Latch(p) => Some(p),
+            Control::Knob(p)
+            | Control::Slider(p)
+            | Control::Menu(p)
+            | Control::Pill(p)
+            | Control::Toggle(p)
+            | Control::Dropdown(p)
+            | Control::Segments(p, _)
+            | Control::Latch(p) => Some(p),
             Control::ModeDropdown { param, .. } => Some(param),
             Control::Swap(ps) => ps.first().copied(),
             Control::Sidechain | Control::Views | Control::Gap => None,
@@ -774,7 +884,13 @@ pub struct Field {
 }
 
 impl Field {
-    pub const fn new(plot: &'static str, caption: &'static str, x: &'static [&'static str], y: &'static [&'static str], width: f32) -> Field {
+    pub const fn new(
+        plot: &'static str,
+        caption: &'static str,
+        x: &'static [&'static str],
+        y: &'static [&'static str],
+        width: f32,
+    ) -> Field {
         Field { plot, caption, x, y, width }
     }
 }
@@ -940,7 +1056,19 @@ pub const CARD_PAD: f32 = 16.0;
 
 impl Layout {
     /// A layout with nothing in it (struct update base for definitions).
-    pub const EMPTY: Layout = Layout { picker: &[], view: None, sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], inert_when: &[], fixed_width: 0.0, views: &[], spread_dials: false };
+    pub const EMPTY: Layout = Layout {
+        picker: &[],
+        view: None,
+        sliders: &[],
+        clusters: &[],
+        faces: &[],
+        min_height: 0.0,
+        shown_when: &[],
+        inert_when: &[],
+        fixed_width: 0.0,
+        views: &[],
+        spread_dials: false,
+    };
 
     /// Card width from the dial clusters: cells * 62 + inner gaps * 10 +
     /// cluster gaps * 21, plus 16 of padding (the card sizing rule).
@@ -972,14 +1100,22 @@ impl Layout {
         let combos: usize = switches.iter().map(|(_, v)| v.len()).product();
         (0..combos.max(1))
             .map(|mut k| {
-                let state: Vec<(&str, u32)> = switches.iter().map(|(by, vals)| {
-                    let v = vals[k % vals.len()];
-                    k /= vals.len();
-                    (*by, v)
-                }).collect();
-                let shown = |c: &Control| c.param().is_none_or(|p| {
-                    self.shown_when.iter().filter(|(q, _, _)| *q == p).all(|(_, by, values)| state.iter().any(|(b, v)| b == by && values.contains(v)))
-                });
+                let state: Vec<(&str, u32)> = switches
+                    .iter()
+                    .map(|(by, vals)| {
+                        let v = vals[k % vals.len()];
+                        k /= vals.len();
+                        (*by, v)
+                    })
+                    .collect();
+                let shown = |c: &Control| {
+                    c.param().is_none_or(|p| {
+                        self.shown_when
+                            .iter()
+                            .filter(|(q, _, _)| *q == p)
+                            .all(|(_, by, values)| state.iter().any(|(b, v)| b == by && values.contains(v)))
+                    })
+                };
                 let sizes: Vec<usize> = self.clusters.iter().map(|c| c.iter().filter(|c| shown(c)).count()).filter(|n| *n > 0).collect();
                 let cells: usize = sizes.iter().sum();
                 let inner: usize = sizes.iter().map(|n| n - 1).sum();
@@ -1092,7 +1228,12 @@ pub fn linked_writes(def: &DeviceDef, device: &Device, param: &str, value: f32) 
         "character-compressor" => (def.param(param).map(|p| character_compressor::linked(def, device, p, value)).unwrap_or_default(), None),
         // A choice's overlays (the mastering limiter's styles).
         _ => {
-            let writes = def.choice_values(param, value).into_iter().filter(|(id, _)| id != param).filter_map(|(id, v)| Some((def.param(&id)?.id, v))).collect();
+            let writes = def
+                .choice_values(param, value)
+                .into_iter()
+                .filter(|(id, _)| id != param)
+                .filter_map(|(id, v)| Some((def.param(&id)?.id, v)))
+                .collect();
             (writes, None)
         }
     }
@@ -1102,18 +1243,63 @@ pub fn linked_writes(def: &DeviceDef, device: &Device, param: &str, value: f32) 
 
 /// Note values of a synced LFO, slowest
 /// first; the plain value of a Rate Sync parameter is the index.
-pub const DIVISIONS: &[&str] = &["8/1", "4/1", "2/1", "1/1", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32", "1/64.", "1/64", "1/64T"];
+pub const DIVISIONS: &[&str] = &[
+    "8/1", "4/1", "2/1", "1/1", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32",
+    "1/64.", "1/64", "1/64T",
+];
 /// Length of each of [DIVISIONS] in quarter notes.
-pub const DIVISION_QUARTERS: &[f32] =
-    &[32.0, 16.0, 8.0, 4.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.125, 0.093_75, 0.0625, 1.0 / 24.0];
+pub const DIVISION_QUARTERS: &[f32] = &[
+    32.0,
+    16.0,
+    8.0,
+    4.0,
+    3.0,
+    2.0,
+    4.0 / 3.0,
+    1.5,
+    1.0,
+    2.0 / 3.0,
+    0.75,
+    0.5,
+    1.0 / 3.0,
+    0.375,
+    0.25,
+    1.0 / 6.0,
+    0.125,
+    0.093_75,
+    0.0625,
+    1.0 / 24.0,
+];
 /// Index of 1/4 in [DIVISIONS].
 pub const DIVISION_QUARTER: u32 = 8;
 /// Character Mod's note table, slowest first.
-pub const MOD_NOTES: &[&str] =
-    &["2/1.", "2/1", "2/1T", "1/1.", "1/1", "1/1T", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32.", "1/32", "1/32T"];
+pub const MOD_NOTES: &[&str] = &[
+    "2/1.", "2/1", "2/1T", "1/1.", "1/1", "1/1T", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16",
+    "1/16T", "1/32.", "1/32", "1/32T",
+];
 /// Length of each of [MOD_NOTES] in quarter notes.
 pub const MOD_NOTE_QUARTERS: &[f32] = &[
-    12.0, 8.0, 16.0 / 3.0, 6.0, 4.0, 8.0 / 3.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.1875, 0.125, 1.0 / 12.0,
+    12.0,
+    8.0,
+    16.0 / 3.0,
+    6.0,
+    4.0,
+    8.0 / 3.0,
+    3.0,
+    2.0,
+    4.0 / 3.0,
+    1.5,
+    1.0,
+    2.0 / 3.0,
+    0.75,
+    0.5,
+    1.0 / 3.0,
+    0.375,
+    0.25,
+    1.0 / 6.0,
+    0.1875,
+    0.125,
+    1.0 / 12.0,
 ];
 /// Free / Sync labels of a timebase picker.
 pub const FREE_SYNC: &[&str] = &["Free", "Sync"];
@@ -1149,7 +1335,15 @@ impl DeviceDef {
     }
 
     pub fn plugin_ref(&self) -> PluginRef {
-        PluginRef { format: PluginFormat::Builtin, id: self.id.into(), path: None, name: self.name.into(), vendor: VENDOR.into(), version: String::new(), kind: self.kind }
+        PluginRef {
+            format: PluginFormat::Builtin,
+            id: self.id.into(),
+            path: None,
+            name: self.name.into(),
+            vendor: VENDOR.into(),
+            version: String::new(),
+            kind: self.kind,
+        }
     }
 
     pub fn defaults(&self) -> BTreeMap<String, f32> {
@@ -1231,9 +1425,11 @@ impl DeviceDef {
 
     /// Whether `param` is drawn inert (`Layout::inert_when`).
     pub fn is_inert(&self, device: &Device, param: &str) -> bool {
-        self.layout.inert_when.iter().filter(|(p, _, _)| *p == param).any(|(_, by, values)| {
-            self.param(by).is_some_and(|b| values.contains(&(self.value(device, b).round() as u32)))
-        })
+        self.layout
+            .inert_when
+            .iter()
+            .filter(|(p, _, _)| *p == param)
+            .any(|(_, by, values)| self.param(by).is_some_and(|b| values.contains(&(self.value(device, b).round() as u32))))
     }
 
     /// Panel label of a parameter in the device's current state.
@@ -1264,9 +1460,11 @@ impl DeviceDef {
 
     /// Whether `param` is visible in the device's current state (`Layout::shown_when`).
     pub fn is_shown(&self, device: &Device, param: &str) -> bool {
-        self.layout.shown_when.iter().filter(|(p, _, _)| *p == param).all(|(_, by, values)| {
-            self.param(by).map(|b| values.contains(&(self.value(device, b).round() as u32))).unwrap_or(true)
-        })
+        self.layout
+            .shown_when
+            .iter()
+            .filter(|(p, _, _)| *p == param)
+            .all(|(_, by, values)| self.param(by).map(|b| values.contains(&(self.value(device, b).round() as u32))).unwrap_or(true))
     }
 }
 
@@ -1330,7 +1528,11 @@ pub struct DevicePreset {
 impl DevicePreset {
     /// Capture a device's current values.
     pub fn capture(def: &DeviceDef, device: &Device, name: &str) -> DevicePreset {
-        DevicePreset { device: def.id.into(), name: name.trim().into(), values: def.params.iter().map(|p| (p.id.to_string(), def.value(device, p))).collect() }
+        DevicePreset {
+            device: def.id.into(),
+            name: name.trim().into(),
+            values: def.params.iter().map(|p| (p.id.to_string(), def.value(device, p))).collect(),
+        }
     }
 
     pub fn factory(def: &DeviceDef, preset: &FactoryPreset) -> DevicePreset {
@@ -1393,7 +1595,14 @@ pub fn mod_targets(track: &Track) -> Vec<ModTarget> {
         .iter()
         .filter_map(|d| def_of(d).map(|def| (d, def)))
         .filter(|(_, def)| def.kind == PluginKind::Effect && listed(def))
-        .flat_map(|(d, def)| def.params.iter().filter(|p| p.automatable).map(move |p| ModTarget { device: d.id, device_name: def.name.into(), param: p.id, param_name: p.name }))
+        .flat_map(|(d, def)| {
+            def.params.iter().filter(|p| p.automatable).map(move |p| ModTarget {
+                device: d.id,
+                device_name: def.name.into(),
+                param: p.id,
+                param_name: p.name,
+            })
+        })
         .collect()
 }
 
@@ -1658,7 +1867,9 @@ mod tests {
 
     #[test]
     fn dynamics_card_widths_follow_the_reference() {
-        for (id, w) in [("limiter", 471.0), ("gate", 543.0), ("glue-compressor", 615.0), ("transient-shaper", 543.0), ("mastering-limiter", 388.0)] {
+        for (id, w) in
+            [("limiter", 471.0), ("gate", 543.0), ("glue-compressor", 615.0), ("transient-shaper", 543.0), ("mastering-limiter", 388.0)]
+        {
             assert_eq!(find(id).unwrap().layout.width(), w, "{id}");
         }
     }
@@ -1771,8 +1982,12 @@ mod tests {
     fn drawn_models_behave() {
         use super::{distortion::distortion_transfer, soft_clipper::clipper_transfer, widener::widener_response};
         for mode in 0..4 {
-            assert!(distortion_transfer(0.0, 50.0, 40.0, 0.0, 100.0, 0.0, mode).abs() < 1e-6, "mode {mode}: silence stays silent (bias has no DC)");
-            let (a, b) = (distortion_transfer(0.2, 50.0, 0.0, 0.0, 100.0, 0.0, mode), distortion_transfer(0.4, 50.0, 0.0, 0.0, 100.0, 0.0, mode));
+            assert!(
+                distortion_transfer(0.0, 50.0, 40.0, 0.0, 100.0, 0.0, mode).abs() < 1e-6,
+                "mode {mode}: silence stays silent (bias has no DC)"
+            );
+            let (a, b) =
+                (distortion_transfer(0.2, 50.0, 0.0, 0.0, 100.0, 0.0, mode), distortion_transfer(0.4, 50.0, 0.0, 0.0, 100.0, 0.0, mode));
             assert!(b >= a, "mode {mode} is monotonic");
         }
         assert!((distortion_transfer(0.3, 80.0, 0.0, 0.0, 0.0, 0.0, 0) - 0.3).abs() < 1e-6, "mix 0 is dry");
@@ -1781,7 +1996,10 @@ mod tests {
                 let y = clipper_transfer(4.0, 0.0, -6.0, s, shape, false, 100.0, 0.0);
                 assert!(y <= 10f32.powf(-6.0 / 20.0) + 1e-4, "shape {shape} softness {s}: held under the ceiling ({y})");
             }
-            assert!((clipper_transfer(0.01, 0.0, 0.0, 0.0, shape, false, 100.0, 0.0) - 0.01).abs() < 1e-3, "transparent well below the ceiling");
+            assert!(
+                (clipper_transfer(0.01, 0.0, 0.0, 0.0, shape, false, 100.0, 0.0) - 0.01).abs() < 1e-3,
+                "transparent well below the ceiling"
+            );
         }
         assert!(distortion_transfer(1.0, 100.0, 100.0, 0.0, 100.0, 0.0, 2).abs() < 2.0, "Tube stays bounded at full drive and bias");
         for shape in 0..3 {
@@ -1795,7 +2013,10 @@ mod tests {
         let half = widener_response(120.0, 100.0, 0.0, 0.0, 120.0, 50.0, sr);
         assert!(half > 70.0 && half < 82.0, "partial mix sums the paths with their phase ({half})");
         assert!((widener_response(5000.0, 100.0, 0.0, 0.0, 20.0, 100.0, sr) - 100.0).abs() < 1.0, "100% is unchanged above the cut");
-        assert!(widener_response(30.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr) < widener_response(5000.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr), "the low cut narrows the lows");
+        assert!(
+            widener_response(30.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr) < widener_response(5000.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr),
+            "the low cut narrows the lows"
+        );
         assert!((widener_response(5000.0, 200.0, 0.0, 0.0, 20.0, 0.0, sr) - 100.0).abs() < 1e-3, "mix 0 is dry");
     }
 }

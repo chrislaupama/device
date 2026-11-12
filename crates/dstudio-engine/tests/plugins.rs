@@ -54,13 +54,26 @@ struct Rig {
 
 impl Rig {
     fn new(project: Project) -> Self {
-        Rig { engine: Engine::new(Config { sample_rate: 48_000.0, max_block_size: 512 }).unwrap(), doc: Document::new(project), map: HashMap::new() }
+        Rig {
+            engine: Engine::new(Config { sample_rate: 48_000.0, max_block_size: 512 }).unwrap(),
+            doc: Document::new(project),
+            map: HashMap::new(),
+        }
     }
     fn import(&mut self, path: &Path) -> AssetId {
         let info = self.engine.load_file(path).unwrap();
         self.doc
             .execute(
-                Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: path.to_string_lossy().into(), sample_rate: 48_000.0, channels: 2, frames: info.frames } },
+                Command::AddAsset {
+                    asset: Asset {
+                        id: AssetId(0),
+                        relative_path: None,
+                        absolute_path: path.to_string_lossy().into(),
+                        sample_rate: 48_000.0,
+                        channels: 2,
+                        frames: info.frames,
+                    },
+                },
                 Origin::User,
             )
             .unwrap();
@@ -101,7 +114,26 @@ fn clap_gain_from_the_model_halves_the_signal_and_survives_undo_and_persist() {
     let mut rig = Rig::new(Project::default());
     let asset = rig.import(&wav);
     let track = rig.doc.project().tracks[0].id;
-    rig.doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 9600, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } }, Origin::User).unwrap();
+    rig.doc
+        .execute(
+            Command::AddClip {
+                track,
+                clip: Clip {
+                    id: ClipId(0),
+                    asset,
+                    name: "dc".into(),
+                    start: 0,
+                    source_offset: 0,
+                    source_length: 9600,
+                    gain: 1.0,
+                    warp: Default::default(),
+                    disabled: false,
+                    clip_loop: None,
+                },
+            },
+            Origin::User,
+        )
+        .unwrap();
     rig.publish();
     let dry = rig.render_left(4800);
     assert!((dry[100] - 0.5 * PAN_C).abs() < 1e-4, "dry {}", dry[100]);

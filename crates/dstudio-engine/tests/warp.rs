@@ -16,7 +16,15 @@ fn write_wav(path: &Path, frames: u32, f: impl Fn(u32) -> f64) {
     b.extend_from_slice(b"RIFF");
     b.extend_from_slice(&(36 + data_len).to_le_bytes());
     b.extend_from_slice(b"WAVEfmt ");
-    for v in [16u32.to_le_bytes().as_slice(), &1u16.to_le_bytes(), &2u16.to_le_bytes(), &48_000u32.to_le_bytes(), &(48_000u32 * 4).to_le_bytes(), &4u16.to_le_bytes(), &16u16.to_le_bytes()] {
+    for v in [
+        16u32.to_le_bytes().as_slice(),
+        &1u16.to_le_bytes(),
+        &2u16.to_le_bytes(),
+        &48_000u32.to_le_bytes(),
+        &(48_000u32 * 4).to_le_bytes(),
+        &4u16.to_le_bytes(),
+        &16u16.to_le_bytes(),
+    ] {
         b.extend_from_slice(v);
     }
     b.extend_from_slice(b"data");
@@ -43,10 +51,34 @@ impl Rig {
         let mut doc = Document::new(Project::default());
         let info = engine.load_file(path).unwrap();
         let frames = info.frames as u64;
-        doc.execute(Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: path.to_string_lossy().into(), sample_rate: RATE, channels: 2, frames } }, Origin::User).unwrap();
+        doc.execute(
+            Command::AddAsset {
+                asset: Asset {
+                    id: AssetId(0),
+                    relative_path: None,
+                    absolute_path: path.to_string_lossy().into(),
+                    sample_rate: RATE,
+                    channels: 2,
+                    frames,
+                },
+            },
+            Origin::User,
+        )
+        .unwrap();
         let asset = doc.project().assets[0].id;
         let track = doc.project().tracks[0].id;
-        let clip = Clip { id: ClipId(0), asset, name: "tone".into(), start: 0, source_offset: 0, source_length: frames, gain: 1.0, warp: ClipWarp::default(), disabled: false, clip_loop: None };
+        let clip = Clip {
+            id: ClipId(0),
+            asset,
+            name: "tone".into(),
+            start: 0,
+            source_offset: 0,
+            source_length: frames,
+            gain: 1.0,
+            warp: ClipWarp::default(),
+            disabled: false,
+            clip_loop: None,
+        };
         doc.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
         let clip = doc.project().tracks[0].clips[0].id;
         Rig { engine, doc, map: HashMap::from([(asset, info.asset_id)]), clip, asset }
@@ -140,7 +172,10 @@ fn onsets_drive_drum_slices() {
     let path = dir.path().join("hits.wav");
     let hits = [4_800u32, 28_800, 52_800, 76_800];
     write_wav(&path, 96_000, |i| {
-        hits.iter().filter(|&&h| i >= h).map(|&h| (-((i - h) as f64) / 800.0).exp() * (2.0 * std::f64::consts::PI * 180.0 * (i - h) as f64 / RATE).sin() * 0.8).sum()
+        hits.iter()
+            .filter(|&&h| i >= h)
+            .map(|&h| (-((i - h) as f64) / 800.0).exp() * (2.0 * std::f64::consts::PI * 180.0 * (i - h) as f64 / RATE).sin() * 0.8)
+            .sum()
     });
     let mut rig = Rig::new(&path);
     let onsets = rig.engine.detect_onsets(rig.map[&rig.asset]).unwrap();
@@ -148,7 +183,10 @@ fn onsets_drive_drum_slices() {
     for (o, &h) in onsets.iter().zip(&hits) {
         assert!((o.frame - h as i64).abs() <= 144 && o.percussive, "{o:?} vs {h}");
     }
-    let transients = HashMap::from([(rig.asset, onsets.iter().map(|o| Transient { source: o.frame as u64, strength: o.strength, percussive: o.percussive }).collect())]);
+    let transients = HashMap::from([(
+        rig.asset,
+        onsets.iter().map(|o| Transient { source: o.frame as u64, strength: o.strength, percussive: o.percussive }).collect(),
+    )]);
     // A 120 BPM loop played at 0.5x: the hits move to twice their times, still sharp.
     rig.warp(ClipWarp { enabled: true, original_bpm: 120.0, speed: 0.5, mode: WarpMode::Drums, ..ClipWarp::default() });
     let out = rig.render(192_000, &transients);
@@ -169,7 +207,8 @@ fn reversed_clip_plays_back_to_front() {
     rig.warp(ClipWarp { reverse: true, ..ClipWarp::default() });
     let ea = rig.map[&rig.asset];
     let rev = rig.engine.reverse_asset(ea).unwrap();
-    let (snap, skipped) = snapshot::build_full(rig.doc.project(), RATE, &rig.map, &HashMap::from([(rig.asset, rev.asset_id)]), &HashMap::new());
+    let (snap, skipped) =
+        snapshot::build_full(rig.doc.project(), RATE, &rig.map, &HashMap::from([(rig.asset, rev.asset_id)]), &HashMap::new());
     assert!(skipped.is_empty());
     rig.engine.publish(&snap).unwrap();
     rig.engine.seek(0).unwrap();
@@ -221,6 +260,7 @@ fn tempo_is_detected_from_the_engine_onsets() {
     });
     let rig = Rig::new(&path);
     let onsets = rig.engine.detect_onsets(rig.map[&rig.asset]).unwrap();
-    let tr: Vec<Transient> = onsets.iter().map(|o| Transient { source: o.frame as u64, strength: o.strength, percussive: o.percussive }).collect();
+    let tr: Vec<Transient> =
+        onsets.iter().map(|o| Transient { source: o.frame as u64, strength: o.strength, percussive: o.percussive }).collect();
     assert_eq!(dstudio_core::warp::estimate_bpm(&tr, RATE), Some(128.0), "{} onsets", tr.len());
 }

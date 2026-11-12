@@ -13,19 +13,26 @@ pub static TAPE_SATURATION: DeviceDef = DeviceDef {
     category: "Distortion",
     purpose: "Colours the signal like analog tape: soft saturation, gentle compression, low-end warmth, rolled-off highs and optional hiss.",
     params: &[
-        ParamDef::new("drive", "Drive", 0.0, 100.0, 30.0, LINEAR, "%", Format::Percent0).help("Recording level into the tape: more drive, more saturation."),
+        ParamDef::new("drive", "Drive", 0.0, 100.0, 30.0, LINEAR, "%", Format::Percent0)
+            .help("Recording level into the tape: more drive, more saturation."),
         ParamDef::new("warmth", "Warmth", 0.0, 100.0, 40.0, LINEAR, "%", Format::Percent0).help("Low-end bump and softened highs."),
-        ParamDef::new("compression", "Compression", 0.0, 100.0, 30.0, LINEAR, "%", Format::Percent0).help("How much the tape squashes peaks."),
+        ParamDef::new("compression", "Compression", 0.0, 100.0, 30.0, LINEAR, "%", Format::Percent0)
+            .help("How much the tape squashes peaks."),
         ParamDef::new("noise", "Noise", -60.0, 0.0, -60.0, LINEAR, "dB", Format::DbOrInf).help("Tape hiss level; the minimum is off."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent0).help("Blend of taped and dry signal."),
-        ParamDef::choice("mode", "Mode", MODES, 0).help("Machine: Reel-to-Reel is clean and wide, Cassette darker and softer, VHS narrow and lo-fi."),
+        ParamDef::choice("mode", "Mode", MODES, 0)
+            .help("Machine: Reel-to-Reel is clean and wide, Cassette darker and softer, VHS narrow and lo-fi."),
         ParamDef::new("output_gain", "Output", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).help("Output level."),
     ],
     layout: Layout {
         picker: &[Control::Menu("mode")],
         view: Some(View::Custom("wave")),
         sliders: &[Control::Slider("output_gain")],
-        clusters: &[&[Control::Knob("drive"), Control::Knob("compression")], &[Control::Knob("warmth"), Control::Knob("noise")], &[Control::Knob("mix")]],
+        clusters: &[
+            &[Control::Knob("drive"), Control::Knob("compression")],
+            &[Control::Knob("warmth"), Control::Knob("noise")],
+            &[Control::Knob("mix")],
+        ],
         faces: &[],
         min_height: 202.0,
         shown_when: &[],
@@ -37,10 +44,22 @@ pub static TAPE_SATURATION: DeviceDef = DeviceDef {
         FactoryPreset { name: "Bus Cohesion", values: &[("drive", 25.0), ("warmth", 45.0), ("compression", 40.0), ("output_gain", -1.0)] },
         FactoryPreset { name: "Vocal Sheen", values: &[("drive", 20.0), ("warmth", 25.0), ("compression", 35.0), ("mix", 75.0)] },
         FactoryPreset { name: "Thick Low End", values: &[("drive", 35.0), ("warmth", 80.0), ("compression", 30.0), ("output_gain", -1.5)] },
-        FactoryPreset { name: "Kit Squash", values: &[("drive", 65.0), ("warmth", 50.0), ("compression", 70.0), ("mix", 60.0), ("output_gain", -3.0)] },
-        FactoryPreset { name: "Overbiased Reel", values: &[("drive", 85.0), ("warmth", 55.0), ("compression", 55.0), ("output_gain", -4.0)] },
-        FactoryPreset { name: "Mixtape", values: &[("drive", 40.0), ("warmth", 60.0), ("compression", 45.0), ("noise", -42.0), ("mode", 1.0), ("output_gain", -1.5)] },
-        FactoryPreset { name: "Rental Tape", values: &[("drive", 50.0), ("warmth", 70.0), ("compression", 50.0), ("noise", -34.0), ("mode", 2.0), ("output_gain", -2.0)] },
+        FactoryPreset {
+            name: "Kit Squash",
+            values: &[("drive", 65.0), ("warmth", 50.0), ("compression", 70.0), ("mix", 60.0), ("output_gain", -3.0)],
+        },
+        FactoryPreset {
+            name: "Overbiased Reel",
+            values: &[("drive", 85.0), ("warmth", 55.0), ("compression", 55.0), ("output_gain", -4.0)],
+        },
+        FactoryPreset {
+            name: "Mixtape",
+            values: &[("drive", 40.0), ("warmth", 60.0), ("compression", 45.0), ("noise", -42.0), ("mode", 1.0), ("output_gain", -1.5)],
+        },
+        FactoryPreset {
+            name: "Rental Tape",
+            values: &[("drive", 50.0), ("warmth", 70.0), ("compression", 50.0), ("noise", -34.0), ("mode", 2.0), ("output_gain", -2.0)],
+        },
     ],
     sidechain: false,
     samples: 0,

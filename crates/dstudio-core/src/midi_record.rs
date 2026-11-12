@@ -8,9 +8,9 @@
 //! pure: the app wraps the result in the pass's "Record" batch, so the whole
 //! pass is one undo step.
 
+use crate::Command;
 use crate::midi::{MidiClip, Note};
 use crate::model::{Project, TrackId, TrackKind};
-use crate::Command;
 
 /// One captured note event at a timeline frame (engine rate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +221,14 @@ mod tests {
         let p = Project::default();
         // Loop bars 2..4; two passes through it, a note in each, one held across the wrap.
         let pa = Pass { start: BAR, stop: BAR + BEAT, wrapped_loop: Some((BAR, 3 * BAR)) };
-        let ev = [on(BAR + BEAT, 60, 100), off(BAR + 2 * BEAT, 60), on(3 * BAR - 1000, 62, 90), off(BAR + 500, 62), on(2 * BAR, 64, 80), off(2 * BAR + BEAT, 64)];
+        let ev = [
+            on(BAR + BEAT, 60, 100),
+            off(BAR + 2 * BEAT, 60),
+            on(3 * BAR - 1000, 62, 90),
+            off(BAR + 500, 62),
+            on(2 * BAR, 64, 80),
+            off(2 * BAR + BEAT, 64),
+        ];
         let notes = pair_notes(&ev, &pa);
         assert_eq!(notes.iter().find(|n| n.pitch == 62).unwrap().end, 3 * BAR, "held across the wrap ends at the loop end");
         let c = recorded_clip(&p, RATE, "Keys", &notes, &pa).unwrap();

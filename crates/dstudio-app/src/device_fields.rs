@@ -12,8 +12,10 @@
 //! (engine/src/devices/character_mod.cpp): the modulated delay, frequency,
 //! gain or position over 3.35 LFO cycles (the span at the default 0.51 Hz).
 
-use dstudio_core::builtin::character_mod::{CIRCUITS, CROSSED, ENSEMBLE, FLANGER, MODE_PARAMS, PANNER, PHASER, PHOTOCELL, ROTARY, SINGLE, TAPE, TREMOLO, TWIN};
-use dstudio_core::builtin::{synced_hz, DIVISION_QUARTERS};
+use dstudio_core::builtin::character_mod::{
+    CIRCUITS, CROSSED, ENSEMBLE, FLANGER, MODE_PARAMS, PANNER, PHASER, PHOTOCELL, ROTARY, SINGLE, TAPE, TREMOLO, TWIN,
+};
+use dstudio_core::builtin::{DIVISION_QUARTERS, synced_hz};
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
@@ -86,11 +88,7 @@ impl Input<'_> {
     }
     /// LFO rate in Hz: Rate, or the synced note value at the song tempo.
     fn lfo_hz(&self, rate: &str, note: &str, table: &[f32]) -> f32 {
-        if self.on("sync") {
-            synced_hz(table[self.idx(note).min(table.len() - 1)], self.bpm)
-        } else {
-            self.get(rate)
-        }
+        if self.on("sync") { synced_hz(table[self.idx(note).min(table.len() - 1)], self.bpm) } else { self.get(rate) }
     }
     fn xs(&self) -> impl Iterator<Item = f32> + '_ {
         let n = self.n.max(2);
@@ -200,7 +198,11 @@ fn autopanner(i: &Input) -> Plot {
     let raw = |p: f32| match shape {
         1 => 1.0 - 4.0 * ((p + 0.25).rem_euclid(1.0) - 0.5).abs(),
         2 => {
-            if p.rem_euclid(1.0) < 0.5 { -1.0 } else { 1.0 }
+            if p.rem_euclid(1.0) < 0.5 {
+                -1.0
+            } else {
+                1.0
+            }
         }
         3 => Lcg((p.floor() as i32 as u32).wrapping_mul(2_654_435_761) ^ 0x5eed).next(),
         _ => (TAU * p).sin(),
@@ -213,7 +215,8 @@ fn autopanner(i: &Input) -> Plot {
         v += a * (raw(phase + (k as f32 - lead as f32) * dc) * depth - v);
         if k >= lead {
             let pos = (0.5 + 0.5 * v) * PI / 2.0;
-            let (l, r) = ((1.0 - mix) + pos.cos() * std::f32::consts::SQRT_2 * mix, (1.0 - mix) + pos.sin() * std::f32::consts::SQRT_2 * mix);
+            let (l, r) =
+                ((1.0 - mix) + pos.cos() * std::f32::consts::SQRT_2 * mix, (1.0 - mix) + pos.sin() * std::f32::consts::SQRT_2 * mix);
             ys.push(lin(r.atan2(l) / (PI / 2.0) * 2.0 - 1.0, -1.0, 1.0));
         }
     }
@@ -289,101 +292,106 @@ fn response(name: &str, i: &Input) -> Plot {
     let n = i.n.max(2);
     // (snapshot phase, sweep phase, right phase, response at (phase, f), x -> f, notch at phase)
     type Resp<'a> = Box<dyn Fn(f32, f32) -> f32 + 'a>;
-    let (snap, sweep, right, resp, freq, notch): (f32, f32, f32, Resp, Box<dyn Fn(f32) -> f32>, Box<dyn Fn(f32) -> Option<f32>>) = match name {
-        "chorus" => {
-            let v = i.idx("voices").min(3) + 1;
-            let vf = v as f32;
-            let depth = i.get("depth") / 1000.0;
-            let shape = |x: f32| ((TAU * x).sin() - 0.063 * (3.0 * TAU * x).sin()) / 1.063;
-            let delay = move |p: f32, k: usize| 0.0013 + depth * (shape(p + k as f32 / vf) * 0.5 + 0.5);
-            let (dry, wet) = mix_gains(m, 0.0);
-            let wet = wet * vf.powf(0.35);
-            let span = (8.0 / (0.0013 + depth)).clamp(200.0, 20_000.0);
-            let fb = fb_raw.clamp(0.0, 0.9);
-            (
-                0.25,
-                0.25 + 0.5 / vf,
-                0.25 + width * 0.5 / vf,
-                Box::new(move |p, f| {
-                    let mut h = C(0.0, 0.0);
-                    for k in 0..v {
-                        h = h.add(C::expj(-TAU * f * delay(p, k)));
-                    }
-                    let hp = C(0.0, f / 35.0).div(C(1.0, f / 35.0));
-                    let lp = C(1.0, 0.0).div(C(1.0, f / 4700.0));
-                    let hb = h.scale(1.0 / vf).mul(hp).mul(lp);
-                    let hc = hb.div(C(1.0, 0.0).add(hb.scale(-fb)));
-                    C(dry, 0.0).add(hc.scale(wet)).abs()
-                }),
-                Box::new(move |x| x * span),
-                Box::new(move |p| {
-                    let d = if v > 1 { (delay(p, 1) - delay(p, 0)).abs() } else { delay(p, 0) };
-                    (d > 1e-6).then(|| 0.5 / d)
-                }),
-            )
-        }
-        "flanger" => {
-            let mode = i.idx("mode").min(2);
-            let depth = i.get("depth") / 1000.0 * if mode == 1 { 0.6 } else { 1.0 };
-            let centre = 0.001 + depth;
-            let delay = move |p: f32| if mode == 2 { centre + depth * (TAU * p).sin() } else { 0.001 + depth * ((TAU * p).sin() * 0.5 + 0.5) };
-            let fb = match mode {
-                0 => fb_raw,
-                1 => (fb_raw * 1.2).clamp(-0.85, 0.85),
-                _ => fb_raw.clamp(-0.85, 0.85),
-            };
-            let (dry, wet) = mix_gains(m, -0.15);
-            let wet = wet * if mode == 2 { 1.318 } else { 1.0 };
-            let max = if mode == 2 { centre + depth } else { 0.001 + depth };
-            let span = (8.0 / max).clamp(200.0, 20_000.0);
-            (
-                0.25,
-                if mode == 2 { 0.5 } else { 0.75 },
-                0.25 + width * 0.5,
-                Box::new(move |p, f| {
-                    let e = C::expj(-TAU * f * delay(p));
-                    let h = e.div(C(1.0, 0.0).add(e.scale(-fb)));
-                    let d = if mode == 2 { C::expj(-TAU * f * centre).scale(dry) } else { C(dry, 0.0) };
-                    d.add(h.scale(wet)).abs()
-                }),
-                Box::new(move |x| x * span),
-                Box::new(move |p| {
-                    let d = if mode == 2 { (delay(p) - centre).abs() } else { delay(p) };
-                    (d > 1e-6).then(|| 0.5 / d)
-                }),
-            )
-        }
-        _ => {
-            let stages = [2, 4, 6, 12][i.idx("stages").min(3)];
-            let depth = i.get("depth") / 100.0;
-            let fs = 48_000.0f32;
-            let (lc, half) = ((200.0f32 * 8000.0).sqrt().ln(), 0.5 * (8000.0f32 / 200.0).ln() * depth);
-            let fsweep = move |p: f32| (lc + half * (TAU * p).sin()).exp().min(0.45 * fs);
-            let fb = fb_raw.clamp(-0.95, 0.95);
-            let (dry, wet) = mix_gains(m, 0.2);
-            (
-                0.25,
-                0.75,
-                0.25 + width * 0.5,
-                Box::new(move |p, f| {
-                    let t = (PI * fsweep(p) / fs).tan();
-                    let a = (t - 1.0) / (t + 1.0);
-                    let z1 = C::expj(-TAU * f / fs);
-                    let ap = C(a, 0.0).add(z1).div(C(1.0, 0.0).add(z1.scale(a)));
-                    let mut g = C(1.0, 0.0);
-                    for _ in 0..stages {
-                        g = g.mul(ap);
-                    }
-                    let h = g.div(C(1.0, 0.0).add(z1.mul(g).scale(-fb)));
-                    C(dry, 0.0).add(h.scale(wet)).abs()
-                }),
-                Box::new(|x| 20.0 * 1000f32.powf(x)),
-                Box::new(move |p| Some(fs / PI * ((PI * fsweep(p) / fs).tan() * (PI / (2.0 * stages as f32)).tan()).atan())),
-            )
-        }
-    };
+    let (snap, sweep, right, resp, freq, notch): (f32, f32, f32, Resp, Box<dyn Fn(f32) -> f32>, Box<dyn Fn(f32) -> Option<f32>>) =
+        match name {
+            "chorus" => {
+                let v = i.idx("voices").min(3) + 1;
+                let vf = v as f32;
+                let depth = i.get("depth") / 1000.0;
+                let shape = |x: f32| ((TAU * x).sin() - 0.063 * (3.0 * TAU * x).sin()) / 1.063;
+                let delay = move |p: f32, k: usize| 0.0013 + depth * (shape(p + k as f32 / vf) * 0.5 + 0.5);
+                let (dry, wet) = mix_gains(m, 0.0);
+                let wet = wet * vf.powf(0.35);
+                let span = (8.0 / (0.0013 + depth)).clamp(200.0, 20_000.0);
+                let fb = fb_raw.clamp(0.0, 0.9);
+                (
+                    0.25,
+                    0.25 + 0.5 / vf,
+                    0.25 + width * 0.5 / vf,
+                    Box::new(move |p, f| {
+                        let mut h = C(0.0, 0.0);
+                        for k in 0..v {
+                            h = h.add(C::expj(-TAU * f * delay(p, k)));
+                        }
+                        let hp = C(0.0, f / 35.0).div(C(1.0, f / 35.0));
+                        let lp = C(1.0, 0.0).div(C(1.0, f / 4700.0));
+                        let hb = h.scale(1.0 / vf).mul(hp).mul(lp);
+                        let hc = hb.div(C(1.0, 0.0).add(hb.scale(-fb)));
+                        C(dry, 0.0).add(hc.scale(wet)).abs()
+                    }),
+                    Box::new(move |x| x * span),
+                    Box::new(move |p| {
+                        let d = if v > 1 { (delay(p, 1) - delay(p, 0)).abs() } else { delay(p, 0) };
+                        (d > 1e-6).then(|| 0.5 / d)
+                    }),
+                )
+            }
+            "flanger" => {
+                let mode = i.idx("mode").min(2);
+                let depth = i.get("depth") / 1000.0 * if mode == 1 { 0.6 } else { 1.0 };
+                let centre = 0.001 + depth;
+                let delay =
+                    move |p: f32| if mode == 2 { centre + depth * (TAU * p).sin() } else { 0.001 + depth * ((TAU * p).sin() * 0.5 + 0.5) };
+                let fb = match mode {
+                    0 => fb_raw,
+                    1 => (fb_raw * 1.2).clamp(-0.85, 0.85),
+                    _ => fb_raw.clamp(-0.85, 0.85),
+                };
+                let (dry, wet) = mix_gains(m, -0.15);
+                let wet = wet * if mode == 2 { 1.318 } else { 1.0 };
+                let max = if mode == 2 { centre + depth } else { 0.001 + depth };
+                let span = (8.0 / max).clamp(200.0, 20_000.0);
+                (
+                    0.25,
+                    if mode == 2 { 0.5 } else { 0.75 },
+                    0.25 + width * 0.5,
+                    Box::new(move |p, f| {
+                        let e = C::expj(-TAU * f * delay(p));
+                        let h = e.div(C(1.0, 0.0).add(e.scale(-fb)));
+                        let d = if mode == 2 { C::expj(-TAU * f * centre).scale(dry) } else { C(dry, 0.0) };
+                        d.add(h.scale(wet)).abs()
+                    }),
+                    Box::new(move |x| x * span),
+                    Box::new(move |p| {
+                        let d = if mode == 2 { (delay(p) - centre).abs() } else { delay(p) };
+                        (d > 1e-6).then(|| 0.5 / d)
+                    }),
+                )
+            }
+            _ => {
+                let stages = [2, 4, 6, 12][i.idx("stages").min(3)];
+                let depth = i.get("depth") / 100.0;
+                let fs = 48_000.0f32;
+                let (lc, half) = ((200.0f32 * 8000.0).sqrt().ln(), 0.5 * (8000.0f32 / 200.0).ln() * depth);
+                let fsweep = move |p: f32| (lc + half * (TAU * p).sin()).exp().min(0.45 * fs);
+                let fb = fb_raw.clamp(-0.95, 0.95);
+                let (dry, wet) = mix_gains(m, 0.2);
+                (
+                    0.25,
+                    0.75,
+                    0.25 + width * 0.5,
+                    Box::new(move |p, f| {
+                        let t = (PI * fsweep(p) / fs).tan();
+                        let a = (t - 1.0) / (t + 1.0);
+                        let z1 = C::expj(-TAU * f / fs);
+                        let ap = C(a, 0.0).add(z1).div(C(1.0, 0.0).add(z1.scale(a)));
+                        let mut g = C(1.0, 0.0);
+                        for _ in 0..stages {
+                            g = g.mul(ap);
+                        }
+                        let h = g.div(C(1.0, 0.0).add(z1.mul(g).scale(-fb)));
+                        C(dry, 0.0).add(h.scale(wet)).abs()
+                    }),
+                    Box::new(|x| 20.0 * 1000f32.powf(x)),
+                    Box::new(move |p| Some(fs / PI * ((PI * fsweep(p) / fs).tan() * (PI / (2.0 * stages as f32)).tan()).atan())),
+                )
+            }
+        };
     let curve = |p: f32| -> Vec<f32> { (0..n).map(|k| lin(db(resp(p, freq(k as f32 / (n - 1) as f32))) + out_db, 12.0, -24.0)).collect() };
-    let mut traces = vec![Trace { ys: curve(snap), style: Style::Solid }, Trace { ys: curve(sweep), style: Style::Dash { on: 2.0, off: 3.0, alpha: 0.34 } }];
+    let mut traces = vec![
+        Trace { ys: curve(snap), style: Style::Solid },
+        Trace { ys: curve(sweep), style: Style::Dash { on: 2.0, off: 3.0, alpha: 0.34 } },
+    ];
     if width > 0.0005 {
         traces.push(Trace { ys: curve(right), style: Style::Dash { on: 5.0, off: 4.0, alpha: 0.5 } });
     }
@@ -446,7 +454,11 @@ fn ring_wave(m: usize, p: f32, ch: usize) -> f32 {
     match m {
         1 => 1.0 - 4.0 * ((p + 0.25).rem_euclid(1.0) - 0.5).abs(),
         2 => {
-            if f < 0.5 { 1.0 } else { -1.0 }
+            if f < 0.5 {
+                1.0
+            } else {
+                -1.0
+            }
         }
         3 => 2.0 * f - 1.0,
         4 => {
@@ -558,7 +570,10 @@ fn character_mod(i: &Input) -> Plot {
         ENSEMBLE => {
             for v in 0..3 {
                 let off = v as f32 / 3.0;
-                series.push((Box::new(move |p| 6.0 + 1.6 * amt * (0.8 * u(p + off) + 0.2 * (TAU * (p * 10.3 + off)).sin())), [Style::Solid, dash, dot][v]));
+                series.push((
+                    Box::new(move |p| 6.0 + 1.6 * amt * (0.8 * u(p + off) + 0.2 * (TAU * (p * 10.3 + off)).sin())),
+                    [Style::Solid, dash, dot][v],
+                ));
             }
             Unit::Ms
         }
@@ -587,7 +602,10 @@ fn character_mod(i: &Input) -> Plot {
         }
         PHASER if mode == 4 => {
             for k in 0..3 {
-                series.push((Box::new(move |p| 80.0 * (6000.0f32 / 80.0).powf((p + k as f32 / 3.0).rem_euclid(1.0))), [Style::Solid, dash, dot][k]));
+                series.push((
+                    Box::new(move |p| 80.0 * (6000.0f32 / 80.0).powf((p + k as f32 / 3.0).rem_euclid(1.0))),
+                    [Style::Solid, dash, dot][k],
+                ));
             }
             Unit::Hz
         }
@@ -644,7 +662,11 @@ fn character_mod(i: &Input) -> Plot {
                 Box::new(move |v| lin(v.max(1.0).ln(), b, a)),
                 [10_000.0, 1000.0, 100.0].iter().map(|f: &f32| ((b - f.ln()) / (b - a), hz_text(*f))).collect(),
                 None,
-                if hi - lo < 1.0 { format!("{} Hz", hz_text(lo)) } else { format!("{}\u{2009}\u{2013}\u{2009}{} Hz", hz_text(lo), hz_text(hi)) },
+                if hi - lo < 1.0 {
+                    format!("{} Hz", hz_text(lo))
+                } else {
+                    format!("{}\u{2009}\u{2013}\u{2009}{} Hz", hz_text(lo), hz_text(hi))
+                },
                 true,
             )
         }
@@ -663,7 +685,8 @@ fn character_mod(i: &Input) -> Plot {
             false,
         ),
     };
-    let traces: Vec<Trace> = values.iter().zip(&series).map(|(v, (_, style))| Trace { ys: v.iter().map(|x| y_of(*x)).collect(), style: *style }).collect();
+    let traces: Vec<Trace> =
+        values.iter().zip(&series).map(|(v, (_, style))| Trace { ys: v.iter().map(|x| y_of(*x)).collect(), style: *style }).collect();
     let live = i.cycles.zip(series.first()).map(|(c, (f, _))| {
         let p = c.rem_euclid(SPAN.floor() as f64) as f32;
         let x = p / SPAN;
@@ -698,8 +721,13 @@ mod tests {
         for def in builtin::all() {
             if let Some(builtin::View::Field(f)) = def.layout.view {
                 let get = |p: &str| def.param(p).map_or(0.0, |q| q.default);
-                let p = plot(f.plot, &Input { get: &get, bpm: 120.0, n: 64, cycles: Some(0.3) }).unwrap_or_else(|| panic!("{} has no model", def.id));
-                assert!(!p.traces.is_empty() && p.traces.iter().all(|t| t.ys.len() >= 64 && t.ys.iter().all(|y| y.is_finite())), "{}", def.id);
+                let p = plot(f.plot, &Input { get: &get, bpm: 120.0, n: 64, cycles: Some(0.3) })
+                    .unwrap_or_else(|| panic!("{} has no model", def.id));
+                assert!(
+                    !p.traces.is_empty() && p.traces.iter().all(|t| t.ys.len() >= 64 && t.ys.iter().all(|y| y.is_finite())),
+                    "{}",
+                    def.id
+                );
             }
         }
     }

@@ -14,7 +14,7 @@
 
 use crate::builtin::drum_rack;
 use crate::midi::Note;
-use crate::model::{Ticks, PPQ};
+use crate::model::{PPQ, Ticks};
 use serde::{Deserialize, Serialize};
 
 /// Step rate ("Rate"), in the order of its menu.
@@ -129,9 +129,15 @@ impl StepLane {
 
     pub fn spec(self) -> LaneSpec {
         match self {
-            StepLane::Velocity => LaneSpec { label: "Velocity", min: 1, max: 127, default: 100, tip: "How hard each step hits: drag a cell" },
-            StepLane::Offset => LaneSpec { label: "Offset", min: -49, max: 49, default: 0, tip: "Push each step early or late: drag a cell" },
-            StepLane::Repeat => LaneSpec { label: "Repeat", min: 1, max: 16, default: 1, tip: "Repeat each hit within its step: drag a cell" },
+            StepLane::Velocity => {
+                LaneSpec { label: "Velocity", min: 1, max: 127, default: 100, tip: "How hard each step hits: drag a cell" }
+            }
+            StepLane::Offset => {
+                LaneSpec { label: "Offset", min: -49, max: 49, default: 0, tip: "Push each step early or late: drag a cell" }
+            }
+            StepLane::Repeat => {
+                LaneSpec { label: "Repeat", min: 1, max: 16, default: 1, tip: "Repeat each hit within its step: drag a cell" }
+            }
             StepLane::Tie => LaneSpec { label: "Tie", min: 0, max: 63, default: 0, tip: "Hold each step into the next: drag a cell" },
         }
     }
@@ -234,7 +240,15 @@ impl Default for StepPattern {
 
 impl StepPattern {
     pub fn new(rows: StepRows) -> Self {
-        StepPattern { rate: StepRate::default(), steps: DEFAULT_STEPS, swing: 0.0, rows, cells: Vec::new(), muted: Vec::new(), soloed: Vec::new() }
+        StepPattern {
+            rate: StepRate::default(),
+            steps: DEFAULT_STEPS,
+            swing: 0.0,
+            rows,
+            cells: Vec::new(),
+            muted: Vec::new(),
+            soloed: Vec::new(),
+        }
     }
 
     /// Pattern length (ticks); the clip repeats it.
@@ -324,11 +338,7 @@ impl StepPattern {
 
     /// Swing's share of a step's offset (percent of a step).
     pub fn swing_offset(&self, step: u16) -> i32 {
-        if step % 2 == 1 {
-            (self.swing as f64 * 49.0).round() as i32
-        } else {
-            0
-        }
+        if step % 2 == 1 { (self.swing as f64 * 49.0).round() as i32 } else { 0 }
     }
 
     /// The offset a cell plays with: its own plus swing, within +-49 % (the
@@ -440,7 +450,13 @@ impl StepPattern {
                     Some(n) => gate.min(n - gap - start),
                     None => gate,
                 };
-                out.push(Note { id: 0, pitch: key, start: start.round() as Ticks, length: (length.round() as Ticks).max(1), velocity: c.velocity });
+                out.push(Note {
+                    id: 0,
+                    pitch: key,
+                    start: start.round() as Ticks,
+                    length: (length.round() as Ticks).max(1),
+                    velocity: c.velocity,
+                });
             }
         }
     }
@@ -475,12 +491,10 @@ impl StepPattern {
             // Read the longest run of hits that bakes back to the same hits
             // as one cell's repeats (with, then without, a cut last hit);
             // else the lead alone.
-            let run = (0..2)
-                .flat_map(|cut| (i + 2..=self.run_end(&row, i, cut == 0)).rev())
-                .find_map(|j| {
-                    let (hits, tie) = self.resolve(&row, i, j, step, true);
-                    self.bakes_back(&row, i, j, step, hits, tie).then_some((j, hits, tie))
-                });
+            let run = (0..2).flat_map(|cut| (i + 2..=self.run_end(&row, i, cut == 0)).rev()).find_map(|j| {
+                let (hits, tie) = self.resolve(&row, i, j, step, true);
+                self.bakes_back(&row, i, j, step, hits, tie).then_some((j, hits, tie))
+            });
             let (j, hits, tie) = run.unwrap_or_else(|| {
                 let (hits, tie) = self.resolve(&row, i, i + 1, step, true);
                 if hits > 1 && !self.bakes_back(&row, i, i + 1, step, hits, tie) {
@@ -497,7 +511,8 @@ impl StepPattern {
             // The offset whose onset lands on the lead's tick (ticks are coarser than 1 %).
             let swing = self.swing_offset(step as u16);
             let measured = ((lead.start - step * s) as f64 * 100.0 / s as f64).round() as i32 - swing;
-            let lands = |o: i32| ((step * s) as f64 + (o + swing).clamp(-49, 49) as f64 * s as f64 / 100.0).max(0.0).round() as i64 == lead.start;
+            let lands =
+                |o: i32| ((step * s) as f64 + (o + swing).clamp(-49, 49) as f64 * s as f64 / 100.0).max(0.0).round() as i64 == lead.start;
             let offset = [measured, measured - 1, measured + 1].into_iter().find(|&o| lands(o)).unwrap_or(measured);
             let mut c = StepCell::new(key, step as u16);
             c.set(StepLane::Velocity, lead.velocity as i32);
@@ -513,7 +528,9 @@ impl StepPattern {
     /// Where the hit after row[j - 1] lands: the next hit of the row, or the
     /// first hit of the pattern's next repeat.
     fn next_hit(&self, row: &[Note], i: usize, j: usize) -> Option<Ticks> {
-        row.get(j).map(|n| n.start).or_else(|| row.first().filter(|f| f.start < self.rate.ticks() / 2 && i > 0).map(|f| f.start + self.length()))
+        row.get(j)
+            .map(|n| n.start)
+            .or_else(|| row.first().filter(|f| f.start < self.rate.ticks() / 2 && i > 0).map(|f| f.start + self.length()))
     }
 
     /// End (exclusive) of the longest run from row[i] that could be one
@@ -539,8 +556,13 @@ impl StepPattern {
             let space = hit.start - (prev.start + prev.length);
             let gap_ok = space > 0 && ((space - GATE_GAP).abs() <= 1 || (space - lead.length).abs() <= 1);
             // A shorter last hit cut by the next one, unless it leads its own run of repeats.
-            let leads_run = row.get(j + 1).is_some_and(|f| f.velocity == hit.velocity && (f.length - hit.length).abs() <= 1 && f.start - (hit.start + hit.length) <= GATE_GAP + 1);
-            let cut = with_cut && hit.length < lead.length && !leads_run && self.next_hit(row, i, j + 1).is_some_and(|at| (at - (hit.start + hit.length) - GATE_GAP).abs() <= 1);
+            let leads_run = row.get(j + 1).is_some_and(|f| {
+                f.velocity == hit.velocity && (f.length - hit.length).abs() <= 1 && f.start - (hit.start + hit.length) <= GATE_GAP + 1
+            });
+            let cut = with_cut
+                && hit.length < lead.length
+                && !leads_run
+                && self.next_hit(row, i, j + 1).is_some_and(|at| (at - (hit.start + hit.length) - GATE_GAP).abs() <= 1);
             let even = ((hit.start - prev.start) - spacing).abs() <= 2;
             if !(gap_ok && (hit.length == lead.length || cut) && even && hit.velocity == lead.velocity) {
                 break;
@@ -605,7 +627,11 @@ impl StepPattern {
         let span = (1 + tie.min(self.steps as i64 - 1 - step)) as f64 * s / hits as f64;
         let gate = (span * 0.5).max(span - GATE_GAP as f64);
         let next = self.next_hit(row, i, j).map_or(f64::MAX, |at| at as f64 - GATE_GAP as f64 - (GATE_GAP as f64).min(gate) + 0.5);
-        let starts: Vec<i64> = (0..hits).map(|k| (lead.start as f64 + k as f64 * span).round()).take_while(|&at| at < self.length() as f64 && at <= next).map(|at| at as i64).collect();
+        let starts: Vec<i64> = (0..hits)
+            .map(|k| (lead.start as f64 + k as f64 * span).round())
+            .take_while(|&at| at < self.length() as f64 && at <= next)
+            .map(|at| at as i64)
+            .collect();
         starts.len() == j - i
             && starts.iter().zip(&row[i..j]).all(|(&a, n)| a == n.start)
             && row.get(j).is_none_or(|n| ((n.start as f64 / s).round() as i64) > step + tie)
@@ -723,7 +749,12 @@ mod tests {
 
     #[test]
     fn bake_lanes() {
-        let p = StepPattern::default().toggled(pad(0), 2).with_lane(pad(0), 2, StepLane::Repeat, 3).with_lane(pad(0), 2, StepLane::Velocity, 64);
+        let p = StepPattern::default().toggled(pad(0), 2).with_lane(pad(0), 2, StepLane::Repeat, 3).with_lane(
+            pad(0),
+            2,
+            StepLane::Velocity,
+            64,
+        );
         let n = p.bake();
         assert_eq!(n.iter().map(|n| n.start).collect::<Vec<_>>(), [480, 560, 640]);
         assert!(n.iter().all(|n| n.length == 80 - GATE_GAP && n.velocity == 64));
@@ -740,7 +771,12 @@ mod tests {
         let n = p.bake();
         assert_eq!(n.len(), 2, "the covered step does not sound");
         assert_eq!((n[0].start, n[0].length), (0, 720 - GATE_GAP));
-        let wrap = StepPattern::default().toggled(pad(0), 15).toggled(pad(0), 0).with_lane(pad(0), 0, StepLane::Offset, -20).with_lane(pad(0), 15, StepLane::Tie, 0);
+        let wrap = StepPattern::default().toggled(pad(0), 15).toggled(pad(0), 0).with_lane(pad(0), 0, StepLane::Offset, -20).with_lane(
+            pad(0),
+            15,
+            StepLane::Tie,
+            0,
+        );
         let n = wrap.bake();
         let last = n.iter().find(|n| n.start >= 3600).unwrap();
         assert_eq!(last.length, 240 - GATE_GAP, "cut by the next loop's first hit (played at the pattern start)");
@@ -826,9 +862,12 @@ mod tests {
             // The same hits (start, pitch, velocity); a length may differ by
             // up to the gate gap where two readings sound the same.
             let again = back.bake();
-            let same = |a: &Note, b: &Note| (a.start, a.pitch, a.velocity) == (b.start, b.pitch, b.velocity) && (a.length - b.length).abs() <= GATE_GAP;
+            let same = |a: &Note, b: &Note| {
+                (a.start, a.pitch, a.velocity) == (b.start, b.pitch, b.velocity) && (a.length - b.length).abs() <= GATE_GAP
+            };
             let row_eq = |k: u8| {
-                let (x, y): (Vec<&Note>, Vec<&Note>) = (again.iter().filter(|n| n.pitch == k).collect(), notes.iter().filter(|n| n.pitch == k).collect());
+                let (x, y): (Vec<&Note>, Vec<&Note>) =
+                    (again.iter().filter(|n| n.pitch == k).collect(), notes.iter().filter(|n| n.pitch == k).collect());
                 x.len() == y.len() && x.iter().zip(&y).all(|(a, b)| same(a, b))
             };
             for k in p.keys() {
@@ -868,7 +907,10 @@ mod tests {
     #[test]
     fn a_clip_longer_than_64_steps_keeps_its_own_step_count() {
         let s = PPQ / 4;
-        let notes = [Note { id: 1, pitch: pad(0), start: 0, length: s, velocity: 90 }, Note { id: 2, pitch: pad(1), start: 100 * s, length: s, velocity: 70 }];
+        let notes = [
+            Note { id: 1, pitch: pad(0), start: 0, length: s, velocity: 90 },
+            Note { id: 2, pitch: pad(1), start: 100 * s, length: s, velocity: 70 },
+        ];
         let p = StepPattern::from_notes(&notes, 25 * PPQ + 1, StepRows::Pads);
         assert_eq!(p.steps, 101, "no snapping past 64 steps");
         assert!(p.validate().is_ok());
@@ -886,7 +928,8 @@ mod tests {
         let t = tile(&notes, 4 * PPQ, 10 * PPQ);
         assert_eq!(t.len(), 6 + 6 + 3);
         assert!(t.iter().all(|n| n.start + n.length <= 10 * PPQ));
-        let pitched = StepPattern::from_notes(&[Note { id: 1, pitch: 60, start: 0, length: 240, velocity: 80 }], 6 * PPQ, StepRows::Pitches);
+        let pitched =
+            StepPattern::from_notes(&[Note { id: 1, pitch: 60, start: 0, length: 240, velocity: 80 }], 6 * PPQ, StepRows::Pitches);
         assert_eq!(pitched.steps, 24);
         assert_eq!(pitched.cells.len(), 1);
     }

@@ -8,15 +8,15 @@
 //! Controller methods at the bottom convert and keep the drag, the pointer and the Slint model.
 
 use crate::controller::{BottomTab, Controller, card_color, sync_model};
-use std::collections::HashMap;
-use std::time::Instant;
 use crate::devices::{CHAIN_AREA_X, CHAIN_X0};
 use crate::minimap::CSS;
 use crate::{AppWindow, DevTile, DeviceCard, Studio};
 use dstudio_core::builtin::Control;
 use dstudio_core::{Device, DeviceId, builtin, modulation};
 use slint::{ComponentHandle, VecModel};
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 /// The strip is 24 px high and, in the Clip / Devices bar, 227 px wide (the bar's trailing group is
 /// 289 px, less an 8 px gap and the two 24 px layout buttons with their 4 px gap and 2 px margin).
@@ -90,7 +90,12 @@ impl Art {
         }
         let Some(def) = builtin::def_of(d) else { return Art::PLUGIN };
         let l = &def.layout;
-        let knobs = l.clusters.iter().flat_map(|c| c.iter()).filter(|c| matches!(c, Control::Knob(_) | Control::Swap(_) | Control::Toggle(_))).count();
+        let knobs = l
+            .clusters
+            .iter()
+            .flat_map(|c| c.iter())
+            .filter(|c| matches!(c, Control::Knob(_) | Control::Swap(_) | Control::Toggle(_)))
+            .count();
         Art { view: l.view.is_some(), sliders: l.sliders.len().min(MAX_SLIDERS) as u8, knobs: knobs.min(MAX_KNOBS) as u8 }
     }
 
@@ -344,7 +349,13 @@ impl Motion {
         let out = targets
             .iter()
             .map(|&(key, tx, tw)| {
-                let mut m = self.items.get(&key).copied().filter(|_| !jump).unwrap_or(Mot { x: tx, vx: 0.0, w: tw, vw: 0.0, age: if fresh { FADE_S } else { 0.0 } });
+                let mut m = self.items.get(&key).copied().filter(|_| !jump).unwrap_or(Mot {
+                    x: tx,
+                    vx: 0.0,
+                    w: tw,
+                    vw: 0.0,
+                    age: if fresh { FADE_S } else { 0.0 },
+                });
                 spring(&mut m.x, &mut m.vx, tx, dt);
                 spring(&mut m.w, &mut m.vw, tw, dt);
                 m.age = (m.age + dt).min(FADE_S);
@@ -424,7 +435,17 @@ pub struct State {
 
 impl State {
     pub fn new() -> State {
-        State { chain: None, drag: None, model: Rc::new(VecModel::default()), motion: Motion::default(), last: None, track: None, bench: None, art: HashMap::new(), snap: 1.0 / CSS }
+        State {
+            chain: None,
+            drag: None,
+            model: Rc::new(VecModel::default()),
+            motion: Motion::default(),
+            last: None,
+            track: None,
+            bench: None,
+            art: HashMap::new(),
+            snap: 1.0 / CSS,
+        }
     }
 }
 
@@ -456,7 +477,15 @@ impl Controller {
         let mut blocks = Vec::new();
         if let Some(synth) = self.synth_device().and_then(|id| self.project().device(id)) {
             let w = if synth.folded { crate::device_mod::FOLDED_W } else { crate::devices::SYNTH_W };
-            blocks.push(Block { left: left(CHAIN_X0), width: r(w), bypassed: !synth.enabled, art: Art::SYNTH, key: synth.id.0, name: "Synth".into(), children: Vec::new() });
+            blocks.push(Block {
+                left: left(CHAIN_X0),
+                width: r(w),
+                bypassed: !synth.enabled,
+                art: Art::SYNTH,
+                key: synth.id.0,
+                name: "Synth".into(),
+                children: Vec::new(),
+            });
         }
         let device = |c: &DeviceCard| t.devices.iter().position(|d| d.id == DeviceId(c.id as u64));
         let leaf = |x: f32, c: &DeviceCard| {
@@ -482,7 +511,12 @@ impl Controller {
                 continue;
             };
             let mut children = vec![leaf(*x, c)];
-            children.extend(cards.iter().filter(|(_, m)| m.member && device(m).is_some_and(|i| t.devices[i].chain == Some(DeviceId(c.id as u64)))).map(|(mx, m)| leaf(*mx, m)));
+            children.extend(
+                cards
+                    .iter()
+                    .filter(|(_, m)| m.member && device(m).is_some_and(|i| t.devices[i].chain == Some(DeviceId(c.id as u64))))
+                    .map(|(mx, m)| leaf(*mx, m)),
+            );
             let mut b = leaf(frame.x, c);
             b.width = r(frame.w);
             b.left = left(frame.x);
@@ -504,7 +538,10 @@ impl Controller {
 
     /// Whether the strip is on screen: the Devices tab, a panel wide enough, and a chain that scrolls.
     fn devmm_shown(&self) -> bool {
-        self.bottom_tab == BottomTab::Devices && !self.mixer_open && self.devices.win.0 - 10.0 >= MIN_PANEL_W && self.dm.chain.as_ref().is_some_and(Chain::scrollable)
+        self.bottom_tab == BottomTab::Devices
+            && !self.mixer_open
+            && self.devices.win.0 - 10.0 >= MIN_PANEL_W
+            && self.dm.chain.as_ref().is_some_and(Chain::scrollable)
     }
 
     /// Pointer on the strip: kind 0 press, 1 move, 2 release; x and y in strip coordinates and (ox, oy) the
@@ -605,7 +642,18 @@ impl Controller {
                 let block = &chain.blocks[t.block];
                 let b = t.child.map_or(block, |j| &block.children[j]);
                 let opacity = p.appear * if b.bypassed && t.role == Role::Block { BYPASS_OPACITY } else { 1.0 };
-                let (art, art_accent) = if t.has_art() { self.dm.art.entry(b.art).or_insert_with(|| { let (n, a) = b.art.paths(); (n.into(), a.into()) }).clone() } else { Default::default() };
+                let (art, art_accent) = if t.has_art() {
+                    self.dm
+                        .art
+                        .entry(b.art)
+                        .or_insert_with(|| {
+                            let (n, a) = b.art.paths();
+                            (n.into(), a.into())
+                        })
+                        .clone()
+                } else {
+                    Default::default()
+                };
                 DevTile {
                     x: p.x * CSS,
                     y: t.y * CSS,
@@ -814,7 +862,13 @@ mod tests {
 
     #[test]
     fn every_picture_is_two_filled_paths_in_the_box() {
-        for art in [Art::SYNTH, Art::PLUGIN, Art { view: false, sliders: 0, knobs: 12 }, Art { view: true, sliders: 5, knobs: 7 }, Art { view: false, sliders: 0, knobs: 0 }] {
+        for art in [
+            Art::SYNTH,
+            Art::PLUGIN,
+            Art { view: false, sliders: 0, knobs: 12 },
+            Art { view: true, sliders: 5, knobs: 7 },
+            Art { view: false, sliders: 0, knobs: 0 },
+        ] {
             let (base, acc) = art.paths();
             assert!(base.starts_with('M') && acc.starts_with('M'), "{art:?}");
             assert!(base.ends_with('Z') && acc.ends_with('Z'), "{art:?}");
