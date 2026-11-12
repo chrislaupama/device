@@ -1,6 +1,6 @@
-# Building Device Studio
+# Building Device
 
-Everything you need to build, test and run Device Studio from source on macOS, Windows and Linux. The [README](../README.md) has the short version.
+Everything you need to build, test and run Device from source on macOS, Windows and Linux. The [README](../README.md) has the short version.
 
 ## Supported platforms
 

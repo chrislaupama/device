@@ -1,4 +1,4 @@
-# Device Studio audio engine (`engine/`)
+# Device audio engine (`engine/`)
 
 C++23 real-time audio engine behind the C ABI in `include/dstudio_engine.h`.
 The Rust core links the static library `dstudio_engine`. The header is the

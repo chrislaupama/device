@@ -1,4 +1,4 @@
-# PROGRESS: Device Studio
+# PROGRESS: Device
 
 Living handoff document for future agent sessions. Read this first, then `docs/architecture.md`.
 
