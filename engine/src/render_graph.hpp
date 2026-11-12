@@ -149,6 +149,9 @@ struct TrackNode {
     int32_t width_lane = -1;
     int32_t mono_lane = -1;
     int32_t iplug_on_lane = -1; // SE_AUTO_DEVICE_ON of the instrument plugin
+    // Any of mute_lane .. iplug_on_lane is set: render_block() only looks at
+    // them behind this one flag, so tracks without them pay a single branch.
+    bool switch_lanes = false;
     uint32_t synth_lane_begin = 0;
     uint32_t synth_lane_count = 0;
     uint32_t iplug_lane_begin = 0; // instrument plugin parameters

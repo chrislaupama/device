@@ -499,9 +499,9 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         Synth* const synth = track.instrument && !track.has_instrument_plugin && inst.synths != nullptr
                                  ? inst.synths[t]
                                  : nullptr;
-        const bool iplug_on = track.iplug_on_lane >= 0
-                                  ? block_value(graph->lanes[static_cast<uint32_t>(track.iplug_on_lane)], 0) >= 0.5f
-                                  : track.instrument_plugin_enabled;
+        bool iplug_on = track.instrument_plugin_enabled;
+        if (track.switch_lanes && track.iplug_on_lane >= 0) [[unlikely]]
+            iplug_on = block_value(graph->lanes[static_cast<uint32_t>(track.iplug_on_lane)], 0) >= 0.5f;
         PluginInstance* const iplug = plugins_on && iplug_on ? track.instrument_plugin : nullptr;
         const bool track_plugins = plugins_on && (track.fx_count > 0 || iplug != nullptr);
         const bool routed = live_input && track.input_mode != SE_INPUT_NONE && (track.monitor || track.arm);
@@ -769,7 +769,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             if (!plain) router.discard_edges(track, t);
             continue;
         }
-        if (track.trim_lane >= 0 || track.width_lane >= 0 || track.mono_lane >= 0) {
+        if (track.switch_lanes && (track.trim_lane >= 0 || track.width_lane >= 0 || track.mono_lane >= 0)) [[unlikely]] {
             // Automated strip: per-sample trim gain and width (the gain
             // buffers are free here; the fader fills them afresh below).
             const uint32_t d = lines != nullptr ? track.auto_delay : 0;
@@ -801,7 +801,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         }
         // Mute lane (SE_AUTO_MUTE): silences the track's signal before the
         // fader, its sends and its meter, like the static mute.
-        if (track.mute_lane >= 0) {
+        if (track.switch_lanes && track.mute_lane >= 0) [[unlikely]] {
             float* const mg = ctx.auto_a();
             fill_lane(graph->lanes[static_cast<uint32_t>(track.mute_lane)], lines != nullptr ? track.auto_delay : 0,
                       [](float v) { return v >= 0.5f ? 0.0f : 1.0f; }, mg);

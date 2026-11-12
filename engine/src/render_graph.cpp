@@ -840,6 +840,8 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
                 return d != nullptr ? static_cast<int32_t>(add_lane(*g, *d)) : -1;
             };
             if (node.has_instrument_plugin) node.iplug_on_lane = on_lane(td.instrument_plugin->device_id);
+            node.switch_lanes = node.mute_lane >= 0 || node.trim_lane >= 0 || node.width_lane >= 0 ||
+                                node.mono_lane >= 0 || node.iplug_on_lane >= 0;
             for (uint32_t i = 0; i < node.fx_count; ++i) {
                 FxSlot& slot = g->fx[node.fx_begin + i];
                 slot.on_lane = on_lane(slot.device_id);
