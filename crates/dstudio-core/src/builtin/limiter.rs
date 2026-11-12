@@ -14,11 +14,14 @@ pub static LIMITER: DeviceDef = DeviceDef {
     purpose: "Keeps peaks under a fixed ceiling so a part or mix can be pushed louder without clipping.",
     params: &[
         ParamDef::new("ceiling", "Ceiling", -12.0, 0.0, -0.3, LINEAR, "dB", Format::Db).help("Highest level the output may reach."),
-        ParamDef::new("release", "Release", 1.0, 1000.0, 100.0, Taper::Log, "ms", Format::Ms(0)).help("How fast the level comes back up after a peak."),
-        ParamDef::new("lookahead", "Lookahead", 0.0, 20.0, 5.0, LINEAR, "ms", Format::Ms(1)).help("How far ahead the limiter sees peaks, so it can turn down smoothly before they arrive."),
+        ParamDef::new("release", "Release", 1.0, 1000.0, 100.0, Taper::Log, "ms", Format::Ms(0))
+            .help("How fast the level comes back up after a peak."),
+        ParamDef::new("lookahead", "Lookahead", 0.0, 20.0, 5.0, LINEAR, "ms", Format::Ms(1))
+            .help("How far ahead the limiter sees peaks, so it can turn down smoothly before they arrive."),
         ParamDef::choice("true_peak", "True Peak", OFF_ON, 1).help("Also holds the ceiling between samples (dBTP), not just on them."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Blend of limited and dry signal."),
-        ParamDef::new("input_gain", "Input", -12.0, 24.0, 0.0, LINEAR, "dB", Format::Db).help("Gain into the limiter: more input means more limiting and a louder result."),
+        ParamDef::new("input_gain", "Input", -12.0, 24.0, 0.0, LINEAR, "dB", Format::Db)
+            .help("Gain into the limiter: more input means more limiting and a louder result."),
         ParamDef::new("output_gain", "Output", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).help("Output level after the limiter."),
     ],
     layout: Layout {
@@ -40,9 +43,15 @@ pub static LIMITER: DeviceDef = DeviceDef {
     factory: &[
         FactoryPreset { name: "Ceiling Guard", values: &[("ceiling", -0.5), ("release", 150.0), ("lookahead", 4.0)] },
         FactoryPreset { name: "Hot Master", values: &[("ceiling", -0.8), ("release", 70.0), ("lookahead", 3.0), ("input_gain", 8.0)] },
-        FactoryPreset { name: "Drum Peak Shave", values: &[("ceiling", -2.0), ("release", 25.0), ("lookahead", 1.5), ("input_gain", 5.0), ("true_peak", 0.0)] },
+        FactoryPreset {
+            name: "Drum Peak Shave",
+            values: &[("ceiling", -2.0), ("release", 25.0), ("lookahead", 1.5), ("input_gain", 5.0), ("true_peak", 0.0)],
+        },
         FactoryPreset { name: "Smooth Bus", values: &[("ceiling", -1.5), ("release", 400.0), ("lookahead", 12.0), ("input_gain", 4.0)] },
-        FactoryPreset { name: "Parallel Squash", values: &[("ceiling", -6.0), ("release", 60.0), ("lookahead", 2.0), ("input_gain", 14.0), ("mix", 40.0)] },
+        FactoryPreset {
+            name: "Parallel Squash",
+            values: &[("ceiling", -6.0), ("release", 60.0), ("lookahead", 2.0), ("input_gain", 14.0), ("mix", 40.0)],
+        },
     ],
     sidechain: false,
     samples: 0,

@@ -17,7 +17,7 @@
 use crate::controller::{Controller, ImportTarget};
 use crate::device_panel::Z;
 use crate::{DeviceCard, PanelHandle, PanelKnob, PanelPad, PanelPick, PanelSampler};
-use dstudio_core::builtin::{self, drum_rack, note_name, DeviceDef, Format, ParamDef, LINEAR};
+use dstudio_core::builtin::{self, DeviceDef, Format, LINEAR, ParamDef, drum_rack, note_name};
 use dstudio_core::{Command, Device, DeviceId, DeviceSample, Slice};
 use slint::{ModelRc, SharedString, VecModel};
 use std::collections::{HashMap, HashSet};
@@ -203,7 +203,16 @@ pub fn wave_path(pairs: &[[f32; 2]], w: f32, h: f32) -> String {
 /// Slice starts for a sample: Beat cuts every `division` (0 = 1/1 .. 5 =
 /// 1/32 of a bar of 4/4) at `bpm`; Transient cuts where the level jumps
 /// (sensitivity 0..100: higher finds more hits). Always starts at 0.
-pub fn chop(pairs: &[[f32; 2]], frames_per_pair: f64, rate: f64, frames: u64, transient: bool, division: u32, sensitivity: f32, bpm: f64) -> Vec<Slice> {
+pub fn chop(
+    pairs: &[[f32; 2]],
+    frames_per_pair: f64,
+    rate: f64,
+    frames: u64,
+    transient: bool,
+    division: u32,
+    sensitivity: f32,
+    bpm: f64,
+) -> Vec<Slice> {
     let mut out = vec![Slice::at(0.0)];
     if frames == 0 {
         return out;
@@ -402,7 +411,8 @@ impl Controller {
         let i = def.index_of(id)?;
         let p = &def.params[i];
         let v = self.panel_value(d, def, p);
-        let secs = matches!(p.id.rsplit('_').next(), Some("start" | "end" | "loopStart")).then(|| self.sample_secs(d.sample(self.shown_slot(d, def))));
+        let secs = matches!(p.id.rsplit('_').next(), Some("start" | "end" | "loopStart"))
+            .then(|| self.sample_secs(d.sample(self.shown_slot(d, def))));
         Some(PanelKnob {
             param: i as i32,
             x: x * Z,
@@ -436,7 +446,16 @@ impl Controller {
     }
 
     /// Waveform well for `slot` with the flags of the parameters named by `prefix`.
-    fn well(&self, d: &Device, def: &DeviceDef, sp: &mut PanelSampler, slot: u32, prefix: &str, (x, y, w, h): (f32, f32, f32, f32), slices: bool) {
+    fn well(
+        &self,
+        d: &Device,
+        def: &DeviceDef,
+        sp: &mut PanelSampler,
+        slot: u32,
+        prefix: &str,
+        (x, y, w, h): (f32, f32, f32, f32),
+        slices: bool,
+    ) {
         let (w, h) = (w * Z, h * Z);
         sp.well_x = x * Z;
         sp.well_y = y * Z;
@@ -480,7 +499,9 @@ impl Controller {
         let mut grips = vec![ax, bx, fix, fox];
         let _ = (si, ei);
         sp.loop_x = -1.0;
-        if def.id == "sampler-steam" && self.choice(d, def, "mode") == 0 && self.choice(d, def, "loop") == 1
+        if def.id == "sampler-steam"
+            && self.choice(d, def, "mode") == 0
+            && self.choice(d, def, "loop") == 1
             && let Some((_, l)) = val("loopStart")
         {
             sp.loop_x = l.clamp(a, b) * w;
@@ -513,7 +534,11 @@ impl Controller {
                 ro.and_then(|r| r.get(3 * pad..3 * pad + 3)).filter(|r| r[2] as i32 == layer as i32).map(|r| vec![r[1]]).unwrap_or_default()
             }
         };
-        sp.heads = s(heads.iter().filter(|p| (0.0..=1.0).contains(*p)).map(|p| format!("M{:.1} 0 L{:.1} {h:.1} ", p * w, p * w)).collect::<String>());
+        sp.heads = s(heads
+            .iter()
+            .filter(|p| (0.0..=1.0).contains(*p))
+            .map(|p| format!("M{:.1} 0 L{:.1} {h:.1} ", p * w, p * w))
+            .collect::<String>());
     }
 
     fn choice(&self, d: &Device, def: &DeviceDef, id: &str) -> i32 {
@@ -526,7 +551,8 @@ impl Controller {
         sp.kind = 0;
         // Header: mode switch and warp.
         sp.head_x = 120.0 * Z;
-        sp.head_picks = model([self.pick(d, def, 1, "mode", Some(""), 0.0), self.pick(d, def, 2, "warp", None, 96.0)].into_iter().flatten().collect());
+        sp.head_picks =
+            model([self.pick(d, def, 1, "mode", Some(""), 0.0), self.pick(d, def, 2, "warp", None, 96.0)].into_iter().flatten().collect());
         // Row 2: Play button; play mode, voicing, voices.
         sp.play_visible = true;
         sp.play_x = 7.0 * Z;
@@ -546,7 +572,14 @@ impl Controller {
         // Tab bar and the tab's controls.
         sp.tabs_visible = true;
         sp.tabs_y = 183.0 * Z;
-        sp.tab_pick = PanelPick { kind: 7, param: -1, choices: model(TABS.iter().map(|t| s(*t)).collect()), selected: tab as i32, enabled: true, ..Default::default() };
+        sp.tab_pick = PanelPick {
+            kind: 7,
+            param: -1,
+            choices: model(TABS.iter().map(|t| s(*t)).collect()),
+            selected: tab as i32,
+            enabled: true,
+            ..Default::default()
+        };
         sp.tab_right = 790.0 * Z;
         let kx = |i: usize| 7.0 + i as f32 * 72.0;
         let mut knobs = Vec::new();
@@ -566,7 +599,15 @@ impl Controller {
                         Some(g) => g.value,
                         None => slices.get(sel).map_or(p.default, |sl| slice_field(sl, index)),
                     };
-                    knobs.push(PanelKnob { param: index, x: kx(n) * Z, label: s(p.label), value: s(p.format(v)), norm: p.to_normalized(v), origin: p.origin(), ..Default::default() });
+                    knobs.push(PanelKnob {
+                        param: index,
+                        x: kx(n) * Z,
+                        label: s(p.label),
+                        value: s(p.format(v)),
+                        norm: p.to_normalized(v),
+                        origin: p.origin(),
+                        ..Default::default()
+                    });
                 }
                 knobs.extend(self.knob(d, def, "sliceKey", kx(3), Some("Key")));
                 picks.extend(self.pick(d, def, 2, "chop", None, 84.0));
@@ -701,7 +742,8 @@ impl Controller {
             2 | 3 => {
                 let pre = if tab == 2 { "filter" } else { "amp" };
                 let e = EnvBox { w, h };
-                let (a, dd, sus, r) = (n(&format!("{pre}Attack")), n(&format!("{pre}Decay")), v(&format!("{pre}Sustain")), n(&format!("{pre}Release")));
+                let (a, dd, sus, r) =
+                    (n(&format!("{pre}Attack")), n(&format!("{pre}Decay")), v(&format!("{pre}Sustain")), n(&format!("{pre}Release")));
                 let (xa, xd, xs, xr) = e.xs(a, dd, r);
                 let ys = e.level_y(sus);
                 handles.push(PanelHandle { x: xa, y: e.top(), active: true });
@@ -711,7 +753,8 @@ impl Controller {
                 e.path(a, dd, sus, r)
             }
             _ => {
-                let (shape, rate, amount, fade, phase) = (v("lfoShape") as u32, v("lfoRate"), v("lfoAmount"), v("lfoFadeIn") / 1000.0, v("lfoPhase"));
+                let (shape, rate, amount, fade, phase) =
+                    (v("lfoShape") as u32, v("lfoRate"), v("lfoAmount"), v("lfoFadeIn") / 1000.0, v("lfoPhase"));
                 let span = 3.0 / rate.max(0.05);
                 let pts: Vec<(f32, f32)> = (0..=192)
                     .map(|i| {
@@ -720,7 +763,13 @@ impl Controller {
                         let y = match shape {
                             0 => (ph * std::f32::consts::TAU).sin(),
                             1 => 1.0 - 4.0 * (ph - 0.5).abs(),
-                            2 => if ph < 0.5 { 1.0 } else { -1.0 },
+                            2 => {
+                                if ph < 0.5 {
+                                    1.0
+                                } else {
+                                    -1.0
+                                }
+                            }
                             _ => 1.0 - 2.0 * ph,
                         };
                         let env = if fade > 0.0 { (t / fade).min(1.0) } else { 1.0 };
@@ -748,13 +797,28 @@ impl Controller {
         sp.layer_y = row_y * Z;
         sp.layer_text = s(format!("{}/{}", shown + 1, filled.max(shown + 1)));
         sp.can_step = filled > 0;
-        sp.layer_name = s(if def.id == "drum-rack" { format!("Pad {}", base / builtin::pad_sampler::LAYERS + 1) } else { d.sample(slot).map_or_else(|| "Pad".to_string(), |s| s.name.clone()) });
-        sp.mapped = s(if def.id == "drum-rack" { format!("Mapped to {}", note_name((drum_rack::FIRST_NOTE as u32 + base / builtin::pad_sampler::LAYERS) as i32)) } else { "Mapped to all keys".to_string() });
+        sp.layer_name = s(if def.id == "drum-rack" {
+            format!("Pad {}", base / builtin::pad_sampler::LAYERS + 1)
+        } else {
+            d.sample(slot).map_or_else(|| "Pad".to_string(), |s| s.name.clone())
+        });
+        sp.mapped = s(if def.id == "drum-rack" {
+            format!("Mapped to {}", note_name((drum_rack::FIRST_NOTE as u32 + base / builtin::pad_sampler::LAYERS) as i32))
+        } else {
+            "Mapped to all keys".to_string()
+        });
         sp.row_y = row_y * Z;
         sp.row_right = (ox + 589.0) * Z;
         let id = |s: &str| format!("{prefix}{s}");
         sp.row_picks = model(
-            [self.pick(d, def, 2, &id("warp"), None, 96.0), self.pick(d, def, 5, &id("reverse"), None, 0.0), self.pick(d, def, 5, &id("gate"), None, 0.0)].into_iter().flatten().collect(),
+            [
+                self.pick(d, def, 2, &id("warp"), None, 96.0),
+                self.pick(d, def, 5, &id("reverse"), None, 0.0),
+                self.pick(d, def, 5, &id("gate"), None, 0.0),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
         );
         let (wy, wh) = if def.id == "drum-rack" { (oy + 65.0, 101.0) } else { (71.0, 103.0) };
         self.well(d, def, sp, slot, &prefix, (ox + 10.0, wy, 579.0, wh), false);
@@ -889,7 +953,8 @@ impl Controller {
     pub fn sampler_play(&mut self, device: DeviceId, down: bool) {
         let Some((d, def)) = self.sampler_def(device) else { return };
         let v = |id: &str| def.param(id).map_or(60.0, |p| def.value(d, p));
-        let note = if v("mode") == 2.0 { v("sliceKey") as usize + self.sp().slice.get(&device).copied().unwrap_or(0) } else { v("root") as usize };
+        let note =
+            if v("mode") == 2.0 { v("sliceKey") as usize + self.sp().slice.get(&device).copied().unwrap_or(0) } else { v("root") as usize };
         self.note(device, note.min(127) as u8, down);
     }
 
@@ -974,11 +1039,16 @@ impl Controller {
                     if let Some(i) = idx("fadeOut") {
                         grips.push((Grip::Param(i), b - (b - a) * val(i) / 100.0));
                     }
-                    if mode == 0 && self.choice(d, def, "loop") == 1 && let Some(i) = idx("loopStart") {
+                    if mode == 0
+                        && self.choice(d, def, "loop") == 1
+                        && let Some(i) = idx("loopStart")
+                    {
                         grips.push((Grip::Param(i), val(i).clamp(a, b)));
                     }
                 }
-                if mode == 2 && let Some(s) = d.sample(0) {
+                if mode == 2
+                    && let Some(s) = d.sample(0)
+                {
                     grips.extend(s.slices.iter().enumerate().skip(1).map(|(i, sl)| (Grip::Edge(i), sl.start)));
                 }
                 // Flags at the same spot (a fade or the loop start on a region edge): the
@@ -1075,7 +1145,10 @@ impl Controller {
                         }
                     }
                     Grip::Edge(i) => {
-                        if phase == 2 && g.value != g.start && let Some(mut sample) = d.sample(0).cloned() {
+                        if phase == 2
+                            && g.value != g.start
+                            && let Some(mut sample) = d.sample(0).cloned()
+                        {
                             if let Some(s) = sample.slices.get_mut(i) {
                                 s.start = g.value;
                             }
@@ -1163,7 +1236,8 @@ impl Controller {
             }
             _ => {
                 let Some((_, before)) = self.sp_mut().handle_drag.take() else { return };
-                let live: Vec<(usize, f32)> = before.iter().filter_map(|(j, _)| self.sp_mut().live.remove(&(device, *j)).map(|v| (*j, v))).collect();
+                let live: Vec<(usize, f32)> =
+                    before.iter().filter_map(|(j, _)| self.sp_mut().live.remove(&(device, *j)).map(|v| (*j, v))).collect();
                 self.ui_dirty = true;
                 if phase != 2 {
                     for (j, v) in before {
@@ -1212,7 +1286,10 @@ impl Controller {
         let sel = self.sp().slice.get(&device).copied().unwrap_or(0);
         let Some(cur) = d.sample(0).and_then(|s| s.slices.get(sel)).map(|s| slice_field(s, index)) else { return };
         match phase {
-            0 => self.sp_mut().slice_drag = Some(SliceDrag { device, index, start: cur, norm: p.to_normalized(cur), value: cur, travel: 0.0, active: false }),
+            0 => {
+                self.sp_mut().slice_drag =
+                    Some(SliceDrag { device, index, start: cur, norm: p.to_normalized(cur), value: cur, travel: 0.0, active: false })
+            }
             1 => {
                 let Some(g) = self.sp_mut().slice_drag.as_mut().filter(|g| g.device == device && g.index == index) else { return };
                 g.travel += dy.abs();
@@ -1349,7 +1426,14 @@ impl Controller {
 
     /// Finish loading a file into a device: the asset and the sample in one
     /// undo step ("Load Sample"). Returns false when nothing was loaded.
-    pub(crate) fn finish_device_sample(&mut self, asset: dstudio_core::Asset, name: String, device: DeviceId, slot: u32, next_free: bool) -> bool {
+    pub(crate) fn finish_device_sample(
+        &mut self,
+        asset: dstudio_core::Asset,
+        name: String,
+        device: DeviceId,
+        slot: u32,
+        next_free: bool,
+    ) -> bool {
         let Some((d, def)) = self.sampler_def(device) else { return false };
         let slot = if next_free {
             let layers = builtin::pad_sampler::LAYERS;

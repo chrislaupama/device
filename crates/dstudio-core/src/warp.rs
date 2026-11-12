@@ -93,7 +93,17 @@ pub struct ClipWarp {
 
 impl Default for ClipWarp {
     fn default() -> Self {
-        ClipWarp { enabled: false, mode: WarpMode::Auto, original_bpm: 120.0, speed: 1.0, markers: Vec::new(), transients_added: Vec::new(), transients_removed: Vec::new(), reverse: false, transpose: 0 }
+        ClipWarp {
+            enabled: false,
+            mode: WarpMode::Auto,
+            original_bpm: 120.0,
+            speed: 1.0,
+            markers: Vec::new(),
+            transients_added: Vec::new(),
+            transients_removed: Vec::new(),
+            reverse: false,
+            transpose: 0,
+        }
     }
 }
 
@@ -179,7 +189,8 @@ impl ClipWarp {
     pub fn transients(&self, detected: &[Transient], rate: f64) -> Vec<Transient> {
         let tol = (TRANSIENT_TOLERANCE_S * rate).round() as u64;
         let near = |a: u64, b: u64| a.abs_diff(b) <= tol;
-        let mut out: Vec<Transient> = detected.iter().filter(|t| !self.transients_removed.iter().any(|&r| near(r, t.source))).copied().collect();
+        let mut out: Vec<Transient> =
+            detected.iter().filter(|t| !self.transients_removed.iter().any(|&r| near(r, t.source))).copied().collect();
         for &a in &self.transients_added {
             if out.iter().any(|t| near(t.source, a)) {
                 continue;
@@ -312,13 +323,17 @@ pub fn estimate_bpm(transients: &[Transient], rate: f64) -> Option<f64> {
         }
         s / window
     };
-    let coarse: Vec<(f64, f64)> = (0..=((DETECT_MAX_BPM - DETECT_MIN_BPM) * 2.0) as usize).map(|i| DETECT_MIN_BPM + i as f64 * 0.5).map(|b| (b, score(b))).collect();
+    let coarse: Vec<(f64, f64)> =
+        (0..=((DETECT_MAX_BPM - DETECT_MIN_BPM) * 2.0) as usize).map(|i| DETECT_MIN_BPM + i as f64 * 0.5).map(|b| (b, score(b))).collect();
     let mean = coarse.iter().map(|c| c.1).sum::<f64>() / coarse.len() as f64;
     let &(best, top) = coarse.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
     if top <= 0.0 || top < 1.5 * mean {
         return None;
     }
-    let fine = (0..=20).map(|i| best - 0.5 + i as f64 * 0.05).filter(|b| (DETECT_MIN_BPM..=DETECT_MAX_BPM).contains(b)).max_by(|a, b| score(*a).total_cmp(&score(*b)))?;
+    let fine = (0..=20)
+        .map(|i| best - 0.5 + i as f64 * 0.05)
+        .filter(|b| (DETECT_MIN_BPM..=DETECT_MAX_BPM).contains(b))
+        .max_by(|a, b| score(*a).total_cmp(&score(*b)))?;
     let whole = fine.round();
     Some(if (fine - whole).abs() <= 0.15 { whole } else { (fine * 100.0).round() / 100.0 })
 }

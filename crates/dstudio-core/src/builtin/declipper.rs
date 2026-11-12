@@ -13,9 +13,12 @@ pub static DECLIPPER: DeviceDef = DeviceDef {
     category: "Restoration",
     purpose: "Rebuilds peaks that were flattened by clipping and keeps the repaired signal under a ceiling.",
     params: &[
-        ParamDef::new("threshold", "Threshold", -6.0, 0.0, -1.0, LINEAR, "dB", Format::Db).help("Clip detection level: samples at or above it count as clipped. Set it at or just below where the audio was flattened."),
-        ParamDef::new("ceiling", "Ceiling", -6.0, 0.0, -0.3, LINEAR, "dB", Format::Db).help("The output never passes this level; rebuilt passages are turned down to fit."),
-        ParamDef::choice("oversampling", "Oversampling", FACTORS, 1).help("Resolution of the true-peak check that holds the output under the ceiling."),
+        ParamDef::new("threshold", "Threshold", -6.0, 0.0, -1.0, LINEAR, "dB", Format::Db)
+            .help("Clip detection level: samples at or above it count as clipped. Set it at or just below where the audio was flattened."),
+        ParamDef::new("ceiling", "Ceiling", -6.0, 0.0, -0.3, LINEAR, "dB", Format::Db)
+            .help("The output never passes this level; rebuilt passages are turned down to fit."),
+        ParamDef::choice("oversampling", "Oversampling", FACTORS, 1)
+            .help("Resolution of the true-peak check that holds the output under the ceiling."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Blend of the repaired and the original signal."),
     ],
     layout: Layout {

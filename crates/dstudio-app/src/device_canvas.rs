@@ -15,7 +15,7 @@ use crate::controller::Controller;
 use crate::device_panel::Z;
 use crate::{EqCell, EqGlyph, EqTab, PanelCanvas, PanelDot, PanelEq, PanelGrip, PanelPath, PanelText};
 use dstudio_core::builtin::eq::{self, EqView, NodeDoubleClick, Shape};
-use dstudio_core::builtin::{dj_map, DeviceDef, FilterSetting, ParamDef, View};
+use dstudio_core::builtin::{DeviceDef, FilterSetting, ParamDef, View, dj_map};
 use dstudio_core::{Command, Device, DeviceId};
 use slint::{Color, ModelRc, SharedString, VecModel};
 use std::collections::HashMap;
@@ -181,7 +181,11 @@ fn fill(commands: String, color: Color) -> PanelPath {
 
 /// Text whose x is its left (align 0), centre (1) or right (2) edge and y its centre line.
 fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, align: i32) -> PanelText {
-    let left = match align { 0 => x, 1 => x - w / 2.0, _ => x - w };
+    let left = match align {
+        0 => x,
+        1 => x - w / 2.0,
+        _ => x - w,
+    };
     PanelText { x: left, y: y - size * 0.7, w, h: size * 1.4, text: t.into(), color, size, weight: 600, align }
 }
 
@@ -290,9 +294,17 @@ impl Controller {
                     return None;
                 }
                 let park = 19.0 * Z;
-                let y = if !on { p.h - park } else if b.shape.has_gain() { p.y(b.gain_db).clamp(0.0, p.h) } else { p.y(0.0) };
+                let y = if !on {
+                    p.h - park
+                } else if b.shape.has_gain() {
+                    p.y(b.gain_db).clamp(0.0, p.h)
+                } else {
+                    p.y(0.0)
+                };
                 let r = if v.prominent_nodes {
-                    let prom = (0..12).map(|k| eq::band_db(&b, 20.0 * 1000f64.powf(k as f64 / 11.0), self.rate).abs()).fold(b.gain_db.abs() as f64, f64::max);
+                    let prom = (0..12)
+                        .map(|k| eq::band_db(&b, 20.0 * 1000f64.powf(k as f64 / 11.0), self.rate).abs())
+                        .fold(b.gain_db.abs() as f64, f64::max);
                     (3.5 + 3.0 * (prom as f32 / 12.0).min(1.0)) * Z
                 } else {
                     3.0 * Z
@@ -340,18 +352,22 @@ impl Controller {
         if v.auto_gain.is_some_and(|a| val(a) >= 0.5) {
             offset += eq::auto_gain_db(&sections, fs);
         }
-        let total: Vec<(f32, f32)> = freqs.iter().map(|&f| (p.x(f), p.y((eq::sections_db(&sections, f, fs) + offset) as f32).clamp(-2.0, p.h + 2.0))).collect();
+        let total: Vec<(f32, f32)> =
+            freqs.iter().map(|&f| (p.x(f), p.y((eq::sections_db(&sections, f, fs) + offset) as f32).clamp(-2.0, p.h + 2.0))).collect();
         let sel_band = self.eq_band(d, def, v, sel);
         if v.band_on(sel, &val) {
             let own = eq::sections(&sel_band, fs);
-            let pts: Vec<(f32, f32)> = freqs.iter().map(|&f| (p.x(f), p.y(eq::sections_db(&own, f, fs) as f32).clamp(-2.0, p.h + 2.0))).collect();
+            let pts: Vec<(f32, f32)> =
+                freqs.iter().map(|&f| (p.x(f), p.y(eq::sections_db(&own, f, fs) as f32).clamp(-2.0, p.h + 2.0))).collect();
             paths.push(fill(area(&pts, p.y(0.0)), rgba(accent, 0.16)));
         }
         paths.push(fill(area(&total, p.y(0.0)), rgba(accent, 0.07)));
         // Reach of dynamic bands: the curve with every dynamic band at its full range.
         if (0..v.bands.len()).any(|i| v.band_on(i, &val) && v.bands[i].dyn_on.is_some_and(|p| val(p) >= 0.5)) {
-            let reach: Vec<eq::Section> = (0..v.bands.len()).filter(|i| v.band_on(*i, &val)).flat_map(|i| eq::sections(&v.band(def, i, &val, true), fs)).collect();
-            let pts: Vec<(f32, f32)> = freqs.iter().map(|&f| (p.x(f), p.y((eq::sections_db(&reach, f, fs) + offset) as f32).clamp(-2.0, p.h + 2.0))).collect();
+            let reach: Vec<eq::Section> =
+                (0..v.bands.len()).filter(|i| v.band_on(*i, &val)).flat_map(|i| eq::sections(&v.band(def, i, &val, true), fs)).collect();
+            let pts: Vec<(f32, f32)> =
+                freqs.iter().map(|&f| (p.x(f), p.y((eq::sections_db(&reach, f, fs) + offset) as f32).clamp(-2.0, p.h + 2.0))).collect();
             paths.push(stroke(path(&pts), rgba(accent, 0.3), 1.0 * Z));
         }
         // Live picture (dynamic bands moved by the engine).
@@ -364,7 +380,8 @@ impl Controller {
                     eq::sections(&b, fs)
                 })
                 .collect();
-            let pts: Vec<(f32, f32)> = freqs.iter().map(|&f| (p.x(f), p.y((eq::sections_db(&live, f, fs) + offset) as f32).clamp(-2.0, p.h + 2.0))).collect();
+            let pts: Vec<(f32, f32)> =
+                freqs.iter().map(|&f| (p.x(f), p.y((eq::sections_db(&live, f, fs) + offset) as f32).clamp(-2.0, p.h + 2.0))).collect();
             paths.push(stroke(path(&pts), rgba(accent, 0.45), 1.25 * Z));
         }
         paths.push(stroke(path(&total), accent, 1.75 * Z));
@@ -415,19 +432,31 @@ impl Controller {
             let fp = def.param(v.bands[n.band].freq);
             let mut value = fp.map(|fp| fp.format(b.freq)).unwrap_or_default();
             if pill_band.1 && b.shape.has_gain() && n.on {
-                value = format!("{value}  {}", def.param(v.bands[n.band].gain).map(|g| g.format(val(v.bands[n.band].gain))).unwrap_or_default());
+                value = format!(
+                    "{value}  {}",
+                    def.param(v.bands[n.band].gain).map(|g| g.format(val(v.bands[n.band].gain))).unwrap_or_default()
+                );
             }
             let above = n.y - (n.r + 13.0 * Z);
             let y = if above < 9.0 * Z { n.y + n.r + 13.0 * Z } else { above };
             let x = n.x.clamp(45.0 * Z, p.w - 45.0 * Z);
-            pills.push(PanelGrip { x, y, anchor: 1, label: s(format!("Band {}", n.band + 1)), value: s(value), hot: pill_band.1, plain: true });
+            pills.push(PanelGrip {
+                x,
+                y,
+                anchor: 1,
+                label: s(format!("Band {}", n.band + 1)),
+                value: s(value),
+                hot: pill_band.1,
+                plain: true,
+            });
         }
 
-        let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
-            Some(Hit::Wing(_)) => 2,
-            Some(Hit::Node(_)) => 1,
-            _ => 0,
-        };
+        let cursor =
+            match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
+                Some(Hit::Wing(_)) => 2,
+                Some(Hit::Node(_)) => 1,
+                _ => 0,
+            };
         let freq_text = def.param(v.bands[sel].freq).map(|fp| fp.format(sel_band.freq)).unwrap_or_default();
         let field_out = PanelCanvas {
             visible: true,
@@ -444,7 +473,11 @@ impl Controller {
             pointer: true,
             cursor,
             label: s(format!("Band {}", sel + 1)),
-            value: s(if v.band_on(sel, &val) { format!("{freq_text}, {:+.1} dB", sel_band.gain_db) } else { format!("{freq_text}, out of the chain") }),
+            value: s(if v.band_on(sel, &val) {
+                format!("{freq_text}, {:+.1} dB", sel_band.gain_db)
+            } else {
+                format!("{freq_text}, out of the chain")
+            }),
             ..Default::default()
         };
 
@@ -454,9 +487,13 @@ impl Controller {
         let tabs: Vec<EqTab> = (0..n).map(|i| EqTab { label: s((i + 1).to_string()), on: v.band_on(i, &val) }).collect();
         let latch_x = EQ_TAB_X + n as f32 * tab_w + 4.0 + 8.0;
         let shape = sel_band.shape;
-        let glyphs: Vec<EqGlyph> =
-            v.picker_order.iter().filter_map(|sh| v.kind_of(*sh).map(|c| EqGlyph { commands: s(glyph(*sh)), name: s(sh.name()), choice: c as i32 })).collect();
-        let glyph_selected = v.picker_order.iter().filter(|sh| v.kind_of(**sh).is_some()).position(|sh| *sh == shape).map_or(-1, |i| i as i32);
+        let glyphs: Vec<EqGlyph> = v
+            .picker_order
+            .iter()
+            .filter_map(|sh| v.kind_of(*sh).map(|c| EqGlyph { commands: s(glyph(*sh)), name: s(sh.name()), choice: c as i32 }))
+            .collect();
+        let glyph_selected =
+            v.picker_order.iter().filter(|sh| v.kind_of(**sh).is_some()).position(|sh| *sh == shape).map_or(-1, |i| i as i32);
         let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
         let band = &v.bands[sel];
         let cell = |label: &str, id: &str, enabled: bool, text: Option<String>| {
@@ -513,7 +550,11 @@ impl Controller {
         let (_, _, _, p) = self.eq_plot(def, v);
         let nodes = self.eq_nodes(d, def, v, &p);
         let reach = |n: &Node| if v.prominent_nodes { (n.r + 4.0 * Z).max(13.0 * Z) } else { 10.0 * Z };
-        if let Some(n) = nodes.iter().filter(|n| (n.x - x).hypot(n.y - y) <= reach(n)).min_by(|a, b| (a.x - x).hypot(a.y - y).total_cmp(&(b.x - x).hypot(b.y - y))) {
+        if let Some(n) = nodes
+            .iter()
+            .filter(|n| (n.x - x).hypot(n.y - y) <= reach(n))
+            .min_by(|a, b| (a.x - x).hypot(a.y - y).total_cmp(&(b.x - x).hypot(b.y - y)))
+        {
             return Hit::Node(n.band);
         }
         let sel = self.eq_selected(d, v);
@@ -597,7 +638,8 @@ impl Controller {
         let fs = self.rate;
         let mut paths = Vec::new();
         let mut texts = Vec::new();
-        let rungs: Vec<f32> = [12.0, 0.0, -12.0, -24.0].into_iter().filter(|db| p.y(*db) > 9.0 * Z && p.y(*db) < p.h - AF_AXIS * Z).collect();
+        let rungs: Vec<f32> =
+            [12.0, 0.0, -12.0, -24.0].into_iter().filter(|db| p.y(*db) > 9.0 * Z && p.y(*db) < p.h - AF_AXIS * Z).collect();
         grid(&p, &rungs, AF_AXIS * Z, &mut paths, &mut texts);
 
         let field = &self.devices.panel.canvas;
@@ -629,7 +671,9 @@ impl Controller {
         let mut dots = Vec::new();
         // Live cutoff (envelope / LFO moving it), from the engine.
         let moving = st.dj.is_none() && (val("env_amount").abs() > 0.0 || val("lfo_amount") > 0.0);
-        if let Some(live) = field.readouts.get(&d.id).and_then(|r| r.first().copied()).filter(|c| moving && *c > 0.0 && (c / st.cutoff - 1.0).abs() > 0.005) {
+        if let Some(live) =
+            field.readouts.get(&d.id).and_then(|r| r.first().copied()).filter(|c| moving && *c > 0.0 && (c / st.cutoff - 1.0).abs() > 0.005)
+        {
             let x = p.x(live as f64);
             paths.push(stroke(vline(x, 0.0, p.h - AF_AXIS * Z), rgba(accent, 0.5), 1.0));
             let live_st = FilterSetting { cutoff: live, ..st };
@@ -646,33 +690,65 @@ impl Controller {
             if (env_x - base_x).abs() > 1.0 {
                 paths.push(stroke(hline(ey + eh / 2.0, base_x.min(ex + ew / 2.0), base_x.max(ex + ew / 2.0)), rgba(accent, 0.3), 1.0));
             }
-            pills.push(PanelGrip { x: ex, y: ey + eh / 2.0, anchor: 0, label: s("Env"), value: s(env_p.map(|e| e.format(val("env_amount"))).unwrap_or_default()), hot: hot(Hit::Env), plain: false });
+            pills.push(PanelGrip {
+                x: ex,
+                y: ey + eh / 2.0,
+                anchor: 0,
+                label: s("Env"),
+                value: s(env_p.map(|e| e.format(val("env_amount"))).unwrap_or_default()),
+                hot: hot(Hit::Env),
+                plain: false,
+            });
         }
         for (x, high) in [(lo_x, false), (hi_x, true)] {
             if sweep && hot(Hit::Edge(high)) {
                 let lfo = def.param("lfo_amount").map(|l| l.format(val("lfo_amount"))).unwrap_or_default();
                 let right = x + 4.0 * Z + 60.0 * Z < p.w;
-                pills.push(PanelGrip { x: if right { x + 4.0 * Z } else { x - 4.0 * Z }, y: ey + eh / 2.0 + 20.0 * Z, anchor: if right { 0 } else { 2 }, label: s("LFO"), value: s(lfo), hot: true, plain: true });
+                pills.push(PanelGrip {
+                    x: if right { x + 4.0 * Z } else { x - 4.0 * Z },
+                    y: ey + eh / 2.0 + 20.0 * Z,
+                    anchor: if right { 0 } else { 2 },
+                    label: s("LFO"),
+                    value: s(lfo),
+                    hot: true,
+                    plain: true,
+                });
             }
         }
 
         // Corner handle and its value pill.
         let corner_hot = hot(Hit::Corner);
         if corner_hot {
-            dots.push(PanelDot { x: corner.0, y: corner.1, r: 8.0 * Z, fill: Color::from_argb_u8(0, 0, 0, 0), ring: 1.25 * Z, ring_color: rgba(accent, 0.5) });
+            dots.push(PanelDot {
+                x: corner.0,
+                y: corner.1,
+                r: 8.0 * Z,
+                fill: Color::from_argb_u8(0, 0, 0, 0),
+                ring: 1.25 * Z,
+                ring_color: rgba(accent, 0.5),
+            });
         }
         dots.push(PanelDot { x: corner.0, y: corner.1, r: 5.0 * Z, fill: rgba(accent, 0.95), ring: 0.0, ring_color: accent });
         let (name, value) = self.af_corner_text(d, def);
         if corner_hot {
             let right = corner.0 + 14.0 * Z + 80.0 * Z < p.w;
-            pills.push(PanelGrip { x: if right { corner.0 + 14.0 * Z } else { corner.0 - 14.0 * Z }, y: corner.1, anchor: if right { 0 } else { 2 }, label: s(name.clone()), value: s(value.clone()), hot: true, plain: false });
+            pills.push(PanelGrip {
+                x: if right { corner.0 + 14.0 * Z } else { corner.0 - 14.0 * Z },
+                y: corner.1,
+                anchor: if right { 0 } else { 2 },
+                label: s(name.clone()),
+                value: s(value.clone()),
+                hot: true,
+                plain: false,
+            });
         }
 
-        let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
-            Some(Hit::Edge(_)) | Some(Hit::Env) => 2,
-            Some(Hit::Corner) => 1,
-            _ => 0,
-        };
+        let cursor =
+            match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
+                Some(Hit::Edge(_)) | Some(Hit::Env) => 2,
+                Some(Hit::Corner) => 1,
+                _ => 0,
+            };
         PanelCanvas {
             visible: true,
             x: fx,
@@ -781,7 +857,17 @@ impl Controller {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn field_press(&mut self, device: DeviceId, def: &'static DeviceDef, eqv: Option<&'static EqView>, hit: Hit, x: f32, y: f32, alt: bool, shift: bool) {
+    fn field_press(
+        &mut self,
+        device: DeviceId,
+        def: &'static DeviceDef,
+        eqv: Option<&'static EqView>,
+        hit: Hit,
+        x: f32,
+        y: f32,
+        alt: bool,
+        shift: bool,
+    ) {
         let Some(d) = self.project().device(device) else { return };
         let idx = |id: &str| def.index_of(id).unwrap_or(0);
         let mut params: Vec<usize> = Vec::new();
@@ -845,7 +931,22 @@ impl Controller {
             }
             let _ = self.engine.builtin_set_param(device.0, *i as u32, v);
         }
-        self.devices.panel.canvas.drag = Some(FieldDrag { device, hit, x0: x, y0: y, ax: x, ay: y, grab, anchor: live.clone(), start, live, active: false, fine: shift, alt, force: !set.is_empty() });
+        self.devices.panel.canvas.drag = Some(FieldDrag {
+            device,
+            hit,
+            x0: x,
+            y0: y,
+            ax: x,
+            ay: y,
+            grab,
+            anchor: live.clone(),
+            start,
+            live,
+            active: false,
+            fine: shift,
+            alt,
+            force: !set.is_empty(),
+        });
         self.ui_dirty = true;
     }
 
@@ -1062,7 +1163,11 @@ impl Controller {
                     if let Some(bk) = v.bank.filter(|bk| !eq::bank(val(bk)).detents.is_empty()) {
                         let det = eq::bank(val(bk)).detents;
                         let f = val(b.freq);
-                        let next = if dir > 0 { det.iter().copied().find(|x| *x > f * 1.001) } else { det.iter().rev().copied().find(|x| *x < f / 1.001) };
+                        let next = if dir > 0 {
+                            det.iter().copied().find(|x| *x > f * 1.001)
+                        } else {
+                            det.iter().rev().copied().find(|x| *x < f / 1.001)
+                        };
                         if let Some(n) = next {
                             self.panel_commit_value(device, b.freq, n);
                         }

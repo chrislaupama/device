@@ -24,7 +24,7 @@
 
 use crate::{Config, Engine, EngineError, MetronomeConfig};
 use dstudio_core::snapshot;
-use dstudio_core::{AssetId, Device, PluginFormat, Project, Transient, PPQ};
+use dstudio_core::{AssetId, Device, PPQ, PluginFormat, Project, Transient};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -112,7 +112,9 @@ impl Session {
             Ok(_) => from_project(),
             Err(_) => return Err(OfflineError::Failed(format!("Couldn’t read {name}’s current sound. Try again."))),
         };
-        self.engine.prepare_plugin(device, *instrument, state).map_err(|e| OfflineError::Failed(format!("{name} could not be loaded: {}", e.message)))?;
+        self.engine
+            .prepare_plugin(device, *instrument, state)
+            .map_err(|e| OfflineError::Failed(format!("{name} could not be loaded: {}", e.message)))?;
         self.next += 1;
         Ok(Some(name))
     }
@@ -133,13 +135,20 @@ impl Session {
         let used: HashSet<AssetId> = p
             .tracks
             .iter()
-            .flat_map(|t| t.clips.iter().filter(|c| !c.disabled).map(|c| c.asset).chain(t.devices.iter().chain(t.instrument_plugin.iter()).flat_map(|d| d.samples.iter().map(|s| s.asset))))
+            .flat_map(|t| {
+                t.clips
+                    .iter()
+                    .filter(|c| !c.disabled)
+                    .map(|c| c.asset)
+                    .chain(t.devices.iter().chain(t.instrument_plugin.iter()).flat_map(|d| d.samples.iter().map(|s| s.asset)))
+            })
             .collect();
         let mut assets = HashMap::new();
         for id in used {
             check()?;
             let a = p.asset(id).ok_or_else(|| OfflineError::Failed(format!("asset {} is not in the project", id.0)))?;
-            let info = engine.load_file(Path::new(&a.absolute_path)).map_err(|e| OfflineError::Failed(format!("{}: {e}", a.absolute_path)))?;
+            let info =
+                engine.load_file(Path::new(&a.absolute_path)).map_err(|e| OfflineError::Failed(format!("{}: {e}", a.absolute_path)))?;
             assets.insert(id, info.asset_id);
         }
         let mut reversed = HashMap::new();
@@ -156,7 +165,12 @@ impl Session {
         }
         let tr = &p.transport;
         let frames_per_beat = p.ticks_to_seconds(PPQ * 4 / tr.time_signature.denominator as i64) * job.rate;
-        engine.set_metronome(MetronomeConfig { enabled: false, gain: 0.5, frames_per_beat, beats_per_bar: tr.time_signature.numerator as u32 })?;
+        engine.set_metronome(MetronomeConfig {
+            enabled: false,
+            gain: 0.5,
+            frames_per_beat,
+            beats_per_bar: tr.time_signature.numerator as u32,
+        })?;
         let waited = Instant::now();
         while engine.warp_renders_pending() > 0 {
             check()?;

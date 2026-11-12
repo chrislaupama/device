@@ -81,11 +81,18 @@ impl ScaleKey {
 
     /// A project key spelled with sharps; a project without a key shows C Major.
     pub fn from_project(key: Option<ProjectKey>) -> Self {
-        key.map_or(Self::C_MAJOR, |k| ScaleKey { root: ROOT_PCS.iter().position(|&pc| pc == k.root % 12).unwrap_or(0) as u8, kind: u8::from(k.minor) })
+        key.map_or(Self::C_MAJOR, |k| ScaleKey {
+            root: ROOT_PCS.iter().position(|&pc| pc == k.root % 12).unwrap_or(0) as u8,
+            kind: u8::from(k.minor),
+        })
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if (self.root as usize) < ROOTS.len() && (self.kind as usize) < SCALES.len() { Ok(()) } else { Err(format!("scale key out of range: {self:?}")) }
+        if (self.root as usize) < ROOTS.len() && (self.kind as usize) < SCALES.len() {
+            Ok(())
+        } else {
+            Err(format!("scale key out of range: {self:?}"))
+        }
     }
 
     /// Pitch class of the root, 0 = C.
@@ -168,4 +175,3 @@ mod tests {
         assert!(ScaleKey { root: 17, kind: 0 }.validate().is_err() && ScaleKey { root: 0, kind: 17 }.validate().is_err());
     }
 }
-

@@ -11,10 +11,10 @@
 //! measurements times [Z].
 
 use crate::controller::Controller;
-use crate::device_panel::{polyline, DIAL_Y, Z};
+use crate::device_panel::{DIAL_Y, Z, polyline};
 use crate::device_views::CustomBody;
 use crate::{PanelCanvas, PanelPath, PanelText};
-use dstudio_core::builtin::{DeviceDef, View, TUNING_STRINGS};
+use dstudio_core::builtin::{DeviceDef, TUNING_STRINGS, View};
 use dstudio_core::{Device, DeviceId};
 use slint::{Color, ModelRc, SharedString, VecModel};
 use std::collections::{HashMap, VecDeque};
@@ -163,7 +163,15 @@ fn rounded(x: f32, y: f32, w: f32, h: f32, r: f32, fill: Color, border: Color, b
     let (x1, y1) = (x + w, y + h);
     let commands = format!(
         "M{:.2} {y:.2} H{:.2} A{r:.2} {r:.2} 0 0 1 {x1:.2} {:.2} V{:.2} A{r:.2} {r:.2} 0 0 1 {:.2} {y1:.2} H{:.2} A{r:.2} {r:.2} 0 0 1 {x:.2} {:.2} V{:.2} A{r:.2} {r:.2} 0 0 1 {:.2} {y:.2} Z",
-        x + r, x1 - r, y + r, y1 - r, x1 - r, x + r, y1 - r, y + r, x + r
+        x + r,
+        x1 - r,
+        y + r,
+        y1 - r,
+        x1 - r,
+        x + r,
+        y1 - r,
+        y + r,
+        x + r
     );
     PanelPath { commands: s(commands), stroke: border, width: border_width, fill, fill2: fill }
 }
@@ -174,7 +182,17 @@ fn rect(x: f32, y: f32, w: f32, h: f32, radius: f32, fill: Color) -> PanelPath {
 
 /// Canvas of one view: boxes under the layers, the layers, boxes over them, texts.
 #[allow(clippy::too_many_arguments)]
-fn canvas(x: f32, y: f32, w: f32, h: f32, well_y: f32, caption: &str, label: String, paths: [Vec<PanelPath>; 3], texts: Vec<PanelText>) -> PanelCanvas {
+fn canvas(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    well_y: f32,
+    caption: &str,
+    label: String,
+    paths: [Vec<PanelPath>; 3],
+    texts: Vec<PanelText>,
+) -> PanelCanvas {
     PanelCanvas {
         visible: true,
         well: true,
@@ -317,7 +335,12 @@ impl Controller {
         for (id, view) in ids {
             match view {
                 "pitch-trace" => {
-                    let r = self.engine.builtin_readouts(id.0, &mut out).ok().filter(|_| out.len() >= 4).map(|_| (out[0], out[1], out[2], out[3]));
+                    let r = self
+                        .engine
+                        .builtin_readouts(id.0, &mut out)
+                        .ok()
+                        .filter(|_| out.len() >= 4)
+                        .map(|_| (out[0], out[1], out[2], out[3]));
                     let frames = self.devices.panel.analyzers.traces.entry(id).or_default();
                     if let Some((v, p, sh, tg)) = r {
                         if frames.len() == TRACE_FRAMES {
@@ -344,8 +367,14 @@ impl Controller {
                 }
                 _ => {
                     let def = dstudio_core::builtin::find("spectrum");
-                    let averaging = def.zip(self.project().device(id)).and_then(|(def, d)| def.param("averaging").map(|p| self.panel_value(d, def, p) / 100.0)).unwrap_or(0.3);
-                    let smoothing = def.zip(self.project().device(id)).and_then(|(def, d)| def.param("smoothing").map(|p| self.panel_value(d, def, p) / 100.0)).unwrap_or(0.3);
+                    let averaging = def
+                        .zip(self.project().device(id))
+                        .and_then(|(def, d)| def.param("averaging").map(|p| self.panel_value(d, def, p) / 100.0))
+                        .unwrap_or(0.3);
+                    let smoothing = def
+                        .zip(self.project().device(id))
+                        .and_then(|(def, d)| def.param("smoothing").map(|p| self.panel_value(d, def, p) / 100.0))
+                        .unwrap_or(0.3);
                     let seq = self.engine.builtin_analysis(id.0, &mut out).unwrap_or(0);
                     let sv = self.devices.panel.analyzers.spectra.entry(id).or_default();
                     if seq != 0 && seq != sv.seq && out.len() >= 2 * BANDS {
@@ -424,7 +453,11 @@ impl Controller {
                 let raw = (f.pitch - f.target) * 100.0;
                 let fixed = (f.pitch + f.shift - f.target) * 100.0;
                 if let Some(r) = runs.last_mut() {
-                    r.push((x_of(f.t), y_of(raw.clamp(-TRACE_RANGE_CT * 1.2, TRACE_RANGE_CT * 1.2)), y_of(fixed.clamp(-TRACE_RANGE_CT * 1.2, TRACE_RANGE_CT * 1.2))));
+                    r.push((
+                        x_of(f.t),
+                        y_of(raw.clamp(-TRACE_RANGE_CT * 1.2, TRACE_RANGE_CT * 1.2)),
+                        y_of(fixed.clamp(-TRACE_RANGE_CT * 1.2, TRACE_RANGE_CT * 1.2)),
+                    ));
                 }
             }
             let (mut fill, mut raw_l, mut fix_l) = (String::new(), String::new(), String::new());
@@ -486,11 +519,25 @@ impl Controller {
         under.push(rect(bar_x * z, bar_top * z, bar_w * z, bar_h * z, 6.0 * z, white(0.06)));
         let mut ticks = String::new();
         for c in [-25.0f32, 25.0] {
-            vline(&mut ticks, ((bar_x + (c + 50.0) / 100.0 * bar_w) * z).round() + 0.5, (bar_top + 0.3 * bar_h) * z, (bar_top + 0.7 * bar_h) * z);
+            vline(
+                &mut ticks,
+                ((bar_x + (c + 50.0) / 100.0 * bar_w) * z).round() + 0.5,
+                (bar_top + 0.3 * bar_h) * z,
+                (bar_top + 0.7 * bar_h) * z,
+            );
         }
         layers.push(line(ticks, white(0.16), 1.0));
         let tuned = tv.tuned * voice;
-        let zone = rounded((cx - 11.0) * z, bar_top * z, 22.0 * z, bar_h * z, 4.0 * z, mix(white(0.10), alpha(SUCCESS, 0.4), tuned), mix(white(0.22), SUCCESS, tuned), 1.0);
+        let zone = rounded(
+            (cx - 11.0) * z,
+            bar_top * z,
+            22.0 * z,
+            bar_h * z,
+            4.0 * z,
+            mix(white(0.10), alpha(SUCCESS, 0.4), tuned),
+            mix(white(0.22), SUCCESS, tuned),
+            1.0,
+        );
         under.push(zone);
         let mut needle = String::new();
         vline(&mut needle, cx * z, (bar_top + 5.0) * z, (bar_top + bar_h - 5.0) * z);
@@ -504,7 +551,14 @@ impl Controller {
         if voice > 0.001 {
             let mx = bar_x + (tv.marker.clamp(-50.0, 50.0) + 50.0) / 100.0 * bar_w;
             let col = mix(white(0.92), SUCCESS, tuned);
-            over.push(rect((mx - 5.0) * z, (bar_top - 4.0) * z, 10.0 * z, (bar_h + 8.0) * z, 5.0 * z, alpha(col, voice * dim * col.alpha() as f32 / 255.0)));
+            over.push(rect(
+                (mx - 5.0) * z,
+                (bar_top - 4.0) * z,
+                10.0 * z,
+                (bar_h + 8.0) * z,
+                5.0 * z,
+                alpha(col, voice * dim * col.alpha() as f32 / 255.0),
+            ));
         }
         // Note read-out.
         let space = bar_top - note_top;
@@ -526,7 +580,17 @@ impl Controller {
                 layers.push(line(sharp_glyph((x0 + lw + 1.0) * z, (cy - size * 0.36) * z, gs * z), col, (0.09 * size).max(1.5) * z));
             }
             let ox = x0 + lw + if sharp { gs + 1.0 } else { 0.0 } + 2.0;
-            texts.push(text(ox * z, (cy + size * 0.36 - 12.0) * z, (ow + 4.0) * z, 12.0 * z, &octave, white(0.55 * voice * dim), 12.0 * z, 600, 0));
+            texts.push(text(
+                ox * z,
+                (cy + size * 0.36 - 12.0) * z,
+                (ow + 4.0) * z,
+                12.0 * z,
+                &octave,
+                white(0.55 * voice * dim),
+                12.0 * z,
+                600,
+                0,
+            ));
         } else {
             over.push(rect((w / 2.0 - 12.0) * z, (cy - 2.5) * z, 24.0 * z, 5.0 * z, 1.0 * z, white(0.25)));
         }
@@ -537,7 +601,11 @@ impl Controller {
             for (k, a) in [(0.0f32, 0.55f32), (1.0, 1.0)] {
                 let x = cx + dir * (8.0 + 10.0 * k);
                 let tip = x + dir * 6.0;
-                layers.push(line(format!("M{:.2} {:.2} L{:.2} {:.2} L{:.2} {:.2}", x * z, (y - 6.0) * z, tip * z, y * z, x * z, (y + 6.0) * z), white(0.85 * a * voice * dim), 2.0 * z));
+                layers.push(line(
+                    format!("M{:.2} {:.2} L{:.2} {:.2} L{:.2} {:.2}", x * z, (y - 6.0) * z, tip * z, y * z, x * z, (y + 6.0) * z),
+                    white(0.85 * a * voice * dim),
+                    2.0 * z,
+                ));
             }
         }
         canvas(FIELD_X * z, FIELD_Y * z, w * z, h * z, 0.0, "", tv.spoken.clone(), [under, layers, over], texts)
@@ -560,7 +628,13 @@ impl Controller {
         vline(&mut strong, x_of(100.0).round() + 0.5, 0.0, bh);
         vline(&mut strong, x_of(1000.0).round() + 0.5, 0.0, bh);
         vline(&mut weak, x_of(10000.0).round() + 0.5, 0.0, bh);
-        let step = if range >= 72.0 { 12.0 } else if range >= 36.0 { 6.0 } else { 3.0 };
+        let step = if range >= 72.0 {
+            12.0
+        } else if range >= 36.0 {
+            6.0
+        } else {
+            3.0
+        };
         let mut db = (ceiling / step).floor() * step;
         while db > ceiling - range {
             let y = y_of(db);
@@ -576,7 +650,10 @@ impl Controller {
         layers.push(line(dashed(x_of(20.0), tilt(20.0), w, tilt(20000.0), 3.0 * Z, 5.0 * Z), white(0.22), 1.0));
         if let Some(sv) = self.devices.panel.analyzers.spectra.get(&d.id) {
             let pts = |v: &[f32]| -> Vec<(f32, f32)> {
-                v.iter().enumerate().map(|(i, db)| (x_of(20.0 * 1000f32.powf((i as f32 + 0.5) / BANDS as f32)), y_of(*db).clamp(-1.0, bh + 1.0))).collect()
+                v.iter()
+                    .enumerate()
+                    .map(|(i, db)| (x_of(20.0 * 1000f32.powf((i as f32 + 0.5) / BANDS as f32)), y_of(*db).clamp(-1.0, bh + 1.0)))
+                    .collect()
             };
             let audible = |v: &[f32]| v.iter().any(|db| *db > -119.99);
             if audible(&sv.peak) {
@@ -601,7 +678,15 @@ impl Controller {
 fn tuner_animate(tv: &mut TunerView, now: Instant) -> bool {
     let dt = tv.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32()).min(0.25);
     tv.last = Some(now);
-    let toward = |v: f32, target: f32, ms: f32| if dt <= 0.0 { v } else if target > v { (v + dt * 1000.0 / ms).min(target) } else { (v - dt * 1000.0 / ms).max(target) };
+    let toward = |v: f32, target: f32, ms: f32| {
+        if dt <= 0.0 {
+            v
+        } else if target > v {
+            (v + dt * 1000.0 / ms).min(target)
+        } else {
+            (v - dt * 1000.0 / ms).max(target)
+        }
+    };
     let before = (tv.marker, tv.voice, tv.tuned, tv.hold);
     tv.voice = toward(tv.voice, if tv.voiced { 1.0 } else { 0.0 }, 140.0);
     tv.tuned = toward(tv.tuned, if tv.voiced && tv.in_tune { 1.0 } else { 0.0 }, 160.0);
@@ -613,7 +698,13 @@ fn tuner_animate(tv: &mut TunerView, now: Instant) -> bool {
     tv.wanted = if !tv.voiced {
         String::new()
     } else {
-        let dir = if tv.in_tune { "in tune" } else if tv.cents < 0.0 { "flat" } else { "sharp" };
+        let dir = if tv.in_tune {
+            "in tune"
+        } else if tv.cents < 0.0 {
+            "flat"
+        } else {
+            "sharp"
+        };
         format!("{}, {dir}", note_name(tv.note))
     };
     if tv.wanted != tv.spoken && tv.spoken_at.is_none_or(|t| now.duration_since(t) >= Duration::from_millis(700)) {
@@ -632,11 +723,14 @@ mod tests {
     fn knob_rows_spread_like_the_reference() {
         // Pitch Corrector: four 76 pt cells around free space (centres 52.9 .. 322.1).
         let m = metrics("pitch-trace").unwrap();
-        let c: Vec<f32> = (0..4).map(|i| spread_x(&m, dstudio_core::builtin::find("pitch-corrector").unwrap().layout.width(), i, 4) + m.cell / 2.0).collect();
+        let c: Vec<f32> = (0..4)
+            .map(|i| spread_x(&m, dstudio_core::builtin::find("pitch-corrector").unwrap().layout.width(), i, 4) + m.cell / 2.0)
+            .collect();
         assert!((c[0] - 52.9).abs() < 0.1 && (c[3] - 322.1).abs() < 0.1, "{c:?}");
         // Spectrum: five 66 pt cells from edge to edge (centres 41 .. 356).
         let m = metrics("spectrum").unwrap();
-        let c: Vec<f32> = (0..5).map(|i| spread_x(&m, dstudio_core::builtin::find("spectrum").unwrap().layout.width(), i, 5) + m.cell / 2.0).collect();
+        let c: Vec<f32> =
+            (0..5).map(|i| spread_x(&m, dstudio_core::builtin::find("spectrum").unwrap().layout.width(), i, 5) + m.cell / 2.0).collect();
         assert_eq!((c[0], c[4]), (41.0, 356.0));
         assert!((c[2] - 198.5).abs() < 0.01);
     }

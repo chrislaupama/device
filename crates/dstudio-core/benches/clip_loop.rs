@@ -23,7 +23,9 @@ fn median_us(runs: usize, mut f: impl FnMut()) -> f64 {
 }
 
 fn bar_notes(bars: i64) -> Vec<Note> {
-    (0..bars * 16).map(|i| Note { id: i as u32 + 1, pitch: 48 + (i % 24) as u8, start: i * PPQ / 4, length: PPQ / 5, velocity: 100 }).collect()
+    (0..bars * 16)
+        .map(|i| Note { id: i as u32 + 1, pitch: 48 + (i % 24) as u8, start: i * PPQ / 4, length: PPQ / 5, velocity: 100 })
+        .collect()
 }
 
 fn project(tracks: usize, bars: i64, looped: bool) -> Document {

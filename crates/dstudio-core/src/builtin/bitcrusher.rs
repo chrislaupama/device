@@ -11,17 +11,25 @@ pub static BITCRUSHER: DeviceDef = DeviceDef {
     category: "Distortion",
     purpose: "Lo-fi digital degradation: fewer bits for quantisation grit, sample-and-hold downsampling for aliasing.",
     params: &[
-        ParamDef::new("bitdepth", "Bit Depth", 1.0, 32.0, 16.0, LINEAR, "bits", Format::Plain(0)).help("Resolution of each sample: fewer bits, more grit."),
-        ParamDef::new("downsample", "Downsample", 1.0, 100.0, 1.0, Taper::Log, "x", Format::Factor).help("Holds each sample this many times: lowers the sample rate and adds aliasing."),
+        ParamDef::new("bitdepth", "Bit Depth", 1.0, 32.0, 16.0, LINEAR, "bits", Format::Plain(0))
+            .help("Resolution of each sample: fewer bits, more grit."),
+        ParamDef::new("downsample", "Downsample", 1.0, 100.0, 1.0, Taper::Log, "x", Format::Factor)
+            .help("Holds each sample this many times: lowers the sample rate and adds aliasing."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent0).help("Blend of crushed and dry signal."),
-        ParamDef::new("dither", "Dither", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent0).help("Noise added before quantising: trades stepped distortion for hiss."),
-        ParamDef::new("jitter", "Jitter", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent0).help("Randomises the hold length for an unstable, broken-converter sound."),
+        ParamDef::new("dither", "Dither", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent0)
+            .help("Noise added before quantising: trades stepped distortion for hiss."),
+        ParamDef::new("jitter", "Jitter", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent0)
+            .help("Randomises the hold length for an unstable, broken-converter sound."),
     ],
     layout: Layout {
         picker: &[],
         view: Some(View::Custom("crush")),
         sliders: &[],
-        clusters: &[&[Control::Knob("bitdepth")], &[Control::Knob("dither"), Control::Knob("downsample"), Control::Knob("jitter")], &[Control::Knob("mix")]],
+        clusters: &[
+            &[Control::Knob("bitdepth")],
+            &[Control::Knob("dither"), Control::Knob("downsample"), Control::Knob("jitter")],
+            &[Control::Knob("mix")],
+        ],
         faces: &[],
         min_height: 176.0,
         shown_when: &[],

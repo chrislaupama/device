@@ -24,7 +24,20 @@ pub(crate) fn signed_int(v: f32, unit: &str) -> String {
 /// Interval caption of a shift: "Unison", "Fifth up", "Octave down",
 /// "Fifth up +12 ct", "+35 ct".
 pub fn interval_text(semitones: f32, cents: f32) -> String {
-    const NAMES: [&str; 12] = ["Unison", "Minor 2nd", "Major 2nd", "Minor 3rd", "Major 3rd", "Fourth", "Tritone", "Fifth", "Minor 6th", "Major 6th", "Minor 7th", "Major 7th"];
+    const NAMES: [&str; 12] = [
+        "Unison",
+        "Minor 2nd",
+        "Major 2nd",
+        "Minor 3rd",
+        "Major 3rd",
+        "Fourth",
+        "Tritone",
+        "Fifth",
+        "Minor 6th",
+        "Major 6th",
+        "Minor 7th",
+        "Major 7th",
+    ];
     let st = semitones.round() as i32;
     let ct = cents.round() as i32;
     let a = st.unsigned_abs() as usize;
@@ -56,7 +69,8 @@ pub static PITCH_SHIFTER: DeviceDef = DeviceDef {
             .step(1.0)
             .help("Shift in semitones."),
         ParamDef::new("cents", "Cents", -100.0, 100.0, 0.0, LINEAR, "ct", Format::Custom(TextFn(cents_text))).help("Fine shift in cents."),
-        ParamDef::choice("formant_preserve", "Formant", OFF_ON, 0).help("Keeps the spectral envelope (a voice's character) in place while the pitch moves."),
+        ParamDef::choice("formant_preserve", "Formant", OFF_ON, 0)
+            .help("Keeps the spectral envelope (a voice's character) in place while the pitch moves."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Blend of shifted and dry signal."),
     ],
     layout: Layout {

@@ -226,21 +226,53 @@ pub fn fmt_len(t: Ticks, tpb: Ticks) -> String {
 #[derive(Debug, Clone)]
 pub enum PrDrag {
     /// Move (or resize the right edge of) the notes in `ids`; `dup` = Alt-drag duplicate.
-    Notes { resize: bool, dup: bool, ids: Vec<u32>, anchor_beat: f64, anchor_pitch: i32, anchor: Note, preview: Vec<Note> },
+    Notes {
+        resize: bool,
+        dup: bool,
+        ids: Vec<u32>,
+        anchor_beat: f64,
+        anchor_pitch: i32,
+        anchor: Note,
+        preview: Vec<Note>,
+    },
     /// Pen: a new note whose length follows the pointer until release.
-    Draw { id: u32, preview: Vec<Note> },
-    Marquee { x0: f32, y0: f32, x1: f32, y1: f32, base: BTreeSet<u32> },
+    Draw {
+        id: u32,
+        preview: Vec<Note>,
+    },
+    Marquee {
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        base: BTreeSet<u32>,
+    },
     /// Clip range handles (clip-relative ticks; the view stays fixed during the drag).
-    ClipStart { start: Ticks },
-    ClipEnd { end: Ticks },
+    ClipStart {
+        start: Ticks,
+    },
+    ClipEnd {
+        end: Ticks,
+    },
     /// Loop bar: move it (edge None) or drag its start (Some(false)) or end (Some(true)).
-    Loop { edge: Option<bool>, orig: ClipLoop, anchor: Ticks, cur: ClipLoop },
+    Loop {
+        edge: Option<bool>,
+        orig: ClipLoop,
+        anchor: Ticks,
+        cur: ClipLoop,
+    },
     /// A key held on the keyboard: the preview follows the pointer from key to key.
     Keys,
     /// Velocity lane. `grab`: the notes in `ids` move together by the pointer's vertical
     /// travel from their velocities at the press. Otherwise the pointer paints: each note in
     /// `ids` whose stem it crosses takes the velocity under it. `last_x` is the previous pointer x.
-    Velocity { grab: bool, ids: BTreeSet<u32>, y0: f32, last_x: f32, preview: Vec<Note> },
+    Velocity {
+        grab: bool,
+        ids: BTreeSet<u32>,
+        y0: f32,
+        last_x: f32,
+        preview: Vec<Note>,
+    },
 }
 
 /// Footer value fields (drag vertically; Grid cycles on click).
@@ -828,7 +860,9 @@ impl Controller {
     /// Sends the held note-offs; a queue-full rejection keeps the note for the next try.
     pub fn pr_retry_note_offs(&mut self) {
         let engine = &self.engine;
-        self.pr.preview_offs.retain(|&(d, pitch)| engine.preview_note(d, pitch, 0).is_err_and(|e| e.code == dstudio_engine::ffi::SE_ERR_STATE));
+        self.pr
+            .preview_offs
+            .retain(|&(d, pitch)| engine.preview_note(d, pitch, 0).is_err_and(|e| e.code == dstudio_engine::ffi::SE_ERR_STATE));
     }
 
     /// Reset per-clip view state when another clip is opened.
@@ -904,7 +938,9 @@ impl Controller {
 
     pub fn pr_view(&self) -> PrView {
         // Gestures keep the view, except Transpose: an unwarped clip's length follows it.
-        if let Some(view) = self.pr.ac_drag.as_ref().filter(|d| !matches!(d.kind, crate::warpedit::AcDragKind::Transpose { .. })).map(|d| d.view) {
+        if let Some(view) =
+            self.pr.ac_drag.as_ref().filter(|d| !matches!(d.kind, crate::warpedit::AcDragKind::Transpose { .. })).map(|d| d.view)
+        {
             return view;
         }
         if let Some(c) = self.ac_clip() {
@@ -1045,9 +1081,9 @@ impl Controller {
             color,
             playhead: (self.playhead_ticks() - clip.start) as f64 / PPQ as f64,
             beats_per_bar: p.ticks_per_bar() as f64 / PPQ as f64,
-                beat_len: self.pr_beat_len(),
-                grid_beats: self.grid_ticks() as f64 / PPQ as f64,
-                steps: self.pr_steps(),
+            beat_len: self.pr_beat_len(),
+            grid_beats: self.grid_ticks() as f64 / PPQ as f64,
+            steps: self.pr_steps(),
             marquee,
             audio: false,
             warp_markers: Vec::new(),
@@ -1064,7 +1100,12 @@ impl Controller {
     /// The open MIDI clip's loop (pattern clips repeat their pattern instead).
     pub(crate) fn pr_loop(&self) -> Option<ClipLoop> {
         if let Some(c) = self.ac_clip() {
-            let l = c.clip_loop.unwrap_or(dstudio_core::model::AudioLoop { on: false, start: 0, end: self.project().content_length_ticks(c), length: 0 });
+            let l = c.clip_loop.unwrap_or(dstudio_core::model::AudioLoop {
+                on: false,
+                start: 0,
+                end: self.project().content_length_ticks(c),
+                length: 0,
+            });
             return Some(ClipLoop { on: l.on, start: l.start, end: l.end, span: 0 });
         }
         self.pr_clip().filter(|c| c.pattern.is_none()).and_then(|c| c.clip_loop)
@@ -1098,7 +1139,9 @@ impl Controller {
                 Some(l) if l.on => dstudio_core::model::AudioLoop { on: false, ..l },
                 kept => {
                     let whole = dstudio_core::model::AudioLoop { on: true, start: 0, end: content, length: content };
-                    let l = kept.filter(|l| l.validate().is_ok() && l.start < content && l.end.min(content) - l.start > PPQ / 4).unwrap_or(whole);
+                    let l = kept
+                        .filter(|l| l.validate().is_ok() && l.start < content && l.end.min(content) - l.start > PPQ / 4)
+                        .unwrap_or(whole);
                     dstudio_core::model::AudioLoop { on: true, end: l.end.min(content), ..l }
                 }
             };
@@ -1205,7 +1248,8 @@ impl Controller {
                 self.pr.focused = true;
                 self.menu_close();
                 let now = Instant::now();
-                let double = self.pr.last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
+                let double =
+                    self.pr.last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
                 self.pr.last_down = Some((now, x, y));
                 if y < GRID_Y {
                     if x < GRID_X {
@@ -1242,7 +1286,15 @@ impl Controller {
                         self.pr.selected = [n.id].into();
                     }
                     let ids = self.pr.selected.iter().copied().collect();
-                    self.pr.drag = Some(PrDrag::Notes { resize: edge, dup: alt, ids, anchor_beat: beat, anchor_pitch: v.pitch_at(y), anchor: n, preview: notes });
+                    self.pr.drag = Some(PrDrag::Notes {
+                        resize: edge,
+                        dup: alt,
+                        ids,
+                        anchor_beat: beat,
+                        anchor_pitch: v.pitch_at(y),
+                        anchor: n,
+                        preview: notes,
+                    });
                 } else if self.pr.pen || double {
                     let pitch = v.pitch_at(y).clamp(0, 127) as u8;
                     let start = snap_floor(raw).max(0);
@@ -1545,7 +1597,8 @@ impl Controller {
                     self.set_status("Already smart quantized, nothing changed", 3);
                     return;
                 }
-                let kept: BTreeSet<u32> = self.project().midi_clip(clip.id).map(|c| c.notes.iter().map(|n| n.id).collect()).unwrap_or_default();
+                let kept: BTreeSet<u32> =
+                    self.project().midi_clip(clip.id).map(|c| c.notes.iter().map(|n| n.id).collect()).unwrap_or_default();
                 self.pr.selected.retain(|id| kept.contains(id));
                 self.set_status(format!("Smart Quantize: {} grid", done.grid), 2);
                 return;
@@ -1557,7 +1610,10 @@ impl Controller {
                 let mut notes = clip.notes.clone();
                 notes.extend(extra);
                 midi::sort_notes(&mut notes);
-                let mut cmds = vec![Command::SetMidiNotes { clip: clip.id, notes }, Command::ResizeMidiClip { clip: clip.id, start: clip.start, length: len }];
+                let mut cmds = vec![
+                    Command::SetMidiNotes { clip: clip.id, notes },
+                    Command::ResizeMidiClip { clip: clip.id, start: clip.start, length: len },
+                ];
                 if let Some(l) = clip.clip_loop.filter(|l| l.start == 0 && l.end == clip.length) {
                     cmds.push(Command::SetMidiLoop { clip: clip.id, clip_loop: Some(ClipLoop { end: len, ..l }), length: len });
                 }
@@ -1664,7 +1720,10 @@ impl Controller {
                 }
                 _ => {
                     if let Some(p) = self.pr.value_drag.take().and_then(|d| d.position).filter(|&p| p != l.start) {
-                        self.execute(Command::SetClipLoop { clip: c.id, clip_loop: Some(dstudio_core::model::AudioLoop { start: p, end: p + l.end - l.start, ..l }) });
+                        self.execute(Command::SetClipLoop {
+                            clip: c.id,
+                            clip_loop: Some(dstudio_core::model::AudioLoop { start: p, end: p + l.end - l.start, ..l }),
+                        });
                     }
                 }
             }
@@ -1689,13 +1748,22 @@ impl Controller {
             1 => {
                 let Some(mut d) = self.pr.value_drag.clone() else { return };
                 match field {
-                    Field::QuantizeAmount => self.pr.quant_amount = ((d.orig * 100.0 - dy as f64 / 2.0) / 5.0).round().clamp(0.0, 20.0) * 0.05,
-                    Field::HumanizeAmount => self.pr.humanize_amount = ((d.orig * 100.0 - dy as f64 / 2.0) / 5.0).round().clamp(0.0, 20.0) * 0.05,
+                    Field::QuantizeAmount => {
+                        self.pr.quant_amount = ((d.orig * 100.0 - dy as f64 / 2.0) / 5.0).round().clamp(0.0, 20.0) * 0.05
+                    }
+                    Field::HumanizeAmount => {
+                        self.pr.humanize_amount = ((d.orig * 100.0 - dy as f64 / 2.0) / 5.0).round().clamp(0.0, 20.0) * 0.05
+                    }
                     Field::Velocity => {
                         let vel = (d.orig - dy as f64 / 2.0).round().clamp(1.0, 127.0) as u8;
                         self.pr.velocity = vel;
                         if !self.pr.selected.is_empty() {
-                            d.preview = Some(clip.notes.iter().map(|n| if self.pr.selected.contains(&n.id) { Note { velocity: vel, ..*n } } else { *n }).collect());
+                            d.preview = Some(
+                                clip.notes
+                                    .iter()
+                                    .map(|n| if self.pr.selected.contains(&n.id) { Note { velocity: vel, ..*n } } else { *n })
+                                    .collect(),
+                            );
                         }
                     }
                     Field::Length => {
@@ -1760,7 +1828,10 @@ pub fn midi_left_resize(clip: &MidiClip, new_start: Ticks) -> Option<Command> {
             (e > 0).then(|| Note { start: s.max(0), length: e - s.max(0), ..*n })
         })
         .collect();
-    let mut commands = vec![Command::ResizeMidiClip { clip: clip.id, start: new_start, length: end - new_start }, Command::SetMidiNotes { clip: clip.id, notes }];
+    let mut commands = vec![
+        Command::ResizeMidiClip { clip: clip.id, start: new_start, length: end - new_start },
+        Command::SetMidiNotes { clip: clip.id, notes },
+    ];
     if let Some(l) = clip.clip_loop {
         let start = (l.start - delta).max(0);
         let moved = ClipLoop { start, end: (l.end - delta).max(start + 1), span: 0, ..l };
@@ -1796,7 +1867,10 @@ mod tests {
         let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
         let mut c = Controller::new(engine, Project::default());
         let track = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).unwrap().id;
-        let notes = vec![Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 }, Note { id: 2, pitch: 64, start: PPQ, length: PPQ, velocity: 100 }];
+        let notes = vec![
+            Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 },
+            Note { id: 2, pitch: 64, start: PPQ, length: PPQ, velocity: 100 },
+        ];
         c.execute(Command::AddMidiClip { track, clip: MidiClip { id: dstudio_core::ClipId(900), notes, ..MidiClip::empty(0, 4 * PPQ) } });
         c.pr.size = (1000.0, 900.0); // stale: the panel is shorter now
         c.pr.vel_lane = true;
@@ -1868,10 +1942,24 @@ mod tests {
 
     #[test]
     fn left_resize_keeps_note_timeline_positions() {
-        let clip = MidiClip { id: ClipId(5), name: "MIDI".into(), start: 3840, length: 3840, notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }], pattern: None, disabled: false, composer: None, scale: None, clip_loop: None };
+        let clip = MidiClip {
+            id: ClipId(5),
+            name: "MIDI".into(),
+            start: 3840,
+            length: 3840,
+            notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }],
+            pattern: None,
+            disabled: false,
+            composer: None,
+            scale: None,
+            clip_loop: None,
+        };
         let Some(Command::Batch { commands, .. }) = midi_left_resize(&clip, 3840 + 480) else { panic!() };
         assert_eq!(commands[0], Command::ResizeMidiClip { clip: ClipId(5), start: 4320, length: 3360 });
-        assert_eq!(commands[1], Command::SetMidiNotes { clip: ClipId(5), notes: vec![Note { id: 1, pitch: 60, start: 480, length: 480, velocity: 100 }] });
+        assert_eq!(
+            commands[1],
+            Command::SetMidiNotes { clip: ClipId(5), notes: vec![Note { id: 1, pitch: 60, start: 480, length: 480, velocity: 100 }] }
+        );
     }
 
     #[test]
@@ -1884,7 +1972,10 @@ mod tests {
             }),
             _ => None,
         };
-        assert_eq!(loop_of(midi_left_resize(&looped(960, 2880), 3840 + 480)), Some((Some(ClipLoop { on: true, start: 480, end: 2400, span: 0 }), 3360)));
+        assert_eq!(
+            loop_of(midi_left_resize(&looped(960, 2880), 3840 + 480)),
+            Some((Some(ClipLoop { on: true, start: 480, end: 2400, span: 0 }), 3360))
+        );
         assert_eq!(loop_of(midi_left_resize(&looped(0, 960), 3840 + 2000)), Some((Some(ClipLoop::whole(1840)), 1840)));
     }
 }

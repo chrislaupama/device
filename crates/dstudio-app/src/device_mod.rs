@@ -8,7 +8,7 @@
 //! command, so one undo step. Live positions come from the LFO readouts
 //! (position, depth, cycle) polled with the meters.
 
-use crate::controller::{card_color, Controller};
+use crate::controller::{Controller, card_color};
 use crate::device_panel::Z;
 use crate::devices::{DevMenu, Item, MenuPick, format_badge};
 use crate::{ChainFrame, DeviceCard, ModCard, ModTarget, PanelCanvas, PanelKnob, PanelPath, PanelPick, PanelSlider, PanelText, PanelZone};
@@ -246,17 +246,48 @@ impl Controller {
         let val = |id: &str| self.panel_value_of(d, def, p(id));
         let sync = val("sync") >= 0.5;
         let picks = vec![
-            PanelPick { kind: 2, param: idx("shape"), label: s("Shape"), value: s(p("shape").format(val("shape"))), enabled: true, width: 118.0 * Z, ..Default::default() },
-            PanelPick { kind: 1, param: idx("sync"), label: s(""), choices: model(p("sync").choices.iter().map(|c| s(*c)).collect()), selected: sync as i32, enabled: true, ..Default::default() },
+            PanelPick {
+                kind: 2,
+                param: idx("shape"),
+                label: s("Shape"),
+                value: s(p("shape").format(val("shape"))),
+                enabled: true,
+                width: 118.0 * Z,
+                ..Default::default()
+            },
+            PanelPick {
+                kind: 1,
+                param: idx("sync"),
+                label: s(""),
+                choices: model(p("sync").choices.iter().map(|c| s(*c)).collect()),
+                selected: sync as i32,
+                enabled: true,
+                ..Default::default()
+            },
         ];
         let knob = |id: &str, x: f32| {
             let v = val(id);
-            PanelKnob { param: idx(id), x: x * Z, y: crate::device_panel::DIAL_Y * Z, label: s(p(id).label), value: s(p(id).format(v)), norm: p(id).to_normalized(v), ..Default::default() }
+            PanelKnob {
+                param: idx(id),
+                x: x * Z,
+                y: crate::device_panel::DIAL_Y * Z,
+                label: s(p(id).label),
+                value: s(p(id).format(v)),
+                norm: p(id).to_normalized(v),
+                ..Default::default()
+            }
         };
         let knobs = vec![knob(if sync { "rateSync" } else { "rate" }, 8.0), knob("phase", 80.0)];
         let depth = val("depth");
         let slider_x = LFO_LEFT_W - 8.0 - 62.0;
-        let sliders = vec![PanelSlider { param: idx("depth"), x: slider_x * Z, label: s(p("depth").label), value: s(p("depth").format(depth)), norm: p("depth").to_normalized(depth), zero: 0.0 }];
+        let sliders = vec![PanelSlider {
+            param: idx("depth"),
+            x: slider_x * Z,
+            label: s(p("depth").label),
+            value: s(p("depth").format(depth)),
+            norm: p("depth").to_normalized(depth),
+            zero: 0.0,
+        }];
         let (w, h) = ((slider_x - 10.0 - WAVE_X) * Z, (WAVE_BOTTOM - WAVE_Y) * Z);
         let phase = val("phase") as f64 / 100.0;
         let (wave, wave_fill) = wave_paths(val("shape").round() as usize, phase, depth / 100.0, w, h);
@@ -266,7 +297,13 @@ impl Controller {
         let dot_y = h / 2.0 - (h / 2.0 - 3.0) * (depth / 100.0).max(0.04) * (pos * 2.0 - 1.0);
         // The picture is a canvas: drag sideways for Rate, up or down for Depth (one undo step).
         let accent = card.accent;
-        let path = |commands: String, stroke: slint::Color, width: f32, fill: slint::Color| PanelPath { commands: s(commands), stroke, width, fill, fill2: fill };
+        let path = |commands: String, stroke: slint::Color, width: f32, fill: slint::Color| PanelPath {
+            commands: s(commands),
+            stroke,
+            width,
+            fill,
+            fill2: fill,
+        };
         let clear = slint::Color::from_argb_u8(0, 0, 0, 0);
         let r = 3.5 * Z;
         card.canvas = PanelCanvas {
@@ -277,13 +314,42 @@ impl Controller {
             w,
             h,
             paths: model(vec![
-                path(format!("M0 {:.1} L{w:.1} {:.1} M{:.1} 0 L{:.1} {h:.1}", h / 2.0, h / 2.0, w / 2.0, w / 2.0), slint::Color::from_argb_u8(0x14, 255, 255, 255), 0.5, clear),
+                path(
+                    format!("M0 {:.1} L{w:.1} {:.1} M{:.1} 0 L{:.1} {h:.1}", h / 2.0, h / 2.0, w / 2.0, w / 2.0),
+                    slint::Color::from_argb_u8(0x14, 255, 255, 255),
+                    0.5,
+                    clear,
+                ),
                 path(wave_fill, clear, 0.0, accent.with_alpha(0.18)),
                 path(wave, accent, 1.6 * Z, clear),
-                path(format!("M{:.1} {dot_y:.1} m-{r} 0 a{r} {r} 0 1 0 {} 0 a{r} {r} 0 1 0 -{} 0", dot_x, 2.0 * r, 2.0 * r), accent, 1.0, slint::Color::from_rgb_u8(0xf2, 0xf2, 0xf2)),
+                path(
+                    format!("M{:.1} {dot_y:.1} m-{r} 0 a{r} {r} 0 1 0 {} 0 a{r} {r} 0 1 0 -{} 0", dot_x, 2.0 * r, 2.0 * r),
+                    accent,
+                    1.0,
+                    slint::Color::from_rgb_u8(0xf2, 0xf2, 0xf2),
+                ),
             ]),
-            texts: model(vec![PanelText { x: w - 60.0 * Z, y: 4.0 * Z, w: 54.0 * Z, h: 12.0 * Z, text: s("Wave"), color: slint::Color::from_argb_u8(0x8c, 255, 255, 255), size: 10.0 * Z, weight: 500, align: 2 }]),
-            zones: model(vec![PanelZone { x: 0.0, y: 0.0, w, h, param_x: idx(if sync { "rateSync" } else { "rate" }), param_y: idx("depth"), rate_x: 1.0 / 200.0, rate_y: 1.0 / 200.0 }]),
+            texts: model(vec![PanelText {
+                x: w - 60.0 * Z,
+                y: 4.0 * Z,
+                w: 54.0 * Z,
+                h: 12.0 * Z,
+                text: s("Wave"),
+                color: slint::Color::from_argb_u8(0x8c, 255, 255, 255),
+                size: 10.0 * Z,
+                weight: 500,
+                align: 2,
+            }]),
+            zones: model(vec![PanelZone {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+                param_x: idx(if sync { "rateSync" } else { "rate" }),
+                param_y: idx("depth"),
+                rate_x: 1.0 / 200.0,
+                rate_y: 1.0 / 200.0,
+            }]),
             ..Default::default()
         };
         card.width = LFO_W * Z;
@@ -320,7 +386,10 @@ impl Controller {
                 }
             })
             .collect();
-        let members = self.track_of(d.id).and_then(|t| t.devices.iter().position(|x| x.id == d.id).map(|hi| modu::members(&t.devices, hi).len())).unwrap_or(0);
+        let members = self
+            .track_of(d.id)
+            .and_then(|t| t.devices.iter().position(|x| x.id == d.id).map(|hi| modu::members(&t.devices, hi).len()))
+            .unwrap_or(0);
         card.width = if open.is_some() { CHAIN_OPEN_W * Z } else { CHAIN_W * Z };
         card.knobs = model(knobs);
         card.picks = model(Vec::new());
@@ -615,7 +684,11 @@ impl Controller {
             return;
         };
         let mut order: Vec<DeviceId> = t.devices.iter().map(|d| d.id).collect();
-        let group: Vec<DeviceId> = if modu::is_rack(&t.devices[from]) { std::iter::once(from).chain(modu::members(&t.devices, from)).map(|i| t.devices[i].id).collect() } else { vec![id] };
+        let group: Vec<DeviceId> = if modu::is_rack(&t.devices[from]) {
+            std::iter::once(from).chain(modu::members(&t.devices, from)).map(|i| t.devices[i].id).collect()
+        } else {
+            vec![id]
+        };
         // `index` counts the cards without the dragged one: insert before that card.
         let anchor = order.iter().copied().filter(|x| *x != id).nth(index);
         if anchor.is_some_and(|a| group.contains(&a)) {
@@ -625,7 +698,11 @@ impl Controller {
         for (k, g) in group.iter().enumerate() {
             let cur = order.iter().position(|x| x == g).expect("listed");
             order.remove(cur);
-            let at = if k == 0 { anchor.and_then(|a| order.iter().position(|x| *x == a)).unwrap_or(order.len()) } else { order.iter().position(|x| *x == group[k - 1]).expect("placed") + 1 };
+            let at = if k == 0 {
+                anchor.and_then(|a| order.iter().position(|x| *x == a)).unwrap_or(order.len())
+            } else {
+                order.iter().position(|x| *x == group[k - 1]).expect("placed") + 1
+            };
             order.insert(at, *g);
             commands.push(Command::MoveDevice { device: *g, track, index: at });
         }
@@ -647,7 +724,8 @@ impl Controller {
                 }
             }
         }
-        let unchanged = order.iter().zip(&t.devices).all(|(a, b)| *a == b.id) && commands.iter().all(|c| matches!(c, Command::MoveDevice { .. }));
+        let unchanged =
+            order.iter().zip(&t.devices).all(|(a, b)| *a == b.id) && commands.iter().all(|c| matches!(c, Command::MoveDevice { .. }));
         if !unchanged {
             self.execute(Command::Batch { label: "Move Device".into(), commands });
         }
@@ -659,7 +737,9 @@ impl Controller {
     fn mod_param(&self, device: DeviceId, param: i32) -> Option<ModParam> {
         let d = self.project().device(device)?;
         match builtin::def_of(d) {
-            Some(def) => def.params.get(usize::try_from(param).ok()?).filter(|p| p.automatable).map(|p| ModParam::Builtin(p.id.to_string())),
+            Some(def) => {
+                def.params.get(usize::try_from(param).ok()?).filter(|p| p.automatable).map(|p| ModParam::Builtin(p.id.to_string()))
+            }
             None => Some(ModParam::Plugin(param as u32)),
         }
     }
@@ -739,7 +819,9 @@ impl Controller {
             return 0.0;
         };
         match param {
-            ModParam::Builtin(id) => builtin::def_of(d).and_then(|def| def.param(id).map(|p| p.to_normalized(def.value(d, p)))).unwrap_or(0.0),
+            ModParam::Builtin(id) => {
+                builtin::def_of(d).and_then(|def| def.param(id).map(|p| p.to_normalized(def.value(d, p)))).unwrap_or(0.0)
+            }
             ModParam::Plugin(id) => self.engine.plugin_param_value(target, *id).unwrap_or(0.0),
         }
     }
@@ -764,7 +846,13 @@ impl Controller {
         }
         let source = lfo.id;
         let link = ModLink { slot: 0, target: device, param, min: -DEFAULT_AMOUNT, max: DEFAULT_AMOUNT };
-        self.panel_commit(Command::Batch { label: "New LFO".into(), commands: vec![Command::AddDevice { track, index: Some(index), device: lfo }, Command::AddModLink { source, index: None, link }] });
+        self.panel_commit(Command::Batch {
+            label: "New LFO".into(),
+            commands: vec![
+                Command::AddDevice { track, index: Some(index), device: lfo },
+                Command::AddModLink { source, index: None, link },
+            ],
+        });
     }
 
     pub(crate) fn mod_automate(&mut self, device: DeviceId, param: ModParam) {
@@ -825,10 +913,19 @@ impl Controller {
         };
         let slot = slot.max(0) as u8;
         let mut rows: MenuRows = Vec::new();
-        for d in t.devices.iter().chain(t.instrument_plugin.iter()).filter(|d| modu::outputs(d) == 0 && (!modu::is_rack(src) || d.chain == Some(source))) {
+        for d in t
+            .devices
+            .iter()
+            .chain(t.instrument_plugin.iter())
+            .filter(|d| modu::outputs(d) == 0 && (!modu::is_rack(src) || d.chain == Some(source)))
+        {
             let params: Vec<(String, ModParam)> = match builtin::def_of(d) {
-                Some(def) => def.params.iter().filter(|p| p.automatable).map(|p| (p.name.to_string(), ModParam::Builtin(p.id.to_string()))).collect(),
-                None => self.plugin_params_of(d.id).into_iter().filter(|p| p.automatable).map(|p| (p.name, ModParam::Plugin(p.id))).collect(),
+                Some(def) => {
+                    def.params.iter().filter(|p| p.automatable).map(|p| (p.name.to_string(), ModParam::Builtin(p.id.to_string()))).collect()
+                }
+                None => {
+                    self.plugin_params_of(d.id).into_iter().filter(|p| p.automatable).map(|p| (p.name, ModParam::Plugin(p.id))).collect()
+                }
             };
             if params.is_empty() {
                 continue;
@@ -843,7 +940,12 @@ impl Controller {
             }
         }
         if rows.is_empty() {
-            rows.push((if modu::is_rack(src) { "Add effects to the chain first" } else { "No parameters on this track" }.to_string(), String::new(), None, false));
+            rows.push((
+                if modu::is_rack(src) { "Add effects to the chain first" } else { "No parameters on this track" }.to_string(),
+                String::new(),
+                None,
+                false,
+            ));
         }
         self.devices.menu = Some(DevMenu { pos: (x, y), w: 220.0, rows });
         self.ui_dirty = true;
@@ -868,7 +970,8 @@ impl Controller {
                     return;
                 };
                 self.doc.seal_coalescing();
-                self.devices.modu.amount = Some(AmountDrag { source, index, start: (l.min, l.max), value: l.max, active: false, travel: 0.0, held: 0.0 });
+                self.devices.modu.amount =
+                    Some(AmountDrag { source, index, start: (l.min, l.max), value: l.max, active: false, travel: 0.0, held: 0.0 });
             }
             1 => {
                 let Some(g) = self.devices.modu.amount.as_mut().filter(|g| g.source == source && g.index == index) else {
@@ -1000,7 +1103,12 @@ impl Controller {
                 let sep = !rows.is_empty();
                 rows.push((p.group.clone(), String::new(), None, sep));
             }
-            rows.push((p.name.clone(), if shown.contains(&p.id) { "✓".into() } else { String::new() }, Some(MenuPick::CardParam(device, p.id)), false));
+            rows.push((
+                p.name.clone(),
+                if shown.contains(&p.id) { "✓".into() } else { String::new() },
+                Some(MenuPick::CardParam(device, p.id)),
+                false,
+            ));
         }
         if rows.is_empty() {
             rows.push(("The plugin reports no parameters".into(), String::new(), None, false));
@@ -1098,7 +1206,13 @@ impl Controller {
     /// Arrow keys on a plugin control: one step, or 1% of the range (0.2% fine).
     pub(crate) fn card_step(&mut self, device: DeviceId, id: u32, delta: i32, fine: bool) {
         let steps = self.plugin_param_info(device, id).map_or(0, |p| p.steps);
-        let unit = if steps > 0 { 1.0 / steps as f32 } else if fine { 0.002 } else { 0.01 };
+        let unit = if steps > 0 {
+            1.0 / steps as f32
+        } else if fine {
+            0.002
+        } else {
+            0.01
+        };
         let v = (self.plugin_now(device, id) + delta as f32 * unit).clamp(0.0, 1.0);
         let _ = self.engine.plugin_set_param(device.0, id, if steps > 0 { (v * steps as f32).round() / steps as f32 } else { v });
         self.ui_dirty = true;
@@ -1152,7 +1266,8 @@ impl Controller {
 
     /// After a model change: drop state of devices that went away.
     pub(crate) fn mod_after_change(&mut self) {
-        let live: Vec<DeviceId> = self.project().tracks.iter().flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter())).map(|d| d.id).collect();
+        let live: Vec<DeviceId> =
+            self.project().tracks.iter().flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter())).map(|d| d.id).collect();
         self.devices.modu.plugin_params.borrow_mut().retain(|id, v| live.contains(id) && !v.is_empty());
         if self.devices.modu.map.is_some_and(|(s, _)| !live.contains(&s)) {
             self.devices.modu.map = None;

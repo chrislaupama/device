@@ -68,138 +68,349 @@ pub const MAX_BPM: f64 = 999.0;
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Command {
     /// Insert a track. If `track.id` is 0 a fresh id is allocated.
-    AddTrack { index: Option<usize>, track: Track },
-    RemoveTrack { track: TrackId },
+    AddTrack {
+        index: Option<usize>,
+        track: Track,
+    },
+    RemoveTrack {
+        track: TrackId,
+    },
     /// A new name, trimmed, 1..=128 characters.
-    RenameTrack { track: TrackId, name: String },
+    RenameTrack {
+        track: TrackId,
+        name: String,
+    },
     /// The undo of `RenameTrack`: puts the previous name back exactly as it was, even one a
     /// rename would refuse (an imported name over 128 characters). Not accepted from outside.
     #[serde(skip_deserializing)]
-    RestoreTrackName { track: TrackId, name: String },
+    RestoreTrackName {
+        track: TrackId,
+        name: String,
+    },
     /// Insert a section at `index` (end when `None`). If `section.id` is 0 a fresh id is allocated.
-    InsertSection { index: Option<usize>, section: Section },
-    RemoveSection { section: SectionId },
-    RenameSection { section: SectionId, name: String },
+    InsertSection {
+        index: Option<usize>,
+        section: Section,
+    },
+    RemoveSection {
+        section: SectionId,
+    },
+    RenameSection {
+        section: SectionId,
+        name: String,
+    },
     /// Length in ticks, at least one beat. Later sections move with its end.
-    SetSectionLength { section: SectionId, length: Ticks },
+    SetSectionLength {
+        section: SectionId,
+        length: Ticks,
+    },
     /// Move a section to `index` in the list (sections stay contiguous).
-    MoveSection { section: SectionId, index: usize },
-    SetTrackGain { track: TrackId, gain: f32 },
-    SetTrackPan { track: TrackId, pan: f32 },
-    SetTrackMute { track: TrackId, mute: bool },
-    SetTrackSolo { track: TrackId, solo: bool },
-    SetMasterGain { gain: f32 },
-    SetMasterMute { mute: bool },
+    MoveSection {
+        section: SectionId,
+        index: usize,
+    },
+    SetTrackGain {
+        track: TrackId,
+        gain: f32,
+    },
+    SetTrackPan {
+        track: TrackId,
+        pan: f32,
+    },
+    SetTrackMute {
+        track: TrackId,
+        mute: bool,
+    },
+    SetTrackSolo {
+        track: TrackId,
+        solo: bool,
+    },
+    SetMasterGain {
+        gain: f32,
+    },
+    SetMasterMute {
+        mute: bool,
+    },
     /// Register an imported media asset (id 0 → allocate).
-    AddAsset { asset: Asset },
-    RemoveAsset { asset: AssetId },
+    AddAsset {
+        asset: Asset,
+    },
+    RemoveAsset {
+        asset: AssetId,
+    },
     /// Insert a clip on a track (id 0 → allocate).
-    AddClip { track: TrackId, clip: Clip },
-    RemoveClip { clip: ClipId },
+    AddClip {
+        track: TrackId,
+        clip: Clip,
+    },
+    RemoveClip {
+        clip: ClipId,
+    },
     /// Move a clip in time and/or to another track.
-    MoveClip { clip: ClipId, track: TrackId, start: Ticks },
+    MoveClip {
+        clip: ClipId,
+        track: TrackId,
+        start: Ticks,
+    },
     /// Set the visible region of a clip (left/right trim).
-    TrimClip { clip: ClipId, start: Ticks, source_offset: u64, source_length: u64 },
-    SetClipGain { clip: ClipId, gain: f32 },
+    TrimClip {
+        clip: ClipId,
+        start: Ticks,
+        source_offset: u64,
+        source_length: u64,
+    },
+    SetClipGain {
+        clip: ClipId,
+        gain: f32,
+    },
     /// Cut an audio or MIDI clip in two at the absolute timeline position at.
     /// The left part keeps the clip's id; the right part gets new_id (0 means
     /// allocate) and the same name. MIDI notes that cross the cut are cut in
     /// two. Refused for warped or reversed audio clips and for pattern clips.
-    SplitClip { clip: ClipId, at: Ticks, new_id: ClipId },
+    SplitClip {
+        clip: ClipId,
+        at: Ticks,
+        new_id: ClipId,
+    },
     /// Disable or re-enable an audio or MIDI clip (it stays on the timeline but is silent).
-    SetClipEnabled { clip: ClipId, enabled: bool },
+    SetClipEnabled {
+        clip: ClipId,
+        enabled: bool,
+    },
     /// Replace a clip's warp settings. `label` names the edit for undo
     /// ("Set clip speed", "Move warp marker", …); successive edits with the
     /// same label on the same clip coalesce (drags).
-    SetClipWarp { clip: ClipId, warp: crate::warp::ClipWarp, label: String },
-    SetTempo { bpm: f64 },
-    SetTimeSignature { numerator: u8, denominator: u8 },
-    SetLoop { enabled: bool, start: Ticks, end: Ticks },
+    SetClipWarp {
+        clip: ClipId,
+        warp: crate::warp::ClipWarp,
+        label: String,
+    },
+    SetTempo {
+        bpm: f64,
+    },
+    SetTimeSignature {
+        numerator: u8,
+        denominator: u8,
+    },
+    SetLoop {
+        enabled: bool,
+        start: Ticks,
+        end: Ticks,
+    },
     /// Set or clear the project key.
-    SetProjectKey { key: Option<ProjectKey> },
+    SetProjectKey {
+        key: Option<ProjectKey>,
+    },
     /// Insert a MIDI clip on an instrument track (id 0 → allocate).
-    AddMidiClip { track: TrackId, clip: MidiClip },
-    RemoveMidiClip { clip: ClipId },
+    AddMidiClip {
+        track: TrackId,
+        clip: MidiClip,
+    },
+    RemoveMidiClip {
+        clip: ClipId,
+    },
     /// Move a MIDI clip in time and/or to another instrument track.
-    MoveMidiClip { clip: ClipId, track: TrackId, start: Ticks },
+    MoveMidiClip {
+        clip: ClipId,
+        track: TrackId,
+        start: Ticks,
+    },
     /// Change a MIDI clip's start and length (notes keep clip-relative times).
-    ResizeMidiClip { clip: ClipId, start: Ticks, length: Ticks },
+    ResizeMidiClip {
+        clip: ClipId,
+        start: Ticks,
+        length: Ticks,
+    },
     /// Replace all notes of a MIDI clip (draw, erase, move, resize, velocity,
     /// quantize, transpose... each editor gesture is one of these).
-    SetMidiNotes { clip: ClipId, notes: Vec<Note> },
+    SetMidiNotes {
+        clip: ClipId,
+        notes: Vec<Note>,
+    },
     /// Make a MIDI clip a pattern clip, or change its pattern (its notes are
     /// re-baked from the grid; notes on keys that aren't rows stay), or with
     /// `None` make it a plain MIDI clip again (the repeats become notes).
-    SetStepPattern { clip: ClipId, pattern: Option<StepPattern> },
+    SetStepPattern {
+        clip: ClipId,
+        pattern: Option<StepPattern>,
+    },
     /// Replace a MIDI clip's notes and pattern as they are (the exact inverse
     /// of the two commands above).
-    SetMidiContent { clip: ClipId, notes: Vec<Note>, pattern: Option<StepPattern> },
+    SetMidiContent {
+        clip: ClipId,
+        notes: Vec<Note>,
+        pattern: Option<StepPattern>,
+    },
     /// The clip sidebar's pattern list: its state and the clip content it loads
     /// (`crate::library`). The inverse is the same command with the old values.
-    SetComposer { clip: ClipId, edit: ComposerEdit, composer: Option<crate::library::Composer>, notes: Vec<Note>, pattern: Option<StepPattern> },
+    SetComposer {
+        clip: ClipId,
+        edit: ComposerEdit,
+        composer: Option<crate::library::Composer>,
+        notes: Vec<Note>,
+        pattern: Option<StepPattern>,
+    },
     /// Replace an instrument track's synth parameters (knob drags coalesce
     /// per track; loading a preset is one step).
-    SetSynthParams { track: TrackId, params: SynthParams },
+    SetSynthParams {
+        track: TrackId,
+        params: SynthParams,
+    },
     /// A MIDI clip's loop (Loop switch, Position, Length, loop bar) and its length.
-    SetMidiLoop { clip: ClipId, clip_loop: Option<midi::ClipLoop>, length: Ticks },
+    SetMidiLoop {
+        clip: ClipId,
+        clip_loop: Option<midi::ClipLoop>,
+        length: Ticks,
+    },
     /// An audio clip's loop (Loop switch, timeline right edge while looping).
-    SetClipLoop { clip: ClipId, clip_loop: Option<AudioLoop> },
+    SetClipLoop {
+        clip: ClipId,
+        clip_loop: Option<AudioLoop>,
+    },
     /// The piano roll's scale view of a MIDI clip (root, type, highlight, scale rows).
-    SetClipScale { clip: ClipId, scale: Option<crate::scale::ClipScale> },
-    SetTrackArm { track: TrackId, arm: bool },
-    SetTrackMonitor { track: TrackId, monitor: bool },
-    SetTrackInput { track: TrackId, input: Option<InputSource> },
+    SetClipScale {
+        clip: ClipId,
+        scale: Option<crate::scale::ClipScale>,
+    },
+    SetTrackArm {
+        track: TrackId,
+        arm: bool,
+    },
+    SetTrackMonitor {
+        track: TrackId,
+        monitor: bool,
+    },
+    SetTrackInput {
+        track: TrackId,
+        input: Option<InputSource>,
+    },
     /// Insert an effect plugin into a track's chain (id 0 → allocate).
-    AddDevice { track: TrackId, index: Option<usize>, device: Device },
-    RemoveDevice { device: DeviceId },
+    AddDevice {
+        track: TrackId,
+        index: Option<usize>,
+        device: Device,
+    },
+    RemoveDevice {
+        device: DeviceId,
+    },
     /// Reorder an insert, possibly onto another track.
-    MoveDevice { device: DeviceId, track: TrackId, index: usize },
+    MoveDevice {
+        device: DeviceId,
+        track: TrackId,
+        index: usize,
+    },
     /// Bypass toggle.
-    SetDeviceEnabled { device: DeviceId, enabled: bool },
+    SetDeviceEnabled {
+        device: DeviceId,
+        enabled: bool,
+    },
     /// Set or clear an instrument track's instrument plugin (None = built-in synth).
-    SetInstrumentPlugin { track: TrackId, device: Option<Device> },
+    SetInstrumentPlugin {
+        track: TrackId,
+        device: Option<Device>,
+    },
     /// Set one parameter of a built-in device (plain value in the
     /// parameter's unit; knob drags coalesce per parameter).
-    SetDeviceParam { device: DeviceId, param: String, value: f32 },
+    SetDeviceParam {
+        device: DeviceId,
+        param: String,
+        value: f32,
+    },
     /// Set several parameters of a built-in device at once (preset load, one
     /// undo step). `preset` becomes the name shown in the card header.
-    SetDeviceParams { device: DeviceId, params: std::collections::BTreeMap<String, f32>, preset: Option<String> },
+    SetDeviceParams {
+        device: DeviceId,
+        params: std::collections::BTreeMap<String, f32>,
+        preset: Option<String>,
+    },
     /// Load, replace or clear (`sample: None`) the audio file in one sample
     /// slot of a built-in device (sampler, pads); slice edits replace the
     /// sample with its new slices.
-    SetDeviceSample { device: DeviceId, slot: u32, sample: Option<DeviceSample> },
+    SetDeviceSample {
+        device: DeviceId,
+        slot: u32,
+        sample: Option<DeviceSample>,
+    },
     /// Pick (or clear) the sidechain source track of a built-in device.
-    SetDeviceSidechain { device: DeviceId, source: Option<TrackId> },
+    SetDeviceSidechain {
+        device: DeviceId,
+        source: Option<TrackId>,
+    },
     /// Add a modulation link to a source device (LFO, chain head) at `index`
     /// (None = the end). Refused past three sources per parameter.
-    AddModLink { source: DeviceId, index: Option<usize>, link: ModLink },
-    RemoveModLink { source: DeviceId, index: usize },
+    AddModLink {
+        source: DeviceId,
+        index: Option<usize>,
+        link: ModLink,
+    },
+    RemoveModLink {
+        source: DeviceId,
+        index: usize,
+    },
     /// Change a link's range (amount drags coalesce per link).
-    SetModLink { source: DeviceId, index: usize, min: f32, max: f32 },
+    SetModLink {
+        source: DeviceId,
+        index: usize,
+        min: f32,
+        max: f32,
+    },
     /// Put an insert into the chain headed by `chain` (it must follow the
     /// head or its members) or take it out (None).
-    SetDeviceChain { device: DeviceId, chain: Option<DeviceId> },
+    SetDeviceChain {
+        device: DeviceId,
+        chain: Option<DeviceId>,
+    },
     /// Rename a device's card (None = the plugin name).
-    SetDeviceLabel { device: DeviceId, label: Option<String> },
+    SetDeviceLabel {
+        device: DeviceId,
+        label: Option<String>,
+    },
     /// Rename macro `index` of a chain head ("" = default name).
-    SetMacroName { device: DeviceId, index: usize, name: String },
+    SetMacroName {
+        device: DeviceId,
+        index: usize,
+        name: String,
+    },
     /// Card fold state; `collapsed` hides a chain head's members.
-    SetDeviceView { device: DeviceId, folded: bool, collapsed: bool },
+    SetDeviceView {
+        device: DeviceId,
+        folded: bool,
+        collapsed: bool,
+    },
     /// Parameters shown on a third-party plugin's card, in order.
-    SetCardParams { device: DeviceId, params: Vec<u32> },
+    SetCardParams {
+        device: DeviceId,
+        params: Vec<u32>,
+    },
     /// Swap an insert for another device in the same slot (and chain). The
     /// new device's id 0 allocates one.
-    ReplaceDevice { device: DeviceId, with: Device },
+    ReplaceDevice {
+        device: DeviceId,
+        with: Device,
+    },
     /// Create, replace (points, enabled) or delete (`lane: None`) the lane for
     /// `target` on a track, or on the master when `track` is None.
-    SetAutomationLane { track: Option<TrackId>, target: AutomationTarget, lane: Option<AutomationLane> },
+    SetAutomationLane {
+        track: Option<TrackId>,
+        target: AutomationTarget,
+        lane: Option<AutomationLane>,
+    },
     /// Replace a track's sends into return tracks (spec 002). The app wraps adds and removals in
     /// a labelled `Batch` ("Add Send", "Remove Send"); level drags coalesce per track.
-    SetSends { track: TrackId, sends: Vec<TrackSend> },
+    SetSends {
+        track: TrackId,
+        sends: Vec<TrackSend>,
+    },
     /// Route a track's output to a return track, or to the master (`None`).
-    SetTrackOutput { track: TrackId, output: Option<TrackId> },
+    SetTrackOutput {
+        track: TrackId,
+        output: Option<TrackId>,
+    },
     /// Several commands applied atomically (all or nothing).
-    Batch { label: String, commands: Vec<Command> },
+    Batch {
+        label: String,
+        commands: Vec<Command>,
+    },
 }
 
 impl Command {
@@ -317,7 +528,13 @@ impl Command {
                 // Ordinary tracks come first, then the returns.
                 let ordinary = p.ordinary_track_count();
                 let (lo, hi) = if track.is_return() {
-                    if !track.clips.is_empty() || !track.midi_clips.is_empty() || track.instrument_plugin.is_some() || track.arm || track.monitor || track.input.is_some() {
+                    if !track.clips.is_empty()
+                        || !track.midi_clips.is_empty()
+                        || track.instrument_plugin.is_some()
+                        || track.arm
+                        || track.monitor
+                        || track.input.is_some()
+                    {
                         return Err(invalid("track", "a return track has no clips, instrument or input"));
                     }
                     if p.returns().count() >= MAX_RETURNS {
@@ -335,7 +552,12 @@ impl Command {
                 if track.id.0 == 0 {
                     track.id = TrackId(p.alloc_id());
                 }
-                let ids = track.clips.iter().map(|c| c.id.0).chain(track.midi_clips.iter().map(|c| c.id.0)).chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0));
+                let ids = track
+                    .clips
+                    .iter()
+                    .map(|c| c.id.0)
+                    .chain(track.midi_clips.iter().map(|c| c.id.0))
+                    .chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0));
                 p.next_id = ids.chain([track.id.0]).fold(p.next_id, |n, id| n.max(id + 1));
                 let id = track.id;
                 p.tracks.insert(idx, track);
@@ -482,7 +704,12 @@ impl Command {
                 if p.tracks.iter().flat_map(|t| &t.clips).any(|c| c.asset == asset) {
                     return Err(invalid("asset", "still referenced by clips"));
                 }
-                if p.tracks.iter().flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter())).flat_map(|d| &d.samples).any(|s| s.asset == asset) {
+                if p.tracks
+                    .iter()
+                    .flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter()))
+                    .flat_map(|d| &d.samples)
+                    .any(|s| s.asset == asset)
+                {
                     return Err(invalid("asset", "still played by a device"));
                 }
                 let idx = p.assets.iter().position(|a| a.id == asset).ok_or(EditError::AssetNotFound(asset))?;
@@ -949,7 +1176,8 @@ impl Command {
                 if let Some(why) = crate::modulation::link_refusal(t, s, link.slot, link.target, &link.param) {
                     return Err(invalid("link", why));
                 }
-                (link.min, link.max) = crate::modulation::clamp_range(s, link.min, link.max).ok_or_else(|| invalid("link", "range must be finite"))?;
+                (link.min, link.max) =
+                    crate::modulation::clamp_range(s, link.min, link.max).ok_or_else(|| invalid("link", "range must be finite"))?;
                 let s = insert_mut(p, source)?;
                 let i = index.unwrap_or(s.links.len());
                 if i > s.links.len() {
@@ -981,7 +1209,8 @@ impl Command {
                     if crate::modulation::outputs(&devs[i]) > 0 {
                         return Err(invalid("device", "chains don't hold LFOs or other chains"));
                     }
-                    let hi = devs.iter().position(|d| d.id == h).ok_or_else(|| invalid("chain", "the chain head must be on the same track"))?;
+                    let hi =
+                        devs.iter().position(|d| d.id == h).ok_or_else(|| invalid("chain", "the chain head must be on the same track"))?;
                     if !crate::modulation::is_rack(&devs[hi]) {
                         return Err(invalid("chain", "not a chain head"));
                     }
@@ -1081,8 +1310,15 @@ impl Command {
                                 return Err(invalid("target", "plugin automation must target a device on the same track"));
                             }
                             AutomationTarget::Builtin { device, device_type, param } => {
-                                let d = p.tracks[ti].devices.iter().chain(p.tracks[ti].instrument_plugin.iter()).find(|d| d.id == *device).ok_or_else(|| invalid("target", "device automation must target a device on the same track"))?;
-                                let def = crate::builtin::def_of(d).filter(|def| def.id == device_type).ok_or_else(|| invalid("target", "device kind mismatch"))?;
+                                let d = p.tracks[ti]
+                                    .devices
+                                    .iter()
+                                    .chain(p.tracks[ti].instrument_plugin.iter())
+                                    .find(|d| d.id == *device)
+                                    .ok_or_else(|| invalid("target", "device automation must target a device on the same track"))?;
+                                let def = crate::builtin::def_of(d)
+                                    .filter(|def| def.id == device_type)
+                                    .ok_or_else(|| invalid("target", "device kind mismatch"))?;
                                 if !def.param(param).is_some_and(|q| q.automatable) {
                                     return Err(invalid("target", format!("{} has no automatable parameter {param:?}", def.name)));
                                 }
@@ -1261,7 +1497,8 @@ fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Resul
         if at <= c.start || at >= c.start + p.clip_length_ticks(&c) {
             return Err(invalid("at", "must fall inside the clip"));
         }
-        let cut = (p.clip_source_at(&c, (at - c.start) as f64).round() as u64).clamp(c.source_offset + 1, c.source_offset + c.source_length - 1);
+        let cut =
+            (p.clip_source_at(&c, (at - c.start) as f64).round() as u64).clamp(c.source_offset + 1, c.source_offset + c.source_length - 1);
         let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
         p.next_id = p.next_id.max(new_id.0 + 1);
         let right = Clip { id: new_id, start: at, source_offset: cut, source_length: c.source_offset + c.source_length - cut, ..c.clone() };
@@ -1271,7 +1508,10 @@ fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Resul
         t.clips.sort_by_key(|c| (c.start, c.id));
         return Ok(Command::Batch {
             label: "Split Clip".into(),
-            commands: vec![Command::RemoveClip { clip: new_id }, Command::TrimClip { clip, start: c.start, source_offset: c.source_offset, source_length: c.source_length }],
+            commands: vec![
+                Command::RemoveClip { clip: new_id },
+                Command::TrimClip { clip, start: c.start, source_offset: c.source_offset, source_length: c.source_length },
+            ],
         });
     }
     let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
@@ -1334,7 +1574,10 @@ fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {
         return Err(invalid("source_length", "must be > 0"));
     }
     if c.source_offset.checked_add(c.source_length).is_none_or(|end| end > a.frames) {
-        return Err(invalid("source_region", format!("offset {} + length {} exceeds asset length {}", c.source_offset, c.source_length, a.frames)));
+        return Err(invalid(
+            "source_region",
+            format!("offset {} + length {} exceeds asset length {}", c.source_offset, c.source_length, a.frames),
+        ));
     }
     c.warp.validate(a).map_err(|r| invalid("warp", r))?;
     validate_gain("clip_gain", c.gain)

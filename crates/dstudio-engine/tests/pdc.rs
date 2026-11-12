@@ -65,7 +65,16 @@ fn latency_plugin_on_one_of_two_tracks_is_compensated_and_toggle_off_restores_th
     let mut doc = Document::new(Project::default());
     let info = engine.load_file(&wav).unwrap();
     doc.execute(
-        Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: wav.to_string_lossy().into(), sample_rate: 48_000.0, channels: 2, frames: info.frames } },
+        Command::AddAsset {
+            asset: Asset {
+                id: AssetId(0),
+                relative_path: None,
+                absolute_path: wav.to_string_lossy().into(),
+                sample_rate: 48_000.0,
+                channels: 2,
+                frames: info.frames,
+            },
+        },
         Origin::User,
     )
     .unwrap();
@@ -74,11 +83,30 @@ fn latency_plugin_on_one_of_two_tracks_is_compensated_and_toggle_off_restores_th
     map.insert(asset, info.asset_id);
 
     // A second audio track; both get the same clip.
-    doc.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "Audio 2", ColorIndex(2)) }, Origin::User).unwrap();
+    doc.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "Audio 2", ColorIndex(2)) }, Origin::User)
+        .unwrap();
     let audio: Vec<TrackId> = doc.project().tracks.iter().filter(|t| t.kind == TrackKind::Audio).map(|t| t.id).collect();
     assert_eq!(audio.len(), 2);
     for &track in &audio {
-        doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "impulse".into(), start: 0, source_offset: 0, source_length: 9600, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } }, Origin::User).unwrap();
+        doc.execute(
+            Command::AddClip {
+                track,
+                clip: Clip {
+                    id: ClipId(0),
+                    asset,
+                    name: "impulse".into(),
+                    start: 0,
+                    source_offset: 0,
+                    source_length: 9600,
+                    gain: 1.0,
+                    warp: Default::default(),
+                    disabled: false,
+                    clip_loop: None,
+                },
+            },
+            Origin::User,
+        )
+        .unwrap();
     }
     let mut dev = Device::new(latency_plugin());
     dev.state = Some(device::b64::encode(&N.to_le_bytes()));
@@ -103,8 +131,7 @@ fn latency_plugin_on_one_of_two_tracks_is_compensated_and_toggle_off_restores_th
 
     // Compensated: one impulse of double amplitude at t + L.
     let report = engine.latency_report();
-    let expected_tracks: Vec<(u64, u32)> =
-        snap.tracks.iter().map(|t| (t.track_id, if t.track_id == audio[0].0 { N } else { 0 })).collect();
+    let expected_tracks: Vec<(u64, u32)> = snap.tracks.iter().map(|t| (t.track_id, if t.track_id == audio[0].0 { N } else { 0 })).collect();
     assert_eq!(report, LatencyReport { total_frames: N, tracks: expected_tracks.clone(), clamped: false });
     let on = render_left(9600);
     assert_eq!(nonzero(&on), vec![IMPULSE_AT + N as usize]);

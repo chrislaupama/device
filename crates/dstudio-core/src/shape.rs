@@ -614,7 +614,8 @@ fn scale_of(v: &[Note], key: Option<ProjectKey>) -> Scale {
     let mut best = (0, (0, &MAJOR));
     for root in 0..12 {
         for steps in [&MAJOR, &MINOR] {
-            let fit = v.iter().filter(|n| steps.contains(&((n.pitch as i32 - root).rem_euclid(12)))).count() * 2 + usize::from(root == first);
+            let fit =
+                v.iter().filter(|n| steps.contains(&((n.pitch as i32 - root).rem_euclid(12)))).count() * 2 + usize::from(root == first);
             if fit > best.0 {
                 best = (fit, (root, steps));
             }
@@ -736,7 +737,8 @@ fn arpeggiate(v: &[Note], shape: &Shape) -> Vec<Note> {
         chord.dedup_by_key(|p| p.0);
         let pattern = ARP_PATTERNS[shape.index_at(ShapeKey::ArpPattern, b)];
         let octaves = if pattern == "Chord" { 1 } else { ARP_OCTAVES[shape.index_at(ShapeKey::ArpOctaves, b)] as i32 };
-        let pool: Vec<(i32, u8)> = (0..octaves).flat_map(|o| chord.iter().map(move |&(p, vel)| (p + 12 * o, vel))).filter(|p| p.0 <= 127).collect();
+        let pool: Vec<(i32, u8)> =
+            (0..octaves).flat_map(|o| chord.iter().map(move |&(p, vel)| (p + 12 * o, vel))).filter(|p| p.0 <= 127).collect();
         let m = pool.len();
         if m == 0 {
             continue;
@@ -768,7 +770,13 @@ fn arpeggiate(v: &[Note], shape: &Shape) -> Vec<Note> {
                 }
                 "Pinky" => {
                     let j = k % (2 * (m - 1)).max(1);
-                    vec![if m < 2 { pool[0] } else if j % 2 == 0 { pool[j / 2] } else { pool[m - 1] }]
+                    vec![if m < 2 {
+                        pool[0]
+                    } else if j % 2 == 0 {
+                        pool[j / 2]
+                    } else {
+                        pool[m - 1]
+                    }]
                 }
                 _ => chord.clone(),
             };
@@ -798,8 +806,10 @@ fn set_lengths(v: &mut Vec<Note>, shape: &Shape, clip: Ticks) {
         let new = if t < 0.5 {
             (l * t / 0.5).max(MIN_TICKS as f64)
         } else {
-            let next_onset = (starts.iter().copied().find(|&s| s > n.start).unwrap_or(clip).min(clip).min(n.start + MAX_HOLD) - n.start).max(0);
-            let next_same = snapshot.iter().filter(|o| o.pitch == n.pitch && o.start > n.start).map(|o| o.start - MIN_TICKS).min().unwrap_or(clip);
+            let next_onset =
+                (starts.iter().copied().find(|&s| s > n.start).unwrap_or(clip).min(clip).min(n.start + MAX_HOLD) - n.start).max(0);
+            let next_same =
+                snapshot.iter().filter(|o| o.pitch == n.pitch && o.start > n.start).map(|o| o.start - MIN_TICKS).min().unwrap_or(clip);
             let hold = (next_same.min(clip).min(n.start + MAX_HOLD) - n.start).max(0);
             let target = l.max(next_onset as f64).max(hold as f64);
             l * (target / l).powf((t - 0.5) / 0.5)
@@ -994,7 +1004,12 @@ mod tests {
 
     #[test]
     fn chord_controls_add_air_sub_tension_and_reshape_the_voicing() {
-        assert!(has_harmony(&chord(), CHORDS) && has_harmony(&chord(), None) && !has_harmony(&line(), None) && !has_harmony(&chord(), Some(PartType::Lead)));
+        assert!(
+            has_harmony(&chord(), CHORDS)
+                && has_harmony(&chord(), None)
+                && !has_harmony(&line(), None)
+                && !has_harmony(&chord(), Some(PartType::Lead))
+        );
         let air = apply(&chord(), &with(CHORDS, |s| s.air = 1.0 / 3.0), CHORDS, C_MAJOR, BAR2);
         assert_eq!(pitches_at(&air, 0.0), vec![60, 64, 67, 71, 72]);
         let sub = apply(&chord(), &with(CHORDS, |s| s.sub = 2.0 / 3.0), CHORDS, C_MAJOR, BAR2);
@@ -1066,7 +1081,13 @@ mod tests {
         let beyond = apply(&numbered(vec![note(60, 0.0, 1.0), note(62, 6.0, 1.0)]), &with(None, |s| s.velocity = 0.4), None, None, 4 * PPQ);
         assert_eq!(beyond.len(), 2, "notes past a shortened clip end come back when it grows");
         assert_eq!(beyond[1].start, 6 * PPQ);
-        let rep = apply(&numbered(vec![note(60, 0.0, 2.0), Note { velocity: 100, ..note(60, 1.0, 1.0) }]), &with(None, |s| s.repeat = 2), None, None, 4 * PPQ);
+        let rep = apply(
+            &numbered(vec![note(60, 0.0, 2.0), Note { velocity: 100, ..note(60, 1.0, 1.0) }]),
+            &with(None, |s| s.repeat = 2),
+            None,
+            None,
+            4 * PPQ,
+        );
         let hit = rep.iter().find(|n| n.start == PPQ).unwrap();
         assert_eq!(hit.velocity, 100, "colliding retriggers merge, keeping the louder one");
     }

@@ -8,8 +8,8 @@
 //! the engine's capture ring and turns it into clips with
 //! `dstudio_core::midi_record` when the pass stops.
 
-use crate::controller::Controller;
 use crate::MidiInputRow;
+use crate::controller::Controller;
 use dstudio_core::midi_record::{self, CapturedEvent, Pass};
 use dstudio_core::{Command, TrackId};
 use std::time::{Duration, Instant};
@@ -203,7 +203,9 @@ impl Controller {
     /// The loop range in frames while the loop is on.
     fn loop_frames(&self) -> Option<(i64, i64)> {
         let p = self.project();
-        p.transport.loop_enabled.then(|| (p.ticks_to_frames(p.transport.loop_start, self.rate), p.ticks_to_frames(p.transport.loop_end, self.rate)))
+        p.transport
+            .loop_enabled
+            .then(|| (p.ticks_to_frames(p.transport.loop_start, self.rate), p.ticks_to_frames(p.transport.loop_end, self.rate)))
     }
 
     /// The pass's frame range so far (or at stop), as `midi_record` takes it.
@@ -226,7 +228,8 @@ impl Controller {
     }
 
     pub(crate) fn push_midi_settings(&self) {
-        let rows: Vec<MidiInputRow> = self.midi_rows().into_iter().map(|(name, on, lit)| MidiInputRow { name: name.into(), on, lit }).collect();
+        let rows: Vec<MidiInputRow> =
+            self.midi_rows().into_iter().map(|(name, on, lit)| MidiInputRow { name: name.into(), on, lit }).collect();
         crate::controller::sync_model(&self.midi_inputs_model, rows);
     }
 }

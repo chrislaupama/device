@@ -16,13 +16,20 @@ pub static PITCH_CORRECTOR: DeviceDef = DeviceDef {
     category: "Pitch",
     purpose: "Automatic pitch correction: pulls a sung or played line onto the notes of a key and scale, from a gentle nudge to a hard, stepped effect.",
     params: &[
-        ParamDef::new("speed", "Speed", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).help("How much of the distance to the target note is corrected."),
+        ParamDef::new("speed", "Speed", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent)
+            .help("How much of the distance to the target note is corrected."),
         ParamDef::choice("key", "Key", KEYS, 0).help("Tonic of the scale the notes are corrected to."),
-        ParamDef::choice("scale", "Scale", SCALES, 0).help("Allowed notes: every semitone, or the major or natural minor scale of the key."),
-        ParamDef::new("retune_speed_ms", "Retune Speed", 0.0, 400.0, 50.0, LINEAR, "ms", Format::Time).help("Glide time onto the target note; 0 ms jumps at once."),
-        ParamDef::new("humanize", "Humanize", 0.0, 100.0, 20.0, LINEAR, "%", Format::Percent).help("Keeps vibrato and natural drift and relaxes the correction on held notes."),
+        ParamDef::choice("scale", "Scale", SCALES, 0)
+            .help("Allowed notes: every semitone, or the major or natural minor scale of the key."),
+        ParamDef::new("retune_speed_ms", "Retune Speed", 0.0, 400.0, 50.0, LINEAR, "ms", Format::Time)
+            .help("Glide time onto the target note; 0 ms jumps at once."),
+        ParamDef::new("humanize", "Humanize", 0.0, 100.0, 20.0, LINEAR, "%", Format::Percent)
+            .help("Keeps vibrato and natural drift and relaxes the correction on held notes."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Blend of corrected and original signal."),
-        ParamDef::choice("key_follow", "Key Follow", FOLLOW, 1).label("Follow").not_automatable().help("Project: use the project's key and scale; Manual: the Key and Scale set here."),
+        ParamDef::choice("key_follow", "Key Follow", FOLLOW, 1)
+            .label("Follow")
+            .not_automatable()
+            .help("Project: use the project's key and scale; Manual: the Key and Scale set here."),
     ],
     layout: Layout {
         picker: &[Control::Menu("key_follow"), Control::Dropdown("key"), Control::Dropdown("scale")],

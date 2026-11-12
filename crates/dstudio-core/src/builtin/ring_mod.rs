@@ -10,10 +10,14 @@ pub static RING_MOD: DeviceDef = DeviceDef {
     category: "Modulation",
     purpose: "Multiplies the sound by a carrier wave: metallic, bell-like or robotic tones, and tremolo when biased.",
     params: &[
-        ParamDef::new("frequency", "Frequency", 1.0, 20000.0, 440.0, Taper::Log, "Hz", Format::Freq).help("Carrier frequency: low values pulse, audio-rate values add new partials."),
-        ParamDef::new("bias", "Bias", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent).help("Lifts the carrier: 0% is pure ring modulation, 100% keeps the dry note (amplitude modulation)."),
-        ParamDef::new("rectify", "Rectify", -100.0, 100.0, 0.0, LINEAR, "%", Format::SignedPercent).help("Folds the carrier's negative half up (+) or its positive half down (−) for a buzzier, octave-up tone."),
-        ParamDef::new("spread", "Spread", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent).help("Detunes the left and right carriers apart, up to a semitone each way."),
+        ParamDef::new("frequency", "Frequency", 1.0, 20000.0, 440.0, Taper::Log, "Hz", Format::Freq)
+            .help("Carrier frequency: low values pulse, audio-rate values add new partials."),
+        ParamDef::new("bias", "Bias", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent)
+            .help("Lifts the carrier: 0% is pure ring modulation, 100% keeps the dry note (amplitude modulation)."),
+        ParamDef::new("rectify", "Rectify", -100.0, 100.0, 0.0, LINEAR, "%", Format::SignedPercent)
+            .help("Folds the carrier's negative half up (+) or its positive half down (−) for a buzzier, octave-up tone."),
+        ParamDef::new("spread", "Spread", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent)
+            .help("Detunes the left and right carriers apart, up to a semitone each way."),
         ParamDef::choice("modulator", "Modulator", &["Sine", "Triangle", "Square", "Saw", "Noise", "Random"], 0)
             .help("Carrier wave: Sine is smooth, Triangle brighter, Square and Saw buzzy, Noise grainy, Random a stepped robot."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Balance of the dry and the modulated signal."),
