@@ -36,7 +36,7 @@ jobs:
         run: |
           status=0
           tools/ci/engine_pins.py > "$RUNNER_TEMP/report.md" || status=$?
-          cat "$RUNNER_TEMP/report.md" | tee -a "$GITHUB_STEP_SUMMARY"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/report.md"
           if [ "$status" -gt 1 ]; then echo "the check itself failed"; exit 1; fi
           echo "status=$status" >> "$GITHUB_OUTPUT"
       - name: Open, update or close the issue
