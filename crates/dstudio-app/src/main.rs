@@ -1733,6 +1733,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_commit(Some(inst), AutomationLane { target: target.clone(), enabled: true, points });
             c.auto.targets.insert(Some(inst), target.clone());
             c.auto.hover = Some((Some(inst), target, 1));
+            // Audio's lanes folded so the Instrument row (and its lane in Hz) is in view.
+            c.auto.expanded.remove(&audio);
             if let Some(i) = def.index_of("cutoff") {
                 c.synth_knob_menu(i, 560.0, 640.0);
             }

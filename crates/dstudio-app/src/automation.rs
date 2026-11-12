@@ -739,24 +739,31 @@ impl Controller {
         self.auto_rows()
             .into_iter()
             .filter(|r| r.master || r.pinned || (r.y0 >= timeline::RULER_H - 1.0 && r.y0 + 12.0 <= bottom))
-            .map(|r| {
+            .filter_map(|r| {
                 let val = self.lane(r.key, &r.target).and_then(|l| l.value_at(t0)).unwrap_or_else(|| self.static_value(r.key, &r.target));
                 let ly = r.y_of(norm_of(&r.target, val));
                 let y = (ly - 9.5 - 6.5).clamp(r.y0 + 1.0, r.y0 + r.h - 14.0);
-                {
-                    let hue = self.lane_hue(&r.target);
-                    AutoLabel {
-                        x: 1.5,
-                        y,
-                        text: self.auto_label(r.key, &r.target, val).into(),
-                        state: self.auto_style(r.key, &r.target).code(),
-                        accent: hue.slint_bright(),
-                        dim: hue.slint_dim(),
-                    }
+                // A row cut off by the pinned rows keeps its label only while the label is in view.
+                if !Self::label_visible(&r, y, bottom) {
+                    return None;
                 }
+                let hue = self.lane_hue(&r.target);
+                Some(AutoLabel {
+                    x: 1.5,
+                    y,
+                    text: self.auto_label(r.key, &r.target, val).into(),
+                    state: self.auto_style(r.key, &r.target).code(),
+                    accent: hue.slint_bright(),
+                    dim: hue.slint_dim(),
+                })
             })
-            .chain(self.point_readout())
+            .chain(self.point_readout().filter(|(r, l)| Self::label_visible(r, l.y, bottom)).map(|(_, l)| l))
             .collect()
+    }
+
+    /// A label at `y` on a scrolling row is drawn only between the ruler and the pinned rows.
+    fn label_visible(r: &Row, y: f32, bottom: f32) -> bool {
+        r.master || r.pinned || (y >= timeline::RULER_H - 1.0 && y + 13.0 <= bottom)
     }
 
     /// The point being dragged (one point) or hovered: (row, lane, index).
@@ -774,21 +781,22 @@ impl Controller {
     }
 
     /// Value of the hovered or dragged point, in the parameter's unit, just above the point.
-    fn point_readout(&self) -> Option<AutoLabel> {
+    fn point_readout(&self) -> Option<(Row, AutoLabel)> {
         let (row, lane, i) = self.readout_point()?;
         let p = lane.points.get(i)?;
         let hue = self.lane_hue(&row.target);
         let py = row.y_of(norm_of(&row.target, p.value));
         // Above the point; below it when the point sits at the top of the row.
         let y = if py - 18.0 >= row.y0 { py - 18.0 } else { py + 5.0 };
-        Some(AutoLabel {
+        let label = AutoLabel {
             x: self.x_of_ticks(p.time) + 5.0,
             y: y.min(row.y0 + row.h - 14.0),
             text: self.auto_label(row.key, &row.target, p.value).into(),
             state: LineStyle::Active.code(),
             accent: hue.slint_bright(),
             dim: hue.slint_dim(),
-        })
+        };
+        Some((row, label))
     }
 
     /// Pointer over the lanes (no button held): tracks the point under it for the value readout.
@@ -1857,6 +1865,17 @@ mod tests {
         assert_eq!(last.label, "On");
         assert!(matches!(&last.target, Some(AutomationTarget::DeviceOn { device, .. }) if *device == d));
         assert_eq!(c.pick_categories(None).len(), 1, "the master only has volume");
+    }
+
+    #[test]
+    fn labels_under_the_pinned_rows_are_hidden() {
+        let row =
+            |master: bool| Row { key: None, target: AutomationTarget::Volume, y0: 300.0, h: 60.0, master, extra: false, pinned: false };
+        let bottom = 330.0;
+        assert!(Controller::label_visible(&row(false), 310.0, bottom), "in view above the pinned rows");
+        assert!(!Controller::label_visible(&row(false), 340.0, bottom), "covered by the pinned rows");
+        assert!(!Controller::label_visible(&row(false), 2.0, bottom), "under the ruler");
+        assert!(Controller::label_visible(&row(true), 340.0, bottom), "the master row is never covered");
     }
 
     #[test]
