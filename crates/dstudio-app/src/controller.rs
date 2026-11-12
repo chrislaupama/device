@@ -307,6 +307,8 @@ pub enum MenuAction {
     ToMidi,
     Ask,
     Paste,
+    /// Empty-lane menu: a new one-bar MIDI clip where the menu was opened.
+    InsertMidiClip,
     SectionRename,
     SectionColor,
     SectionInsert,
@@ -320,6 +322,8 @@ pub struct MenuState {
     pub pos: (f32, f32),
     pub clip: Option<ClipId>,
     pub section: Option<dstudio_core::SectionId>,
+    /// Empty-lane menu: the track and timeline position (ticks) it was opened at.
+    pub lane: Option<(TrackId, Ticks)>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
@@ -418,6 +422,8 @@ pub struct Controller {
     /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
     /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
     pub press_epoch: i32,
+    /// The last press in the arrangement lanes (time, x, y), for double-clicks (src/clipedit.rs).
+    pub(crate) lane_last_down: Option<(std::time::Instant, f32, f32)>,
     /// Text typed in an open track name field (Studio.track-rename-draft), committed when the
     /// panel holding the field changes before the field commits itself.
     pub rename_draft: Option<(TrackId, String)>,
@@ -567,6 +573,7 @@ impl Controller {
             rename: None,
             rename_section: None,
             press_epoch: 0,
+            lane_last_down: None,
             rename_draft: None,
             rename_panel: None,
             rename_open_epoch: 0,

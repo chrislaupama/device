@@ -847,7 +847,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         }
         "draw_mode.toggle" => ctl.borrow_mut().auto_toggle_draw(),
         "clip.insert_midi" => {
-            ctl.borrow_mut().insert_midi_clip();
+            ctl.borrow_mut().insert_and_open_midi_clip();
         }
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
         "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
@@ -2278,15 +2278,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
-    on!(on_lane_double, |c, x: f32, y: f32| {
-        c.section_double(x, y);
-    });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
         if kind == 0 {
             c.press_epoch = c.press_epoch.wrapping_add(1);
             c.snap.bypass = cmd;
         }
-        c.pointer_mods(kind, x, y, shift, alt)
+        // A second press that completes a double-click acts on its own (src/clipedit.rs).
+        if kind == 2 {
+            c.lane_release(x, y);
+        }
+        if kind != 0 || !c.lane_press_double(x, y) {
+            c.pointer_mods(kind, x, y, shift, alt)
+        }
     });
     on!(on_snap_toggle, |c| c.snap_toggle());
     on!(on_snap_menu_toggle, |c, x: f32, y: f32| c.snap_menu_toggle(x, y));

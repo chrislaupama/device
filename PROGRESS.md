@@ -493,3 +493,17 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Existing `.dsproj` format, preferences/cache/project/scratch paths, executable, crate names,
   platform identities and installer AppId remain stable; see `docs/building.md` › Compatibility names.
 - Historical entries retain the name used at the time. See spec 004 for requirements and verification.
+
+### 2026-11-12: making MIDI clips from the timeline
+
+- Double-click an empty spot on an instrument track's lane: a one-bar MIDI clip in that bar (on the beat while snapping
+  is off or bypassed), moved past a clip it would start inside and cut short rather than running into the next one.
+  It is selected and opens in the piano roll, so notes can be drawn straight away. A double-click on a clip opens it
+  in the Clip tab. Double-clicks in the lanes are timed by the app (500 ms from the first click's release), not by
+  Slint, because the first click often selects a track and rebuilding the panels for it can outlast Slint's window.
+- Right-click on an empty spot: Insert MIDI clip (instrument tracks) and Paste (when the copied clip fits the track),
+  both acting at that spot.
+- ⌘⇧M now opens the new clip in the piano roll (the Clip tab used to say "No clip selected").
+- New Create menu in the menu bar: Audio Track (⌘T), Instrument Track (⇧⌘T), MIDI Clip (⇧⌘M).
+- Tests: `double_click_on_an_empty_instrument_lane_makes_a_clip_ready_for_notes`,
+  `a_new_clip_fits_between_its_neighbours`, `the_empty_lane_menu_inserts_and_pastes_where_it_was_opened`.
