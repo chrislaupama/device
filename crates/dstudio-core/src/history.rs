@@ -268,21 +268,6 @@ pub fn sentence_case(label: &str) -> String {
         .join(" ")
 }
 
-#[cfg(test)]
-mod sentence_case_tests {
-    #[test]
-    fn labels_read_in_sentence_case() {
-        use super::sentence_case;
-        assert_eq!(sentence_case("Track Volume Change"), "Track volume change");
-        assert_eq!(sentence_case("Insert MIDI Clip"), "Insert MIDI clip");
-        assert_eq!(sentence_case("Move Effect into Chain"), "Move effect into chain");
-        assert_eq!(sentence_case("Use Built-in Synth"), "Use built-in synth");
-        assert_eq!(sentence_case("Mute"), "Mute");
-        assert_eq!(sentence_case("Convert MIDI-to-Audio"), "Convert MIDI-to-audio");
-        assert_eq!(sentence_case("Re-Pitch Clip"), "Re-pitch clip");
-    }
-}
-
 /// Replace zero ids with freshly allocated ones, recursively.
 pub fn assign_ids(cmd: &mut Command, p: &mut Project) {
     use crate::model::{AssetId, ClipId, TrackId};
@@ -304,5 +289,20 @@ pub fn assign_ids(cmd: &mut Command, p: &mut Project) {
         Command::AddAsset { asset } if asset.id.0 == 0 => asset.id = AssetId(p.alloc_id()),
         Command::Batch { commands, .. } => commands.iter_mut().for_each(|c| assign_ids(c, p)),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod sentence_case_tests {
+    #[test]
+    fn labels_read_in_sentence_case() {
+        use super::sentence_case;
+        assert_eq!(sentence_case("Track Volume Change"), "Track volume change");
+        assert_eq!(sentence_case("Insert MIDI Clip"), "Insert MIDI clip");
+        assert_eq!(sentence_case("Move Effect into Chain"), "Move effect into chain");
+        assert_eq!(sentence_case("Use Built-in Synth"), "Use built-in synth");
+        assert_eq!(sentence_case("Mute"), "Mute");
+        assert_eq!(sentence_case("Convert MIDI-to-Audio"), "Convert MIDI-to-audio");
+        assert_eq!(sentence_case("Re-Pitch Clip"), "Re-pitch clip");
     }
 }

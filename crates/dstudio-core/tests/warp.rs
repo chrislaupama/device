@@ -453,7 +453,7 @@ fn looped_clip_snapshot_carries_its_loop_in_content_frames() {
     let l = AudioLoop { on: true, start: 2 * PPQ, end: 4 * PPQ, length: 16 * PPQ };
     d.execute(Command::SetClipLoop { clip: c, clip_loop: Some(l) }, Origin::User).unwrap();
     assert_eq!(d.project().clip_length_ticks(d.project().clip(c).unwrap()), 16 * PPQ);
-    assert_eq!(d.undo_label().as_deref(), Some("Clip Loop"));
+    assert_eq!(d.undo_label(), Some("Clip Loop"));
     let (s, _) = snapshot::build(d.project(), RATE, &HashMap::from([(a, 7)]));
     let cs = &s.tracks[0].clips[0];
     assert_eq!((cs.length, cs.clip_loop), (8 * 48_000, Some((48_000, 2 * 48_000))));

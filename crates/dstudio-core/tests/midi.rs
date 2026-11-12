@@ -106,8 +106,7 @@ fn snapshot_emits_notes_in_frames_cut_at_clip_end() {
 #[test]
 fn v1_project_files_without_midi_still_load() {
     let dir = tempfile::tempdir().unwrap();
-    let mut p = Project::default();
-    p.name = "Old".into();
+    let p = Project { name: "Old".into(), ..Default::default() };
     persist::save(&p, dir.path()).unwrap();
     // Strip the midi_clips field to simulate a file written before MIDI existed.
     let path = dir.path().join("project.json");

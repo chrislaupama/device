@@ -13,7 +13,7 @@ use std::time::Instant;
 fn pattern(steps: u16, rate: StepRate, every: u16, repeat: i32) -> StepPattern {
     let mut p = StepPattern { rate, steps, ..StepPattern::default() };
     for pad in 0..16u8 {
-        for s in (0..steps).filter(|s| (s + pad as u16) % every == 0) {
+        for s in (0..steps).filter(|s| (s + pad as u16).is_multiple_of(every)) {
             p = p.toggled(36 + pad, s).with_lane(36 + pad, s, StepLane::Repeat, repeat).with_lane(
                 36 + pad,
                 s,
