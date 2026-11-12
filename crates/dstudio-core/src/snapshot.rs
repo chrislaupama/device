@@ -73,6 +73,10 @@ pub struct TrackSnapshot {
     pub track_id: u64,
     pub gain: f32,
     pub pan: f32,
+    /// Channel strip (spec 005): linear trim, width (1 = unchanged) and mono fold.
+    pub trim: f32,
+    pub width: f32,
+    pub mono: bool,
     pub mute: bool,
     pub solo: bool,
     pub clips: Vec<ClipSnapshot>,
@@ -157,6 +161,9 @@ pub fn build_full(
             track_id: t.id.0,
             gain: t.gain,
             pan: t.pan,
+            trim: t.trim_gain(),
+            width: t.width,
+            mono: t.mono,
             mute: t.mute,
             solo: t.solo,
             clips: t

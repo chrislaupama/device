@@ -164,6 +164,8 @@ void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float
 void kernel_add_scaled2(float* __restrict dst_l, float* __restrict dst_r, const float* __restrict src_l,
                         const float* __restrict src_r, float gain_l, float gain_r, uint32_t n) noexcept;
 void kernel_scale(float* __restrict buf, float gain, uint32_t n) noexcept;
+// In place: l' = a l + b r, r' = b l + a r (the channel-strip matrix).
+void kernel_strip(float* __restrict l, float* __restrict r, float a, float b, uint32_t n) noexcept;
 // dst_l += src_l * gain_l[i], dst_r += src_r * gain_r[i]
 void kernel_add_mul2(float* __restrict dst_l, float* __restrict dst_r, const float* __restrict src_l,
                      const float* __restrict src_r, const float* __restrict gain_l, const float* __restrict gain_r,

@@ -194,6 +194,9 @@ struct Args {
     /// and B pre-fader, Instrument to A), the mixer open with the Sends sections expanded.
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
     returns_review: u8,
+    /// review-strip-trim: the default project, Audio selected, its channel strip at -6.0 dB trim,
+    /// 150 % width, mono on (spec 005).
+    strip_review: bool,
     /// review-transport-sig / review-transport-key: tempo 97.5, 6/8 and A minor set, with the
     /// transport bar's Sig menu (1) or key picker (2) open.
     transport_review: u8,
@@ -512,6 +515,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.returns_review = 2;
                 }
+                "review-strip-trim" => {
+                    a.reference_default = true;
+                    a.strip_review = true;
+                }
                 "review-track-rename" => {
                     a.reference_default = true;
                     a.track_rename_review = true;
@@ -566,7 +573,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1962,6 +1969,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    if args.strip_review {
+        let mut c = ctl.borrow_mut();
+        let audio = c.project().tracks[0].id;
+        c.set_track_trim(audio, -6.0);
+        c.strip_gesture_end();
+        c.set_track_width(audio, 1.5);
+        c.strip_gesture_end();
+        c.toggle_track_mono(audio);
+        c.select_track(audio);
+    }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,
         // recording from bar 2 with 3 s of a decaying 220 Hz tone rendered so far.
@@ -2240,6 +2257,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.set_track_pan(TrackId(id as u64), p);
         }
     });
+    on!(on_track_trim, |c, id: i32, db: f32| {
+        c.set_track_trim(TrackId(id as u64), db);
+    });
+    on!(on_track_width, |c, id: i32, w: f32| {
+        c.set_track_width(TrackId(id as u64), w);
+    });
+    on!(on_track_mono, |c, id: i32| {
+        c.toggle_track_mono(TrackId(id as u64));
+    });
+    on!(on_strip_gesture_end, |c| c.strip_gesture_end());
     on!(on_master_volume, |c, p: f32| c.set_master_gain(gain_from_slider(p)));
     on!(on_sel_fader_moved, |c, f: f32| {
         if let Some(t) = c.selected_track {
