@@ -4,7 +4,7 @@ Status: Building · Spec: 003 · Issue: none
 
 ## Problem
 
-Device Studio plays instrument tracks only from notes drawn in the piano roll or imported from MIDI
+Device plays instrument tracks only from notes drawn in the piano roll or imported from MIDI
 files. Nobody can play a MIDI keyboard into it, hear an instrument while playing, or record a
 performance. On instrument tracks the R (arm) and I (monitor) buttons only say "MIDI recording is
 not implemented yet". The engine has no MIDI input at all, on any platform.
