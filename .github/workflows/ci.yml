@@ -484,10 +484,8 @@ jobs:
           grep -h -E "^self-test" "$RUNNER_TEMP/selftest.log" "$RUNNER_TEMP/selftest-audio.log"
           if [ "$shot_status" -ne 0 ] || [ ! -s app-linux.png ]; then echo "::error title=Screenshot failed (Linux)::exit status $shot_status"; exit 1; fi
           [ "$plain_status" -eq 0 ] && [ "$audio_status" -eq 0 ]
-      # Windows exits with code 0x87A after a run that passed (not yet
-      # explained, see engine/README.md), so the exit code is printed but not
-      # checked; a missing screenshot or self-test summary, or a failed check,
-      # fails the step.
+      # A non-zero exit code, a missing screenshot or self-test summary, or a
+      # failed check fails the step.
       - name: App — screenshot (Windows, WARP)
         if: runner.os == 'Windows' && steps.changes.outputs.run == 'true'
         timeout-minutes: 5
@@ -502,6 +500,7 @@ jobs:
           Get-Content shot-windows-stderr.txt
           "screenshot run exit code: 0x{0:X8}" -f $p.ExitCode
           if (-not (Test-Path app-windows.png)) { throw "no screenshot" }
+          if ($p.ExitCode -ne 0) { throw "the app exited with 0x{0:X8}" -f $p.ExitCode }
       # The full self-test under WARP takes about 30 minutes (the software
       # renderer is capped at two frames in flight so it no longer runs out of
       # memory), so pull requests skip it unless they carry the
@@ -529,6 +528,7 @@ jobs:
           if (-not $line) { Get-Content selftest-windows-stderr.txt -Tail 30; throw "no self-test summary" }
           $line.Value
           if ($line.Groups[1].Value -ne $line.Groups[2].Value) { throw "self-test failures" }
+          if ($p.ExitCode -ne 0) { throw "the self-test passed but the app exited with 0x{0:X8}" -f $p.ExitCode }
       - name: Upload app screenshots and self-test logs
         if: steps.changes.outputs.run == 'true' && !cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

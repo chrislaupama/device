@@ -1050,10 +1050,41 @@ fn synth_test_state(device: dstudio_core::DeviceId) -> dstudio_core::Command {
 }
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("device-studio: {e}");
-        std::process::exit(1);
+    let code = match run() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("device-studio: {e}");
+            1
+        }
+    };
+    exit_now(code);
+}
+
+/// End the process with `code` once `run` has returned and everything it owns is dropped.
+///
+/// On Windows a normal exit (returning from `main`, or `std::process::exit`) reported
+/// 0x87A instead of our code after any run that had opened the window: something in the
+/// graphics stack ends the process with its own code while its DLLs unload, with the wgpu
+/// device still alive in Slint's thread-local backend. Nothing of ours is left to run at
+/// that point (the project, settings and engine are closed inside `run`), so the process
+/// is ended directly, which skips DLL unloading and gives the caller the real result.
+#[cfg(windows)]
+fn exit_now(code: i32) -> ! {
+    use std::io::Write;
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn TerminateProcess(process: *mut std::ffi::c_void, exit_code: u32) -> i32;
     }
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // SAFETY: both calls take no pointers from us; the pseudo-handle is always valid.
+    unsafe { TerminateProcess(GetCurrentProcess(), code as u32) };
+    std::process::exit(code)
+}
+
+#[cfg(not(windows))]
+fn exit_now(code: i32) -> ! {
+    std::process::exit(code)
 }
 
 /// AppKit adds Start Dictation, Emoji & Symbols and Enter Full Screen to any Edit and View

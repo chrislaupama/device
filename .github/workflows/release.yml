@@ -316,6 +316,7 @@ jobs:
           $p = Start-Process -FilePath (Join-Path $dir 'device-studio.exe') -ArgumentList '--state', 'reference-default', '--screenshot', $shot -NoNewWindow -Wait -PassThru
           "exit code: 0x{0:X8}" -f $p.ExitCode
           if (-not (Test-Path $shot)) { throw "the installed app did not render" }
+          if ($p.ExitCode -ne 0) { throw "the installed app exited with 0x{0:X8}" -f $p.ExitCode }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package-windows
