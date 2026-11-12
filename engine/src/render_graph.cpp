@@ -190,7 +190,8 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
 }
 
 const char* validate_lane(const se_auto_lane_desc& d) noexcept {
-    if (d.target > SE_AUTO_BUILTIN) return "invalid automation target";
+    if (d.target > SE_AUTO_MONO) return "invalid automation target";
+    if ((d.flags & ~static_cast<uint32_t>(SE_AUTO_FLAG_STEPPED)) != 0) return "unknown automation lane flags";
     if (d.target == SE_AUTO_SYNTH && d.synth_param >= SE_SYNTH_P_COUNT) return "invalid synth parameter";
     if (d.point_count > 0 && d.points == nullptr) return "point_count > 0 but points == NULL";
     float lo = -std::numeric_limits<float>::infinity(), hi = std::numeric_limits<float>::infinity();
@@ -207,6 +208,14 @@ const char* validate_lane(const se_auto_lane_desc& d) noexcept {
 
 namespace {
 
+// The track's static mute, unless a mute lane replaces it (SE_AUTO_MUTE).
+bool static_mute(const se_track_desc_v6& td) noexcept {
+    if (td.mute == 0) return false;
+    for (uint32_t i = 0; i < td.lane_count; ++i)
+        if (td.lanes[i].target == SE_AUTO_MUTE && td.lanes[i].point_count > 0) return false;
+    return true;
+}
+
 uint32_t add_lane(RenderGraph& g, const se_auto_lane_desc& d) {
     AutoLane l;
     l.point_begin = static_cast<uint32_t>(g.auto_points.size());
@@ -216,6 +225,7 @@ uint32_t add_lane(RenderGraph& g, const se_auto_lane_desc& d) {
     l.synth_param = d.synth_param;
     l.param_id = d.param_id;
     l.device_id = d.device_id;
+    l.step = (d.flags & SE_AUTO_FLAG_STEPPED) != 0;
     const std::size_t at = g.auto_points.size();
     g.auto_points.resize(at + d.point_count);
     for (uint32_t i = 0; i < d.point_count; ++i)
@@ -374,6 +384,9 @@ int32_t apply_strips(RenderGraph& g, const se_session_desc_v10& desc, std::strin
         }
         TrackNode& node = g.tracks[it->second];
         strip_matrix(st.trim, st.width, st.mono != 0, node.strip_a, node.strip_b);
+        node.strip_trim = st.trim;
+        node.strip_width = st.width;
+        node.strip_mono = st.mono != 0;
         node.strip_on = node.strip_a != 1.0f || node.strip_b != 0.0f;
     }
     return SE_OK;
@@ -502,7 +515,7 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
     for (std::size_t t = 0; t < n; ++t) {
         TrackNode& node = g.tracks[t];
         const se_track_desc_v6& td = desc.tracks[t];
-        const bool on = td.mute == 0;
+        const bool on = !static_mute(td);
         if (node.is_return) {
             node.main_on = on && (!solo_return || td.solo != 0);
             node.send_live = false;
@@ -678,7 +691,7 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
         node.gain = td.gain;
         node.pan = td.pan;
         // Mute always wins; with any solo active only soloed tracks are audible.
-        node.audible = td.mute == 0 && (!any_solo || td.solo != 0);
+        node.audible = !static_mute(td) && (!any_solo || td.solo != 0);
         node.clip_begin = static_cast<uint32_t>(g->clips.size());
         node.arm = td.arm != 0;
         node.monitor = td.monitor != 0;
@@ -811,6 +824,28 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
                 node.vol_lane = static_cast<int32_t>(add_lane(*g, *d));
             if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_PAN; }))
                 node.pan_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_MUTE; }))
+                node.mute_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_TRIM; }))
+                node.trim_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_WIDTH; }))
+                node.width_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_MONO; }))
+                node.mono_lane = static_cast<int32_t>(add_lane(*g, *d));
+            // Power switch lanes (SE_AUTO_DEVICE_ON), one per device.
+            const auto on_lane = [&](uint64_t device_id) -> int32_t {
+                const auto* d = last_of([device_id](const se_auto_lane_desc& l) {
+                    return l.target == SE_AUTO_DEVICE_ON && l.device_id == device_id;
+                });
+                return d != nullptr ? static_cast<int32_t>(add_lane(*g, *d)) : -1;
+            };
+            if (node.has_instrument_plugin) node.iplug_on_lane = on_lane(td.instrument_plugin->device_id);
+            node.switch_lanes = node.mute_lane >= 0 || node.trim_lane >= 0 || node.width_lane >= 0 ||
+                                node.mono_lane >= 0 || node.iplug_on_lane >= 0;
+            for (uint32_t i = 0; i < node.fx_count; ++i) {
+                FxSlot& slot = g->fx[node.fx_begin + i];
+                slot.on_lane = on_lane(slot.device_id);
+            }
             node.synth_lane_begin = static_cast<uint32_t>(g->lanes.size());
             if (node.instrument && !node.has_instrument_plugin)
                 for (uint16_t sp = 0; sp < SE_SYNTH_P_COUNT; ++sp)

@@ -153,6 +153,17 @@ pub enum AutomationTarget {
     /// Built-in device parameter (crate::builtin), plain value in the
     /// parameter's unit. `device_type` is the definition id.
     Builtin { device: DeviceId, device_type: String, param: String },
+    /// Track mute: 1 = muted, 0 = playing (stepped).
+    Mute,
+    /// A device's power switch (insert or instrument): 1 = on, 0 = off
+    /// (stepped). `name` is the device's display name, for the lane pill.
+    DeviceOn { device: DeviceId, name: String },
+    /// Channel-strip trim in dB (`Track::TRIM_RANGE_DB`).
+    Trim,
+    /// Channel-strip stereo width, 0..2 (1 = unchanged).
+    Width,
+    /// Channel-strip mono fold: 1 = mono (stepped).
+    Mono,
 }
 
 pub const VOLUME_MIN_DB: f32 = -60.0;
@@ -166,7 +177,34 @@ impl AutomationTarget {
             AutomationTarget::Synth { param } => param.range(),
             AutomationTarget::Plugin { .. } => (0.0, 1.0),
             AutomationTarget::Builtin { .. } => self.builtin_param().map(|p| (p.min, p.max)).unwrap_or((0.0, 1.0)),
+            AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } | AutomationTarget::Mono => (0.0, 1.0),
+            AutomationTarget::Trim => crate::Track::TRIM_RANGE_DB,
+            AutomationTarget::Width => crate::Track::WIDTH_RANGE,
         }
+    }
+
+    /// Stepped targets hold each point's value until the next point (switches
+    /// and choices: no in-between values). Part of the engine contract.
+    pub fn stepped(&self) -> bool {
+        match self {
+            AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } | AutomationTarget::Mono => true,
+            AutomationTarget::Builtin { .. } => self.builtin_param().is_some_and(|p| p.is_discrete()),
+            _ => false,
+        }
+    }
+
+    /// Channel-strip targets (volume, pan, mute, trim, width, mono): the track's own controls,
+    /// not a device's.
+    pub fn is_channel(&self) -> bool {
+        matches!(
+            self,
+            AutomationTarget::Volume
+                | AutomationTarget::Pan
+                | AutomationTarget::Mute
+                | AutomationTarget::Trim
+                | AutomationTarget::Width
+                | AutomationTarget::Mono
+        )
     }
 
     pub fn logarithmic(&self) -> bool {
@@ -196,6 +234,11 @@ impl AutomationTarget {
                 Some(def) => (def.name.into(), def.param(param).map(|p| p.name).unwrap_or(param).into()),
                 None => ("Device".into(), param.clone()),
             },
+            AutomationTarget::Mute => ("Track".into(), "Mute".into()),
+            AutomationTarget::Trim => ("Track".into(), "Trim".into()),
+            AutomationTarget::Width => ("Track".into(), "Width".into()),
+            AutomationTarget::Mono => ("Track".into(), "Mono".into()),
+            AutomationTarget::DeviceOn { name, .. } => (name.clone(), "On".into()),
         }
     }
 }
@@ -258,6 +301,9 @@ impl AutomationLane {
         if b.time == a.time {
             return Some(b.value);
         }
+        if self.target.stepped() {
+            return Some(a.value);
+        }
         let s = shape((t - a.time) as f32 / (b.time - a.time) as f32, a.curve);
         Some(lerp_value(a.value, b.value, s, self.target.logarithmic()))
     }
@@ -304,6 +350,42 @@ mod tests {
         assert_eq!(l.value_at(200), Some(-6.0), "a vertical step takes the later point at its time");
         assert_eq!(l.value_at(10_000), Some(-6.0));
         assert_eq!(lane(&[]).value_at(5), None);
+    }
+
+    #[test]
+    fn switch_lanes_hold_each_value() {
+        let mut l = lane(&[(0, 0.0, 0.0), (100, 1.0, 0.0), (200, 0.0, 0.0)]);
+        l.target = AutomationTarget::Mute;
+        assert!(l.target.stepped());
+        assert_eq!(l.value_at(99), Some(0.0), "no ramp between switch points");
+        assert_eq!(l.value_at(100), Some(1.0));
+        assert_eq!(l.value_at(199), Some(1.0));
+        assert_eq!(l.value_at(200), Some(0.0));
+        l.target = AutomationTarget::DeviceOn { device: DeviceId(7), name: "EQ".into() };
+        assert_eq!(l.value_at(150), Some(1.0));
+        assert_eq!(l.target.range(), (0.0, 1.0));
+        assert_eq!(l.target.labels(), ("EQ".to_string(), "On".to_string()));
+        assert_eq!(AutomationTarget::Mute.labels(), ("Track".to_string(), "Mute".to_string()));
+        assert!(!AutomationTarget::Volume.stepped() && !AutomationTarget::Pan.stepped());
+        assert!(AutomationTarget::Mono.stepped() && !AutomationTarget::Trim.stepped() && !AutomationTarget::Width.stepped());
+        assert_eq!((AutomationTarget::Trim.range(), AutomationTarget::Width.range()), ((-24.0, 24.0), (0.0, 2.0)));
+        assert!(AutomationTarget::Mono.is_channel() && !l.target.is_channel());
+    }
+
+    #[test]
+    fn switch_targets_round_trip_through_json() {
+        for t in [
+            AutomationTarget::Mute,
+            AutomationTarget::DeviceOn { device: DeviceId(3), name: "Delay".into() },
+            AutomationTarget::Trim,
+            AutomationTarget::Width,
+            AutomationTarget::Mono,
+        ] {
+            let lane = AutomationLane { target: t.clone(), enabled: true, points: vec![AutoPoint { time: 0, value: 1.0, curve: 0.0 }] };
+            let json = serde_json::to_string(&lane).unwrap();
+            let back: AutomationLane = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, lane, "{json}");
+        }
     }
 
     #[test]

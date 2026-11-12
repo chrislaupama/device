@@ -2401,7 +2401,7 @@ fn steps() -> Vec<Step> {
                 with_clips.sort_by_key(|(mute, _)| *mute);
                 let with_clips: Vec<dstudio_core::TrackId> = with_clips.into_iter().map(|(_, id)| id).collect();
                 let selected = c.selected_track;
-                let (Some(ra), Some(rb)) = (c.add_return_track(), c.add_return_track()) else { return };
+                let (Some(ra), Some(rb)) = (c.add_return_track(true), c.add_return_track(true)) else { return };
                 let plugin = dstudio_core::PluginRef {
                     format: dstudio_core::PluginFormat::Clap,
                     id: "studio.dstudio.test.gain".into(),
@@ -3872,9 +3872,6 @@ fn route_row(ctl: &Ctl, i: usize) -> (f32, f32) {
     (x + 30.0, y + 4.0 + i as f32 * 20.0 + 10.0)
 }
 
-/// Return tracks, sends and Out through the interface (spec 002, A8): a return created from the
-/// Sends tab's "+", a send level drag (one undo step), Pre, the Out menu, the mixer's Sends
-/// section, the Returns pill, removing a send, and removing the return with its routing.
 /// Channel strip trim, width and mono (spec 005): drag, reset, the switch and undo.
 fn strip_steps() -> Vec<Step> {
     use Step::*;
@@ -4090,14 +4087,33 @@ fn plugin_folder_steps() -> Vec<Step> {
     ]
 }
 
+/// Return tracks, sends and Out through the interface (spec 002, A8): Return A from the Sends
+/// tab's placeholder, a send level drag (one undo step), the Pre chip, Return B from "+" with a
+/// silent knob that a drag turns on, the Out menu (Master only), the Returns pill, the mixer's
+/// Sends section and its send options, and removing a return with its routing.
 fn returns_steps() -> Vec<Step> {
     use Step::*;
     let u = 0.85;
     let n0 = Rc::new(std::cell::Cell::new(0usize));
     let lv = Rc::new(std::cell::Cell::new(0usize));
     let (n1, n2, n3, lv1) = (n0.clone(), n0.clone(), n0.clone(), lv.clone());
-    // Sends tab rows start 128 pt down the channel strip; each is 42 units tall.
-    let row_y = move |k: f32| bottom_y() + 128.0 * u + k * 42.0;
+    // Sends tab: knobs two to a row (cells 74 wide at x 10 and 86, 78 tall from 6 below the tab
+    // rule at 128 pt); the knob's centre is 33 below the cell top, the Post / Pre chip's 6.
+    let sends_y = move || bottom_y() + 128.0 * u;
+    let knob =
+        move |k: usize| (bottom_x() + if k.is_multiple_of(2) { 47.0 } else { 123.0 }, sends_y() + 6.0 + (k / 2) as f32 * 78.0 + 33.0);
+    let chip = move |k: usize| (bottom_x() + if k.is_multiple_of(2) { 47.0 } else { 123.0 }, sends_y() + 6.0 + (k / 2) as f32 * 78.0 + 6.0);
+    // Mixer: the letter tag of send row `r` on strip 0, in the expanded Sends section of a
+    // project with `n` returns (rows stack upward from the Sends row 302 pt above the strip foot).
+    let tag = move |r: usize, n: usize| {
+        (bottom_x() + 8.0 * u + 9.0 * u, bottom_end() - 302.0 * u - (n as f32 * 20.0 + 4.0) * u + r as f32 * 20.0 * u + 10.0 * u)
+    };
+    let one_send = |c: &Controller, want_pre: bool| -> Result<(), String> {
+        let p = c.project();
+        let a = p.returns().next().map(|t| t.id).ok_or("no Return A")?;
+        let s = &p.tracks[0].sends;
+        (s.len() == 1 && s[0].target == a && s[0].pre_fader == want_pre).then_some(()).ok_or(format!("sends {s:?}"))
+    };
     vec![
         DoC(
             "returns: close the mixer, select track 1, Devices tab, show the Sends tab",
@@ -4117,31 +4133,15 @@ fn returns_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "returns: Sends tab open, no returns yet",
+            "returns: Sends tab open, no returns yet (only the Return A placeholder)",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
-                (s.get_strip_tab() == 1 && c.project().returns().count() == 0 && s.get_sel_can_send()).then_some(()).ok_or(format!(
-                    "tab {} returns {}",
-                    s.get_strip_tab(),
-                    c.project().returns().count()
-                ))
+                (s.get_strip_tab() == 1 && c.project().returns().count() == 0 && s.get_sel_can_send() && s.get_sel_sends().row_count() == 0)
+                    .then_some(())
+                    .ok_or(format!("tab {} returns {}", s.get_strip_tab(), c.project().returns().count()))
             }),
         ),
-        Do("returns: click '+' on the Sends tab", Box::new(move |a| click(a, bottom_x() + 154.0 * u, bottom_y() + 116.0 * u))),
-        Check(
-            "returns: the add-send menu offers only 'New return track'",
-            Box::new(|c, _| {
-                let l = c.route_menu_labels();
-                (l == ["New return track"]).then_some(()).ok_or(format!("{l:?}"))
-            }),
-        ),
-        DoC(
-            "returns: pick 'New return track'",
-            Box::new(|a, ctl| {
-                let (x, y) = route_row(ctl, 0);
-                click(a, x, y)
-            }),
-        ),
+        Do("returns: click the Return A placeholder", Box::new(move |a| click(a, knob(0).0, knob(0).1 + 10.0))),
         Check(
             "returns: Return A added after the tracks, track 1 sends to it at 0 dB post-fader (one 'Add Send' step)",
             Box::new(move |c, _| {
@@ -4166,14 +4166,14 @@ fn returns_steps() -> Vec<Step> {
             }),
         ),
         DoC(
-            "returns: drag the send knob down 40 pt (coalescing window 0: only the held gesture merges the moves)",
+            "returns: drag the Return A knob down 40 pt (coalescing window 0: only the held gesture merges the moves)",
             Box::new(move |a, ctl| {
                 {
                     let mut c = ctl.borrow_mut();
                     lv.set(c.doc.history_labels().iter().filter(|l| l.as_str() == "Send Level Change").count());
                     c.doc.coalesce_window = std::time::Duration::ZERO;
                 }
-                let (x, y) = (bottom_x() + 101.0, row_y(0.0) + 21.0);
+                let (x, y) = knob(0);
                 drag(a, x, y, x, y + 40.0);
                 ctl.borrow_mut().doc.coalesce_window = std::time::Duration::from_millis(750);
             }),
@@ -4186,55 +4186,67 @@ fn returns_steps() -> Vec<Step> {
                 (lvl < 0.9 && lvl > 0.0 && n == lv1.get() + 1).then_some(()).ok_or(format!("level {lvl}, steps {n} (was {})", lv1.get()))
             }),
         ),
-        Do("returns: click the Pre switch", Box::new(move |a| click(a, bottom_x() + 134.0, row_y(0.0) + 26.5))),
+        Do("returns: click the Post chip above the knob", Box::new(move |a| click(a, chip(0).0, chip(0).1))),
         Check(
             "returns: the send is pre-fader ('Send Pre-Fader')",
-            Box::new(|c, _| {
-                let pre = c.project().tracks[0].sends.first().is_some_and(|s| s.pre_fader);
-                (pre && c.doc.undo_label() == Some("Send Pre-Fader"))
-                    .then_some(())
-                    .ok_or(format!("pre {pre} undo {:?}", c.doc.undo_label()))
+            Box::new(move |c, _| {
+                one_send(c, true)?;
+                (c.doc.undo_label() == Some("Send Pre-Fader")).then_some(()).ok_or(format!("undo {:?}", c.doc.undo_label()))
             }),
         ),
-        Do("returns: open the Out menu", Box::new(|a| click(a, bottom_x() + 80.0, bottom_y() + 63.0 + 9.0))),
+        Do("returns: click '+' beside the Sends tab", Box::new(move |a| click(a, bottom_x() + 154.0 * u, bottom_y() + 116.0 * u))),
         Check(
-            "returns: Out lists Master (checked) and Return A",
-            Box::new(|c, _| {
-                let l = c.route_menu_labels();
-                (l == ["Master", "Return A"]).then_some(()).ok_or(format!("{l:?}"))
+            "returns: Return B added ('Add Return Track'), track 1 still selected with a silent knob for it",
+            Box::new(move |c, a| {
+                let p = c.project();
+                let names: Vec<&str> = p.returns().map(|t| t.name.as_str()).collect();
+                let rows: Vec<_> = a.global::<Studio>().get_sel_sends().iter().collect();
+                let ok = names == ["Return A", "Return B"]
+                    && c.selected_track == Some(p.tracks[0].id)
+                    && rows.len() == 2
+                    && rows[0].stored
+                    && !rows[1].stored
+                    && !rows[1].live
+                    && p.tracks[0].sends.len() == 1
+                    && c.doc.undo_label() == Some("Add Return Track");
+                ok.then_some(()).ok_or(format!(
+                    "returns {names:?}, selected {:?}, rows {}, sends {:?}, undo {:?}",
+                    c.selected_track,
+                    rows.len(),
+                    p.tracks[0].sends,
+                    c.doc.undo_label()
+                ))
             }),
         ),
-        DoC(
-            "returns: route Out to Return A",
-            Box::new(|a, ctl| {
-                let (x, y) = route_row(ctl, 1);
-                click(a, x, y)
+        Do(
+            "returns: drag the silent Return B knob up 60 pt",
+            Box::new(move |a| {
+                let (x, y) = knob(1);
+                drag(a, x, y, x, y - 60.0);
             }),
         ),
         Check(
-            "returns: track 1 plays into Return A ('Output Change'), the Out field says so",
-            Box::new(|c, a| {
-                let r = c.project().returns().next().map(|t| t.id);
-                let out = c.project().tracks[0].output;
-                let txt = a.global::<Studio>().get_sel_out_text();
-                (out.is_some() && out == r && txt == "Return A" && c.doc.undo_label() == Some("Output Change"))
-                    .then_some(())
-                    .ok_or(format!("out {out:?} text {txt} undo {:?}", c.doc.undo_label()))
+            "returns: the drag stored a post-fader send to Return B above −∞",
+            Box::new(|c, _| {
+                let b = c.project().returns().nth(1).map(|t| t.id);
+                let s = c.project().tracks[0].sends.iter().find(|s| Some(s.target) == b).copied();
+                s.filter(|s| s.level > 0.0 && !s.pre_fader).map(|_| ()).ok_or(format!("{:?}", c.project().tracks[0].sends))
             }),
         ),
         Do("returns: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("returns: the Return B slot is silent again", Box::new(move |c, _| one_send(c, true))),
+        Do("returns: open the Out menu", Box::new(|a| click(a, bottom_x() + 80.0, bottom_y() + 63.0 + 9.0))),
         Check(
-            "returns: Out back on Master",
-            Box::new(|c, a| {
-                let txt = a.global::<Studio>().get_sel_out_text();
-                (c.project().tracks[0].output.is_none() && txt == "Master")
-                    .then_some(())
-                    .ok_or(format!("out {:?} text {txt}", c.project().tracks[0].output))
+            "returns: Out lists only Master (send to a return instead)",
+            Box::new(|c, _| {
+                let l = c.route_menu_labels();
+                (l == ["Master"]).then_some(()).ok_or(format!("{l:?}"))
             }),
         ),
+        Do("returns: Escape closes the menu", Box::new(|a| key(a, Key::Escape, false, false))),
         Do("returns: click the Returns pill", Box::new(|a| click(a, tracks_x() + 90.0, geo().timeline_y + 14.0))),
         Check(
-            "returns: return rows hidden, the pill unlit, the return still plays",
+            "returns: return rows hidden, the pill unlit, the returns still play",
             Box::new(move |c, a| {
                 let s = a.global::<Studio>();
                 let rows = s.get_tracks().row_count();
@@ -4242,18 +4254,19 @@ fn returns_steps() -> Vec<Step> {
                     && !s.get_returns_shown()
                     && rows == n2.get()
                     && s.get_pinned_h() == 0.0
-                    && c.project().returns().count() == 1)
-                    .then_some(())
-                    .ok_or(format!("shown {} rows {rows} pinned {}", c.returns_shown(), s.get_pinned_h()))
+                    && c.project().returns().count() == 2
+                    && c.routing.menu.is_none())
+                .then_some(())
+                .ok_or(format!("shown {} rows {rows} pinned {} menu {}", c.returns_shown(), s.get_pinned_h(), c.routing.menu.is_some()))
             }),
         ),
         Do("returns: click the Returns pill again", Box::new(|a| click(a, tracks_x() + 90.0, geo().timeline_y + 14.0))),
         Check(
-            "returns: the return row is pinned above the master row",
+            "returns: the return rows are pinned above the master row",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
-                let pinned = s.get_tracks().iter().filter(|t| t.pinned && t.is_return && t.letter == "A").count();
-                (c.returns_shown() && s.get_pinned_h() > 0.0 && pinned == 1).then_some(()).ok_or(format!(
+                let pinned = s.get_tracks().iter().filter(|t| t.pinned && t.is_return).count();
+                (c.returns_shown() && s.get_pinned_h() > 0.0 && pinned == 2).then_some(()).ok_or(format!(
                     "shown {} pinned h {} rows {pinned}",
                     c.returns_shown(),
                     s.get_pinned_h()
@@ -4274,43 +4287,57 @@ fn returns_steps() -> Vec<Step> {
             Box::new(|a| click(a, bottom_x() + 8.0 * 0.85 + 14.0, bottom_end() - 302.0 * 0.85 + 11.0 * 0.85)),
         ),
         Check(
-            "returns: every strip's Sends section expanded, the return strip has none",
+            "returns: every track strip shows one send row per return, the return strips none",
             Box::new(|c, a| {
                 let s = a.global::<Studio>();
                 let strips: Vec<_> = s.get_strips().iter().collect();
                 let ret = strips.iter().filter(|st| st.is_return).count();
-                (c.mixer_open && c.routing.sends_open && s.get_sends_open() && s.get_strip_sends().row_count() == 1 && ret == 1)
+                let ordinary = strips.len() - ret;
+                let rows = s.get_strip_sends().row_count();
+                (c.mixer_open
+                    && c.routing.sends_open
+                    && s.get_sends_open()
+                    && rows == ordinary * 2
+                    && ret == 2
+                    && s.get_strip_sends_max() == 2)
                     .then_some(())
-                    .ok_or(format!(
-                        "mixer {} open {} rows {} returns {ret}",
-                        c.mixer_open,
-                        c.routing.sends_open,
-                        s.get_strip_sends().row_count()
-                    ))
+                    .ok_or(format!("mixer {} open {} rows {rows} returns {ret}", c.mixer_open, c.routing.sends_open))
             }),
         ),
-        Do("returns: close the mixer", Box::new(|a| key(a, "X", true, true))),
-        Do("returns: click the send's remove button", Box::new(move |a| click(a, bottom_x() + 157.0, row_y(0.0) + 21.0))),
+        Do("returns: click the A tag on the first strip", Box::new(move |a| click(a, tag(0, 2).0, tag(0, 2).1))),
         Check(
-            "returns: send removed ('Remove Send')",
+            "returns: the send options list Post-fader, Pre-fader (checked), Reset to 0 dB and Remove send",
             Box::new(|c, _| {
-                (c.project().tracks[0].sends.is_empty() && c.doc.undo_label() == Some("Remove Send")).then_some(()).ok_or(format!(
-                    "sends {:?} undo {:?}",
-                    c.project().tracks[0].sends,
-                    c.doc.undo_label()
-                ))
-            }),
-        ),
-        Do("returns: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
-        Check(
-            "returns: send restored, still pre-fader",
-            Box::new(|c, _| {
-                let s = &c.project().tracks[0].sends;
-                (s.len() == 1 && s[0].pre_fader).then_some(()).ok_or(format!("{s:?}"))
+                let l = c.route_menu_labels();
+                let checked: Vec<bool> = c.routing.menu.as_ref().map(|m| m.items.iter().map(|i| i.2).collect()).unwrap_or_default();
+                (l == ["Post-fader", "Pre-fader", "Reset to 0 dB", "Remove send"] && checked == [false, true, false, false])
+                    .then_some(())
+                    .ok_or(format!("{l:?} {checked:?}"))
             }),
         ),
         DoC(
-            "returns: route track 1 to Return A, then delete Return A",
+            "returns: pick 'Remove send'",
+            Box::new(|a, ctl| {
+                let (x, y) = route_row(ctl, 3);
+                click(a, x, y)
+            }),
+        ),
+        Check(
+            "returns: send removed ('Remove Send'), its slot silent",
+            Box::new(|c, a| {
+                let row0 = a.global::<Studio>().get_strip_sends().row_data(0);
+                (c.project().tracks[0].sends.is_empty()
+                    && c.doc.undo_label() == Some("Remove Send")
+                    && row0.is_some_and(|r| !r.stored && !r.live))
+                .then_some(())
+                .ok_or(format!("sends {:?} undo {:?}", c.project().tracks[0].sends, c.doc.undo_label()))
+            }),
+        ),
+        Do("returns: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("returns: send restored, still pre-fader", Box::new(move |c, _| one_send(c, true))),
+        Do("returns: close the mixer", Box::new(|a| key(a, "X", true, true))),
+        DoC(
+            "returns: route track 1 to Return A (as an older project could), then delete Return A",
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
                 let (t, r) = (c.project().tracks[0].id, c.project().returns().next().map(|t| t.id));
@@ -4324,14 +4351,14 @@ fn returns_steps() -> Vec<Step> {
             "returns: deleting the return removed the send and reset Out, in one step",
             Box::new(move |c, _| {
                 let t = &c.project().tracks[0];
-                (c.project().returns().count() == 0 && t.sends.is_empty() && t.output.is_none() && c.project().tracks.len() == n3.get())
+                (c.project().returns().count() == 1 && t.sends.is_empty() && t.output.is_none() && c.project().tracks.len() == n3.get() + 1)
                     .then_some(())
                     .ok_or(format!("returns {} sends {:?} out {:?}", c.project().returns().count(), t.sends, t.output))
             }),
         ),
         Do("returns: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check(
-            "returns: undo brought back the return, the send and the routing",
+            "returns: undo brought back the return, the send and the routing; the Out menu lists the return it plays into",
             Box::new(|c, _| {
                 let t = &c.project().tracks[0];
                 let r = c.project().returns().next().map(|t| t.id);
@@ -4340,25 +4367,49 @@ fn returns_steps() -> Vec<Step> {
                     .ok_or(format!("return {r:?} sends {:?} out {:?}", t.sends, t.output))
             }),
         ),
+        Do("returns: open the Out menu", Box::new(|a| click(a, bottom_x() + 80.0, bottom_y() + 63.0 + 9.0))),
+        Check(
+            "returns: Out lists Master and Return A (checked)",
+            Box::new(|c, _| {
+                let l = c.route_menu_labels();
+                let checked: Vec<bool> = c.routing.menu.as_ref().map(|m| m.items.iter().map(|i| i.2).collect()).unwrap_or_default();
+                (l == ["Master", "Return A"] && checked == [false, true]).then_some(()).ok_or(format!("{l:?} {checked:?}"))
+            }),
+        ),
         DoC(
-            "returns: five more returns, each sent to from track 1 (six sends)",
+            "returns: pick Master",
+            Box::new(|a, ctl| {
+                let (x, y) = route_row(ctl, 0);
+                click(a, x, y)
+            }),
+        ),
+        Check(
+            "returns: track 1 back on Master ('Output Change')",
+            Box::new(|c, a| {
+                let txt = a.global::<Studio>().get_sel_out_text();
+                (c.project().tracks[0].output.is_none() && txt == "Master" && c.doc.undo_label() == Some("Output Change"))
+                    .then_some(())
+                    .ok_or(format!("out {:?} text {txt}", c.project().tracks[0].output))
+            }),
+        ),
+        DoC(
+            "returns: four more returns from '+' (six in all)",
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
                 let t = c.project().tracks[0].id;
-                for _ in 0..5 {
-                    c.new_return_with_send(t);
+                for _ in 0..4 {
+                    c.sends_add_return(t);
                 }
-                c.select_track(t);
                 c.ui_dirty = true;
             }),
         ),
         Check(
-            "returns: six sends, more than the Sends tab shows at once",
+            "returns: six knobs, more than the Sends tab shows at once",
             Box::new(|c, a| {
                 let n = a.global::<Studio>().get_sel_sends().row_count();
-                (c.project().tracks[0].sends.len() == 6 && n == 6)
+                (c.project().returns().count() == 6 && n == 6)
                     .then_some(())
-                    .ok_or(format!("sends {} rows {n}", c.project().tracks[0].sends.len()))
+                    .ok_or(format!("returns {} rows {n}", c.project().returns().count()))
             }),
         ),
         Do(
@@ -4367,30 +4418,26 @@ fn returns_steps() -> Vec<Step> {
                 dispatch(
                     a.window(),
                     WindowEvent::PointerScrolled {
-                        position: LogicalPosition::new(bottom_x() + 40.0, row_y(1.0)),
+                        position: LogicalPosition::new(bottom_x() + 40.0, sends_y() + 60.0),
                         delta_x: 0.0,
                         delta_y: -400.0,
                     },
                 );
             }),
         ),
-        // Scrolled to the end: the last row sits at the bottom of the list.
+        // Scrolled to the end: the last row of knobs sits at the bottom of the list.
         Do(
-            "returns: click the last send's remove button",
-            Box::new(move |a| click(a, bottom_x() + 157.0, bottom_y() + 324.0 * u - 4.0 - 21.0)),
+            "returns: double-click the last knob",
+            Box::new(move |a| double_click(a, bottom_x() + 123.0, bottom_y() + 324.0 * u - 4.0 - 78.0 + 33.0)),
         ),
         Check(
-            "returns: the sixth send (to the newest return) was removed",
+            "returns: track 1 sends to the newest return at 0 dB",
             Box::new(|c, _| {
                 let last = c.project().returns().last().map(|t| t.id);
-                let s = &c.project().tracks[0].sends;
-                (s.len() == 5 && last.is_some() && s.iter().all(|x| Some(x.target) != last) && c.doc.undo_label() == Some("Remove Send"))
-                    .then_some(())
-                    .ok_or(format!(
-                        "sends {:?} last {last:?} undo {:?}",
-                        s.iter().map(|x| x.target).collect::<Vec<_>>(),
-                        c.doc.undo_label()
-                    ))
+                let s = c.project().tracks[0].sends.iter().find(|x| Some(x.target) == last).copied();
+                s.filter(|s| (s.level - 1.0).abs() < 1e-6)
+                    .map(|_| ())
+                    .ok_or(format!("sends {:?} last {last:?}", c.project().tracks[0].sends))
             }),
         ),
         DoC(

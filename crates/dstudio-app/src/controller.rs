@@ -1141,6 +1141,10 @@ impl Controller {
     pub fn toggle_mute(&mut self, id: TrackId) {
         if let Some(t) = self.project().track(id) {
             let mute = !t.mute;
+            // An active Mute lane decides (written while armed and playing).
+            if self.auto_switch(Some(id), dstudio_core::AutomationTarget::Mute, t.mute) {
+                return;
+            }
             self.execute(Command::SetTrackMute { track: id, mute });
         }
     }
@@ -1234,6 +1238,9 @@ impl Controller {
     pub fn set_track_trim(&mut self, id: TrackId, db: f32) -> bool {
         let (lo, hi) = dstudio_core::Track::TRIM_RANGE_DB;
         let db = (db.clamp(lo, hi) * 10.0).round() / 10.0;
+        if self.auto_intercept(Some(id), dstudio_core::AutomationTarget::Trim, db) {
+            return false;
+        }
         if self.project().track(id).is_none_or(|t| t.trim_db == db) {
             return false;
         }
@@ -1248,6 +1255,9 @@ impl Controller {
     pub fn set_track_width(&mut self, id: TrackId, width: f32) -> bool {
         let (lo, hi) = dstudio_core::Track::WIDTH_RANGE;
         let width = (width.clamp(lo, hi) * 100.0).round() / 100.0;
+        if self.auto_intercept(Some(id), dstudio_core::AutomationTarget::Width, width) {
+            return false;
+        }
         if self.project().track(id).is_none_or(|t| t.width == width) {
             return false;
         }
@@ -1259,12 +1269,16 @@ impl Controller {
     }
 
     pub fn toggle_track_mono(&mut self, id: TrackId) -> bool {
-        let Some(mono) = self.project().track(id).map(|t| !t.mono) else { return false };
-        self.execute(Command::SetTrackMono { track: id, mono })
+        let Some(old) = self.project().track(id).map(|t| t.mono) else { return false };
+        if self.auto_switch(Some(id), dstudio_core::AutomationTarget::Mono, old) {
+            return false;
+        }
+        self.execute(Command::SetTrackMono { track: id, mono: !old })
     }
 
     /// A trim or width knob was released: the next drag is a new undo step.
     pub fn strip_gesture_end(&mut self) {
+        self.auto_write_end(|w| matches!(w.target, dstudio_core::AutomationTarget::Trim | dstudio_core::AutomationTarget::Width));
         self.doc.seal_coalescing();
     }
 
@@ -2186,15 +2200,16 @@ impl Controller {
             s.set_sel_name(t.name.clone().into());
             s.set_sel_instrument(t.kind == TrackKind::Instrument);
             s.set_sel_color(slint_color(track_color(t.color)));
-            s.set_sel_mute(t.mute);
+            s.set_sel_mute(self.switch_now(Some(t.id), &dstudio_core::AutomationTarget::Mute, t.mute));
             s.set_sel_solo(t.solo);
             s.set_sel_pan(t.pan);
             s.set_sel_pan_text(fmt_pan(t.pan).into());
-            s.set_sel_trim(t.trim_db);
-            s.set_sel_trim_text(fmt_trim(t.trim_db).into());
-            s.set_sel_width(t.width);
-            s.set_sel_width_text(fmt_width(t.width).into());
-            s.set_sel_mono(t.mono);
+            let (trim, width, mono) = self.strip_now(t.id);
+            s.set_sel_trim(trim);
+            s.set_sel_trim_text(fmt_trim(trim).into());
+            s.set_sel_width(width);
+            s.set_sel_width_text(fmt_width(width).into());
+            s.set_sel_mono(mono);
             let db = gain_to_db(t.gain);
             s.set_sel_fader(fader_from_db(db));
             s.set_sel_db_text(fmt_db(db).into());
@@ -2203,18 +2218,15 @@ impl Controller {
         s.set_mixer_open(self.mixer_open);
         let first_return = p.ordinary_track_count();
         // Each strip's range in the strip-sends model (push_routing: ordinary tracks in order,
-        // one row per send to an existing return).
+        // one send slot per return track).
+        let slots = p.returns().count() as i32;
         let mut send_first = 0;
         let strips: Vec<MixerStrip> = p
             .tracks
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let n = if t.is_return() {
-                    0
-                } else {
-                    t.sends.iter().filter(|x| p.track(x.target).is_some_and(|r| r.is_return())).count() as i32
-                };
+                let n = if t.is_return() { 0 } else { slots };
                 send_first += n;
                 (i, t, send_first - n, n)
             })
@@ -2228,7 +2240,7 @@ impl Controller {
                 group_start: t.is_return() && i == first_return,
                 color: slint_color(track_color(t.color)),
                 selected: Some(t.id) == self.selected_track,
-                mute: t.mute,
+                mute: self.switch_now(Some(t.id), &dstudio_core::AutomationTarget::Mute, t.mute),
                 solo: t.solo,
                 pan: t.pan,
                 pan_text: mixer::fmt_strip_pan(t.pan).into(),

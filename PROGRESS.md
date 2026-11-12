@@ -546,3 +546,40 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
     taken back), and renaming a section keeps the clip open in the Clip tab.
   - Saving names the project after its folder (the title and `project.json` used to stay "Untitled"), and the window
     title says "Edited" while there are unsaved changes.
+
+### 2026-11-12: return tracks and sends read as one pair
+
+- A return track is the shared effect track ("Return A"); a send is how much of one track goes into it. Every
+  ordinary track now has a send slot for every return, so the two always appear together: the channel strip's Sends
+  tab shows one knob per return (two to a row, like the Input tab) with the return's name, its dB value and a
+  Post / Pre chip, and the mixer's Sends section one row per return on every strip. A slot with nothing sent is
+  silent and dim; moving it stores a post-fader send ("Send Level Change"), double-clicking sets 0 dB.
+- The "+" beside Sends (Sends tab and mixer strips) adds the next lettered return ("Add Return Track") and keeps the
+  track selected; the add-send menu is gone. With no returns, the Sends tab shows a dim "Return A" placeholder that
+  creates the return and a 0 dB send, and the Timeline's Returns pill adds Return A.
+- Mixer: a send row's letter tag opens its options: Post-fader, Pre-fader, Reset to 0 dB, Remove send.
+- Out lists Master only (send to a return to share an effect); a track an older project routed into a return lists
+  that return too, so it can be moved back. Spec 002 is updated to match.
+- Tests: `every_return_is_a_send_slot_on_every_track`, `moving_a_silent_send_turns_it_on`,
+  `returns_pill_and_out_menu`, and the self-test's returns section rewritten for the new flow.
+- Not yet: sends from one return track into another (needs engine routing and solo rules), and return rows in the
+  timeline without a pan knob.
+
+### 2026-11-12: automate any device control, mute and device on/off
+
+- Every device control's right-click menu starts with "Automate <parameter>": built-in device knobs, buttons, choice
+  switches and menus, plugin cards, and every Synth control (knobs, faders, pills, switches, mod matrix). A device's
+  power switch offers "Automate On"; the channel's volume, pan and M (track header, inspector, mixer) and the
+  inspector's trim, width and mono offer "Automate <name>". Choosing one shows the lanes with that parameter.
+- New lane targets: Track › Mute, Trim, Width, Mono and <device> › On (listed last under each device in the lane
+  picker). Mute, Mono and On are stepped: a value holds until the next point. Built-in choice parameters are stepped
+  too. The M button, the inspector's trim, width and mono, and power switches follow an active lane; clicking a switch
+  while armed and playing writes one step at the playhead. Bounce to new track now carries the strip's trim, width and
+  mono (and their lanes) over to the new track, since the render is taken before them.
+- Lane labels read in the parameter's own units, taken from the device's own text (Hz, dB, ms, ct, choice names,
+  On/Off, the Synth's legacy parameters in Hz, ct, dB, ms and %), and a hovered or dragged point shows its value.
+- Engine: `se_auto_lane_desc.flags` (was padding) with `SE_AUTO_FLAG_STEPPED`; `SE_AUTO_MUTE` (per-sample gain before
+  the fader, replaces the static mute), `SE_AUTO_DEVICE_ON` (per block, replaces `enabled`, with a bypass delay line
+  so switching keeps delay compensation) and `SE_AUTO_TRIM/WIDTH/MONO` (per sample, replace the strip settings).
+  Tests: four engine tests in `test_automation.cpp`, core `switch_lanes_*`, app `automation::tests` (units, picker,
+  right-click menus, switches and strip controls following lanes).

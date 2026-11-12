@@ -832,8 +832,9 @@ int32_t se_transport_audible_position(const se_engine* engine, int64_t* out_fram
  * playhead. se_export_wav renders automation.
  * Several lanes with the same target on one track: the last one wins. Master
  * lanes: only SE_AUTO_VOLUME is used (others are ignored).
- * Validation (else SE_ERR_INVALID_ARG): target <= SE_AUTO_PLUGIN,
- * synth_param < SE_SYNTH_P_COUNT, points non-NULL when point_count > 0,
+ * Validation (else SE_ERR_INVALID_ARG): target <= SE_AUTO_MONO (see below
+ * for SE_AUTO_BUILTIN and the switch and channel-strip targets), flags
+ * only SE_AUTO_FLAG_*, synth_param < SE_SYNTH_P_COUNT, points non-NULL when point_count > 0,
  * frames non-decreasing, values and curves finite, curve in -1..1, synth
  * values inside the parameter's se_synth_params range. Lanes without points
  * are ignored. */
@@ -860,10 +861,10 @@ typedef struct se_auto_lane_desc {
     uint8_t logarithmic;  /* != 0: geometric interpolation (frequency-like targets) */
     uint16_t synth_param; /* SE_AUTO_SYNTH: SE_SYNTH_P_* */
     uint32_t param_id;    /* SE_AUTO_PLUGIN: format parameter id */
-    uint64_t device_id;   /* SE_AUTO_PLUGIN: the device (same track) */
+    uint64_t device_id;   /* SE_AUTO_PLUGIN / BUILTIN / DEVICE_ON: the device (same track) */
     const se_auto_point* points;
     uint32_t point_count;
-    uint32_t _pad;
+    uint32_t flags;       /* SE_AUTO_FLAG_* (was padding: 0 = none) */
 } se_auto_lane_desc; /* 32 bytes, align 8 */
 
 typedef struct se_track_desc_v6 {
@@ -1143,6 +1144,32 @@ int32_t se_plugin_take_param_changes(se_engine* engine, se_plugin_param_change* 
  * whose device is not a built-in, is inactive. */
 enum { SE_PLUGIN_BUILTIN = 3 };
 enum { SE_AUTO_BUILTIN = 4 };
+
+/* ---- switch automation (ABI v1 addition) ---------------------------------
+ * SE_AUTO_MUTE:      the track's mute, 1 = muted (value >= 0.5), 0 = playing.
+ *                    Replaces the static `mute` of the track (solo is
+ *                    unchanged): the fader output and every send go silent
+ *                    while muted. Master lanes ignore it.
+ * SE_AUTO_DEVICE_ON: a device's power switch (`device_id`: an insert or the
+ *                    instrument plugin of the same track), 1 = on (value >=
+ *                    0.5), 0 = off. Replaces the device's static `enabled`;
+ *                    evaluated at the start of every block (at the stage's
+ *                    delay-compensated timeline frame), so a switch lands on
+ *                    the first block boundary at or after its point. An off
+ *                    insert is bypassed like a statically disabled one
+ *                    (delay compensated by its latency).
+ * SE_AUTO_FLAG_STEPPED (se_auto_lane_desc::flags): the lane holds each
+ *   point's value until the next point (no interpolation, no curve):
+ *   a.frame <= t < b.frame -> a.value. Set for switches and for discrete
+ *   built-in parameters (choices). Other flag bits must be 0.
+ * Channel strip (se_session_publish_v10), evaluated per sample like volume
+ * at the track fader's timeline frame; each replaces the track's static
+ * strip setting (a track needs no `strips` entry to be automated):
+ * SE_AUTO_TRIM:  dB, clamped to -24..24, gain = 10^(dB/20).
+ * SE_AUTO_WIDTH: 0..2 (clamped), 1 = unchanged.
+ * SE_AUTO_MONO:  1 = folded to mono (value >= 0.5; stepped). */
+enum { SE_AUTO_MUTE = 5, SE_AUTO_DEVICE_ON = 6, SE_AUTO_TRIM = 7, SE_AUTO_WIDTH = 8, SE_AUTO_MONO = 9 };
+enum { SE_AUTO_FLAG_STEPPED = 1 };
 #define SE_BUILTIN_STATE_MAGIC 0x31494253u /* "SBI1" as a little-endian uint32 */
 #define SE_BUILTIN_MAX_SIDECHAINS 8
 

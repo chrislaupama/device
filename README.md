@@ -55,8 +55,8 @@ wgpu.
   what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Each
   track's channel strip adds a trim (±24 dB), a stereo width knob (0 to 200 %) and a mono switch. Return
-  tracks share one effect between many tracks: send any track to them pre- or post-fader, or route its output into
-  one, and delay compensation keeps the direct and the returned signal aligned.
+  tracks share one effect between many tracks: every track has a send knob for each return, pre- or post-fader, and
+  delay compensation keeps the direct and the returned signal aligned.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
@@ -66,8 +66,10 @@ wgpu.
   plugin folders, Settings › Plugins scans any folders you add.
 - **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
   can be switched off.
-- **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
-  record your moves with touch-write.
+- **Automation.** Right-click any device control, the channel's volume, pan, mute, trim, width or mono, or a device's
+  power switch and choose Automate. Draw lanes with points, curves or freehand, or record your moves with
+  touch-write. Lanes read in the parameter's own units (Hz, dB, ms, choice names, On/Off), and mute, mono and device
+  on/off lanes switch exactly on their points.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
   (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
   seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.

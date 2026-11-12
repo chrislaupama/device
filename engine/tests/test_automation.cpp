@@ -292,7 +292,7 @@ TEST_CASE(automation_publish_validation) {
     ASession s;
     s.audio(1, {clip(1, a, 0, 0, 1000)}, {lane(SE_AUTO_VOLUME, {{10, 0.0f, 0.0f}, {5, 0.0f, 0.0f}})});
     CHECK(s.publish(e) == SE_ERR_INVALID_ARG);
-    s.tracks[0].lanes = {lane(9, {{0, 0.0f, 0.0f}})};
+    s.tracks[0].lanes = {lane(SE_AUTO_MONO + 1, {{0, 0.0f, 0.0f}})};
     CHECK(s.publish(e) == SE_ERR_INVALID_ARG);
     s.tracks[0].lanes = {lane(SE_AUTO_SYNTH, {{0, 0.5f, 0.0f}}, 0, 0, SE_SYNTH_P_COUNT)};
     CHECK(s.publish(e) == SE_ERR_INVALID_ARG);
@@ -772,4 +772,90 @@ TEST_CASE(automation_dense_lanes_do_not_allocate) {
     }
     CHECK_EQ(rt_alloc_count() - allocs, 0);
     CHECK_EQ(rt_free_count() - frees, 0);
+}
+
+// ---------------------------------------------------------------- switches (mute, device power)
+
+TEST_CASE(automation_stepped_lanes_hold_each_value) {
+    Lane l = lane(SE_AUTO_DEVICE_ON, {{0, 0.0f, 0.5f}, {100, 1.0f, 0.0f}, {200, 0.0f, 0.0f}}, 5);
+    l.d.flags = SE_AUTO_FLAG_STEPPED;
+    l.d.points = l.points.data();
+    l.d.point_count = 3;
+    const int64_t frames[] = {-5, 50, 99, 100, 150, 199, 200, 900};
+    float out[8] = {};
+    REQUIRE(se_automation_eval(&l.d, frames, 8, out) == SE_OK);
+    const float want[] = {0, 0, 0, 1, 1, 1, 0, 0}; // no ramp, no curve
+    for (int i = 0; i < 8; ++i) CHECK_EQ(out[i], want[i]);
+    l.d.flags = 2; // unknown flag
+    CHECK(se_automation_eval(&l.d, frames, 1, out) == SE_ERR_INVALID_ARG);
+    l.d.flags = 0;
+    l.d.target = SE_AUTO_MONO + 1;
+    CHECK(se_automation_eval(&l.d, frames, 1, out) == SE_ERR_INVALID_ARG);
+}
+
+TEST_CASE(automation_mute_lane_replaces_the_static_mute) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = dc_asset(e, 4000);
+    ASession s;
+    Lane m = lane(SE_AUTO_MUTE, {{0, 0.0f, 0.0f}, {1000, 1.0f, 0.0f}, {2000, 0.0f, 0.0f}});
+    m.d.flags = SE_AUTO_FLAG_STEPPED;
+    s.audio(1, {clip(1, a, 0, 0, 4000)}, {m});
+    s.tracks[0].d.mute = 1; // the lane replaces it
+    REQUIRE(s.publish(e) == SE_OK);
+    const std::vector<float> l = chan(play(e, 3000, 0, 256), 0);
+    CHECK_NEAR(l[999], 1.0, 1e-6);
+    CHECK_EQ(l[1000], 0.0f); // muted from its point, mid-block
+    CHECK_EQ(l[1999], 0.0f);
+    CHECK_NEAR(l[2000], 1.0, 1e-6);
+    // Without the lane the static mute is back.
+    s.tracks[0].lanes.clear();
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_EQ(chan(play(e, 300, 0), 0)[200], 0.0f);
+}
+
+TEST_CASE(automation_device_on_lane_switches_an_insert_per_block) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = dc_asset(e, 4000);
+    ASession s;
+    Lane on = lane(SE_AUTO_DEVICE_ON, {{0, 1.0f, 0.0f}, {1024, 0.0f, 0.0f}, {2100, 1.0f, 0.0f}}, 5);
+    on.d.flags = SE_AUTO_FLAG_STEPPED;
+    se_device_desc dev = clap_gain(5);
+    dev.enabled = 0; // the lane replaces the static switch
+    s.audio(1, {clip(1, a, 0, 0, 4000)}, {lane(SE_AUTO_PLUGIN, {{0, 0.25f, 0.0f}}, 5, 0), on}, {dev});
+    REQUIRE(s.publish(e) == SE_OK);
+    const std::vector<float> l = chan(play(e, 3000, 0, 256), 0);
+    CHECK_NEAR(l[500], 0.25, 1e-6);  // on: the gain plugin runs
+    CHECK_NEAR(l[1023], 0.25, 1e-6);
+    CHECK_NEAR(l[1024], 1.0, 1e-6);  // off from the block that starts on the point: bypassed
+    CHECK_NEAR(l[2303], 1.0, 1e-6);  // the switch back waits for the next block boundary (2304)
+    CHECK_NEAR(l[2304], 0.25, 1e-6);
+}
+
+TEST_CASE(automation_strip_lanes_set_trim_width_and_mono) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {constant(4000, 1.0f), constant(4000, 0.0f)}); // left only
+    ASession s;
+    s.audio(1, {clip(1, a, 0, 0, 4000)}, {}, {}, 0.0f); // centred: equal gains on both sides
+    REQUIRE(s.publish(e) == SE_OK);
+    const float k = chan(play(e, 300, 0), 0)[200]; // the fader's own gain
+    REQUIRE(k > 0.1f);
+    Lane mono = lane(SE_AUTO_MONO, {{0, 0.0f, 0.0f}, {1000, 1.0f, 0.0f}});
+    mono.d.flags = SE_AUTO_FLAG_STEPPED;
+    s.tracks[0].lanes = {lane(SE_AUTO_TRIM, {{0, 6.0f, 0.0f}}), lane(SE_AUTO_WIDTH, {{0, 2.0f, 0.0f}}), mono};
+    REQUIRE(s.publish(e) == SE_OK);
+    const std::vector<float> out = play(e, 2000, 0, 256);
+    const std::vector<float> l = chan(out, 0);
+    const std::vector<float> r = chan(out, 1);
+    const double g = std::pow(10.0, 6.0 / 20.0);
+    // Width 2 doubles the side: L' = 1.5 L, R' = -0.5 L (times the trim).
+    CHECK_NEAR(l[500], 1.5 * g * k, 1e-4);
+    CHECK_NEAR(r[500], -0.5 * g * k, 1e-4);
+    // Mono from its point (mid-block), whatever the width says.
+    CHECK_NEAR(l[999], 1.5 * g * k, 1e-4);
+    CHECK_NEAR(l[1000], 0.5 * g * k, 1e-4);
+    CHECK_NEAR(r[1000], 0.5 * g * k, 1e-4);
+    // Out-of-range trims are clamped to the strip's range.
+    s.tracks[0].lanes = {lane(SE_AUTO_TRIM, {{0, 40.0f, 0.0f}})};
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_NEAR(chan(play(e, 300, 0), 0)[200], std::pow(10.0, 24.0 / 20.0) * k, 1e-3);
 }

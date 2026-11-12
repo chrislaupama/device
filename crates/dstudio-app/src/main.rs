@@ -164,9 +164,10 @@ struct Args {
     /// reference-live (100 % zoom): the default project
     /// with the assistant panel open and the automation lanes shown.
     live_state: bool,
-    /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
-    /// an expanded extra lane, master) for review; the second also opens the picker with the
-    /// Synth submenu.
+    /// review-automation / review-automation-picker / review-automation-menu: lanes with points
+    /// (active, disabled, curved, an expanded extra lane, master) for review; the second also
+    /// opens the picker with the Synth submenu; the third shows the Synth's Cutoff lane with a
+    /// hovered point's readout and opens the Cutoff knob's right-click menu.
     automation_review: u8,
     /// review-track-heights / review-bottom-collapsed: the demo tracks at 0.25x, 0.5x and 2x
     /// height; the second instead collapses the bottom panel to its tab row.
@@ -193,6 +194,8 @@ struct Args {
     /// review-returns: the default project with two return tracks (Audio sends to A post-fader
     /// and B pre-fader, Instrument to A), the mixer open with the Sends sections expanded.
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
+    /// review-returns-empty: the default project, Audio selected, Sends tab with no returns yet.
+    /// review-returns-options: review-returns with the options of Audio's send to B open.
     returns_review: u8,
     /// review-strip-trim: the default project, Audio selected, its channel strip at -6.0 dB trim,
     /// 150 % width, mono on (spec 005).
@@ -494,6 +497,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.automation_review = 2;
                 }
+                "review-automation-menu" => {
+                    a.reference_default = true;
+                    a.automation_review = 3;
+                }
                 "reference-devices-effects" => {
                     a.reference_default = true;
                     a.devices_effects_state = true;
@@ -518,6 +525,15 @@ fn parse_args() -> Result<Args, String> {
                 "review-strip-trim" => {
                     a.reference_default = true;
                     a.strip_review = true;
+                }
+                "review-returns-empty" => {
+                    a.reference_default = true;
+                    a.returns_review = 3;
+                }
+                "review-returns-options" => {
+                    a.reference_default = true;
+                    a.open_mixer = true;
+                    a.returns_review = 4;
                 }
                 "review-track-rename" => {
                     a.reference_default = true;
@@ -573,7 +589,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1719,6 +1735,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
             c.auto_picker_pick(1);
         }
+        if args.automation_review == 3
+            && let Some(dev) = c.synth_device()
+        {
+            let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
+            let target = AutomationTarget::Builtin { device: dev, device_type: def.id.into(), param: "cutoff".into() };
+            let points = vec![pt(0, 300.0, 0.0), pt(12, 4000.0, 0.0), pt(20, 900.0, 0.0)];
+            c.auto_commit(Some(inst), AutomationLane { target: target.clone(), enabled: true, points });
+            c.auto.targets.insert(Some(inst), target.clone());
+            c.auto.hover = Some((Some(inst), target, 1));
+            // Audio's lanes folded so the Instrument row (and its lane in Hz) is in view.
+            c.auto.expanded.remove(&audio);
+            if let Some(i) = def.index_of("cutoff") {
+                c.synth_knob_menu(i, 560.0, 640.0);
+            }
+        }
     }
     // The dropdown opens once its editor is on screen (the audio clip state imports first).
     let clip_menu_timer = slint::Timer::default();
@@ -1948,7 +1979,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.returns_review > 0 {
         let mut c = ctl.borrow_mut();
         let ids: Vec<_> = c.project().tracks.iter().map(|t| t.id).collect();
-        if let [audio, inst, ..] = ids[..] {
+        if let [audio, inst, ..] = ids[..]
+            && args.returns_review != 3
+        {
             let a = c.new_return_with_send(audio);
             let b = c.new_return_with_send(audio);
             if let (Some(a), Some(b)) = (a, b) {
@@ -1961,12 +1994,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.set_send_level(inst, a, dstudio_core::db_to_gain(-3.5));
                 c.send_gesture_end();
                 c.set_track_gain(b, dstudio_core::db_to_gain(-4.0));
+                if args.returns_review == 4 {
+                    // Anchored under the B tag of the Audio strip's Sends section.
+                    c.open_send_options(audio, b, 16.0, 387.0);
+                }
             }
+            c.routing.sends_open = matches!(args.returns_review, 1 | 4);
+        }
+        if let Some(&audio) = ids.first() {
             c.select_track(audio);
-            c.routing.sends_open = args.returns_review == 1;
-            if args.returns_review == 2 {
-                app.global::<Studio>().set_strip_tab(1);
-            }
+        }
+        if matches!(args.returns_review, 2 | 3) {
+            app.global::<Studio>().set_strip_tab(1);
         }
     }
     if args.strip_review {
@@ -2089,7 +2128,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Return tracks, sends and Out (src/routing.rs).
     on!(on_toggle_returns, |c| c.toggle_returns());
     on!(on_toggle_sends_open, |c| c.toggle_sends_open());
-    on!(on_open_send_menu, |c, id: i32, x: f32, y: f32| c.open_send_menu(TrackId(id as u64), x, y));
+    on!(on_sends_add_return, |c, id: i32| {
+        c.sends_add_return(TrackId(id as u64));
+    });
+    on!(on_send_new_return, |c, id: i32| {
+        c.new_return_with_send(TrackId(id as u64));
+    });
+    on!(on_open_send_options, |c, id: i32, target: i32, x: f32, y: f32| c.open_send_options(
+        TrackId(id as u64),
+        TrackId(target as u64),
+        x,
+        y
+    ));
     on!(on_open_out_menu, |c, x: f32, y: f32| c.open_out_menu(x, y));
     on!(on_open_add_track_menu, |c, x: f32, y: f32| c.open_add_track_menu(x, y));
     on!(on_route_menu_pick, |c, i: i32| c.route_menu_pick(i.max(0) as usize));
@@ -2103,9 +2153,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     on!(on_send_toggle_pre, |c, id: i32, target: i32| {
         c.toggle_send_pre(TrackId(id as u64), TrackId(target as u64));
-    });
-    on!(on_send_remove, |c, id: i32, target: i32| {
-        c.remove_send(TrackId(id as u64), TrackId(target as u64));
     });
     on!(on_send_gesture_end, |c| c.send_gesture_end());
     on!(on_input_menu_pick, |c, i: i32| c.input_menu_pick(i.max(0) as usize));
@@ -2366,6 +2413,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_synth_pill, |c, action: i32, arg: i32, x: f32, y: f32, w: f32| c.synth_pill(action, arg.max(0) as usize, x, y, w));
     on!(on_synth_remove, |c, kind: i32, slot: i32| c.synth_remove(kind, slot.max(0) as usize));
     on!(on_synth_knob_menu, |c, id: i32, x: f32, y: f32| c.synth_knob_menu(id.max(0) as usize, x, y));
+    on!(on_strip_menu, |c, track: i32, kind: i32, x: f32, y: f32| c.strip_menu(track, kind, x, y));
+    on!(on_synth_pill_menu, |c, action: i32, arg: i32, x: f32, y: f32| c.synth_pill_menu(action, arg.max(0) as usize, x, y));
     on!(on_synth_rail, |c, src: i32, phase: i32, x: f32, y: f32| c.synth_rail(src.max(0) as usize, phase, x, y));
     on!(on_synth_scope_drag, |c, slot: i32, phase: i32, x: f32, y: f32| c.synth_scope_drag(slot.max(0) as usize, phase, x, y));
     on!(on_synth_macro_select, |c, m: i32| c.synth_macro_select(m.max(0) as usize));
@@ -2716,6 +2765,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 drop(c);
                 // Studio global is reachable through any component handle; avoid holding a strong ref.
                 LANE_CURSOR.with(|lc| lc.set(cur));
+            }
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.auto_hover(x, y);
             }
         });
     }
