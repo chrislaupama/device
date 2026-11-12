@@ -338,6 +338,9 @@ export component TrackHeaderRow inherits Rectangle {
     in property <TrackRow> t;
     in property <TrackLevel> level;
     in property <bool> automation;        // automation lanes shown (88 px rows: full chrome)
+    /// This copy of the row opens its name field on the keyboard rename request (each track has
+    /// a row in the scrolling list and one in the pinned band; only the shown one may).
+    in property <bool> rename-target: true;
     in property <length> row-h: Tokens.track-h;
     // Layout by row height: full (48 px and up) shows the automation row
     // when lanes are shown, compact drops it, minimal (under 28 px) keeps only the name row.
@@ -349,7 +352,7 @@ export component TrackHeaderRow inherits Rectangle {
     property <length> top-y: root.minimal ? (root.row-h - 13.6px) / 2 : (root.show-auto ? 8.5px : 21.25px) + root.centre-shift;
     property <length> bottom-y: root.top-y + 18.7px;
     accessible-role: list-item;
-    accessible-label: "Track " + root.t.number + " " + root.t.name;
+    accessible-label: root.t.is-return ? "Return track " + root.t.letter + " " + root.t.name : "Track " + root.t.number + " " + root.t.name;
     ta := TouchArea { clicked => { Studio.select-track(root.t.id); } }
     Rectangle {
         height: root.row-h;
@@ -363,17 +366,17 @@ export component TrackHeaderRow inherits Rectangle {
     }
     Text {
         x: 8.5px; y: (root.row-h - 13.6px) / 2; width: 13.6px; height: 13.6px;
-        text: root.t.number; color: #ffffff; font-size: 8.5px; font-weight: 700; letter-spacing: -0.34px;
+        text: root.t.is-return ? root.t.letter : root.t.number; color: #ffffff; font-size: 8.5px; font-weight: 700; letter-spacing: -0.34px;
         horizontal-alignment: center; vertical-alignment: center;
     }
     Icon {
         x: 27.2px; y: root.top-y; width: 13.6px; height: 13.6px;
-        d: root.t.instrument ? Icons.track-instrument : Icons.track-audio;
+        d: root.t.is-return ? Icons.returns : root.t.instrument ? Icons.track-instrument : Icons.track-audio;
         filled: root.t.instrument; stroke-width: 1.1px; ink: Tokens.text-tertiary;
     }
     TrackName {
         x: 43.35px; y: root.top-y; width: root.width - self.x - 6.8px; height: 13.6px;
-        track-id: root.t.id; text: root.t.name; keyboard-target: true;
+        track-id: root.t.id; text: root.t.name; keyboard-target: root.rename-target;
         clicked => { Studio.select-track(root.t.id); }
         edit-done => { root.edit-done(); }
     }
@@ -385,7 +388,8 @@ export component TrackHeaderRow inherits Rectangle {
         x: 41.65px; y: root.bottom-y + 1.7px; text: "S"; label: root.t.solo ? "Unsolo track" : "Solo track";
         on: root.t.solo; on-color: Tokens.track-solo-on; on-text: #1a1a1a; pressed => { Studio.track-solo(root.t.id); }
     }
-    if !root.minimal: TrackButton {
+    // Return tracks record nothing: no R.
+    if !root.minimal && !root.t.is-return: TrackButton {
         x: 55.25px; y: root.bottom-y + 1.7px; text: "R"; label: root.t.arm ? "Disarm track for recording" : "Arm track for recording";
         on: root.t.arm; on-color: Tokens.track-arm-on; pressed => { Studio.track-arm(root.t.id); }
     }
@@ -407,7 +411,8 @@ export component TrackHeaderRow inherits Rectangle {
         released => { Studio.gesture-end(); }
     }
     // Automation row: fold button in the gutter, then the pill (16 px in from the content box).
-    if root.show-auto: Rectangle {
+    // Return rows automate volume and pan through the pill but have no expanded lanes to fold.
+    if root.show-auto && !root.t.is-return: Rectangle {
         x: 23.8px; y: 50.15px + root.centre-shift; width: 13.6px; height: 13.6px;
         accessible-role: button;
         accessible-label: (root.t.auto-expanded ? "Collapse " : "Show ") + root.t.auto-count + (root.t.auto-count == 1 ? " automated lane" : " automated lanes");

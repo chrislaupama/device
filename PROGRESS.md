@@ -416,6 +416,24 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   it at the height it had (`Controller::toggle_bottom_collapse`, src/splitters.rs). Like the splitter it is a view
   change saved with the project, not an undo step; a panel shut by dragging reopens at its default height.
 
+### 2026-11-11: return tracks and sends, part 3: app (spec 002)
+
+- `crates/dstudio-app/src/routing.rs`: the Returns pill (view state, saved as `hide_returns` in the preferences),
+  the Add track menu (Audio, Instrument, Return track; the timeline and mixer buttons open it, Cmd+T still adds an
+  audio track), the add-send menu (existing returns, then "New return track"), the Out menu, send edits.
+- Timeline: return rows are pinned above the master row (`View::pinned_from` / `pinned_h`; the pinned band is cut
+  off in a very short timeline, leaving half a track row of scrolling lanes). They have no R button and no expanded
+  automation rows, and take no clips.
+- Mixer: return strips after the track strips with a divider; the Sends chevron expands every strip's Sends section
+  (one slider per send). Channel strip: the Sends tab (knob, Pre switch, remove), Out lists Master and the returns,
+  In reads "Return" on a return track. `Studio.strip-tab` makes the strip tab reachable from review states.
+- Send lists scroll with the wheel when they outgrow their room (the Sends tab, and the mixer's Sends section, which
+  takes at most the room under the insert pill). A held send knob is one undo step however long it pauses
+  (`Document::hold_coalescing`, sealed on release). Pinned return automation rows stop at the master row.
+- Stems are dry: a stem pass clears every track's sends and output (`dialogs::stem_snapshot`), so a track routed
+  into a return still renders. Return tracks are renamed like any track (double-click the name).
+- Review states `review-returns` and `review-returns-strip`; self-test section `returns_steps`.
+
 ### 2026-11-11: export at 44.1 or 48 kHz
 
 - The Export dialog's 44.1 kHz / 48 kHz switch now sets the rate of the Mixdown and Stems files; before, it showed a
@@ -441,3 +459,4 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `the_loop_range_renders_the_loop_exactly_and_falls_back_without_one`. The self-test sets a loop over bars 2-3, picks
   Loop region in the menu, checks the readout and estimate, exports it and checks the file's length and sound. Review
   state `review-export-range`.
+

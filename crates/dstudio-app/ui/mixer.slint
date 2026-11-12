@@ -8,8 +8,46 @@
 // through the same Studio callbacks as the track headers.
 import { Tokens } from "tokens.slint";
 import { Panel, Icon, Icons, IconButton, Knob } from "widgets.slint";
-import { Studio, MixerStrip, StripMeter } from "studio.slint";
+import { Studio, MixerStrip, StripMeter, SendRow } from "studio.slint";
 import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_strip.slint";
+
+// One send in an expanded Sends section: the return's colour tag with its letter, a horizontal
+// level slider (volume-slider taper, 0 dB at 0.8; double-click resets) and the dB value.
+component SendLine inherits Rectangle {
+    in property <SendRow> r;
+    property <length> u: StripMetrics.u;
+    property <length> track-x: 20 * root.u;
+    property <length> track-w: 44 * root.u;
+    height: 20 * root.u;
+    Rectangle {
+        x: 2 * root.u; y: 3 * root.u; width: 14 * root.u; height: 14 * root.u; border-radius: 3 * root.u;
+        background: root.r.color;
+        Text { text: root.r.letter; color: root.r.color.darker(4.5); font-size: 9 * root.u; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    Rectangle { x: root.track-x; y: 9 * root.u; width: root.track-w; height: 2 * root.u; border-radius: 1 * root.u; background: #2f3036; }
+    Rectangle { x: root.track-x; y: 9 * root.u; width: root.track-w * root.r.pos; height: 2 * root.u; border-radius: 1 * root.u; background: root.r.color; }
+    Rectangle {
+        x: root.track-x + root.track-w * root.r.pos - 4 * root.u; y: 6 * root.u; width: 8 * root.u; height: 8 * root.u; border-radius: 4 * root.u;
+        background: level-ta.pressed || level-ta.has-hover ? #ffffff : #d9d9dc;
+    }
+    Text {
+        x: root.width - 28 * root.u; width: 28 * root.u; text: root.r.short-text; color: #ffffff99;
+        font-size: 9 * root.u; font-weight: 600; horizontal-alignment: right; vertical-alignment: center;
+    }
+    level-ta := TouchArea {
+        x: root.track-x - 4 * root.u; width: root.track-w + 8 * root.u;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) { Studio.send-gesture-end(); }
+        }
+        moved => { if (self.pressed) { Studio.send-pos(root.r.track, root.r.target, max(0, min(1, (self.mouse-x - 4 * root.u) / root.track-w))); } }
+        clicked => { Studio.send-pos(root.r.track, root.r.target, max(0, min(1, (self.mouse-x - 4 * root.u) / root.track-w))); Studio.send-gesture-end(); }
+        double-clicked => { Studio.send-reset(root.r.track, root.r.target); }
+    }
+    accessible-role: slider; accessible-label: "Send to " + root.r.name; accessible-value: root.r.db-text;
+    // Assistive technology steps the level by 2 % of the slider, one undo step each.
+    accessible-action-increment => { Studio.send-pos(root.r.track, root.r.target, min(1, root.r.pos + 0.02)); Studio.send-gesture-end(); }
+    accessible-action-decrement => { Studio.send-pos(root.r.track, root.r.target, max(0, root.r.pos - 0.02)); Studio.send-gesture-end(); }
+}
 
 // One channel strip. `master` switches to the master layout (white name bar, no sends,
 // M only) and the master callbacks.
@@ -47,18 +85,56 @@ component Strip inherits Rectangle {
         ins-ta := TouchArea { clicked => { if (!root.master) { Studio.select-track(root.s.id); } Studio.set-bottom-tab(0); Studio.toggle-mixer(); } }
     }
     Rectangle { x: 8 * root.u; y: root.master ? root.gain-y : root.sends-y; width: 92 * root.u; height: 1 * root.u; background: #ffffff14; }
-    // Sends (collapsed): title + chevron, add button. No return tracks yet: PLACEHOLDER.
-    if !root.master: Rectangle {
+    // Sends: title + chevron (expands / collapses the Sends section of every strip) and "+"
+    // (add a send: existing returns, then "New return track"). Return strips have no sends.
+    if !root.master && !root.s.is-return: Rectangle {
         x: 8 * root.u; y: root.sends-y; width: 92 * root.u; height: 22 * root.u;
         Text { x: 2 * root.u; y: 5 * root.u; height: 14 * root.u; text: "Sends"; color: sends-ta.has-hover ? #ffffffb3 : #ffffff66; font-size: 10 * root.u; font-weight: 600; letter-spacing: -0.2 * root.u; vertical-alignment: center; }
-        Icon { x: 35.5 * root.u; y: 7.5 * root.u; width: 9 * root.u; height: 9 * root.u; d: Icons.chevron-up; ink: sends-ta.has-hover ? #ffffffb3 : #ffffff66; stroke-width: 1.4px; }
-        sends-ta := TouchArea { width: 50 * root.u; clicked => { Studio.chat-placeholder("Sends"); } }
+        Icon { x: 35.5 * root.u; y: 7.5 * root.u; width: 9 * root.u; height: 9 * root.u; d: Studio.sends-open ? Icons.chevron-down : Icons.chevron-up; ink: sends-ta.has-hover ? #ffffffb3 : #ffffff66; stroke-width: 1.4px; }
+        sends-ta := TouchArea {
+            x: 0; width: 50 * root.u; clicked => { Studio.toggle-sends-open(); }
+            accessible-role: button; accessible-label: Studio.sends-open ? "Collapse sends" : "Expand sends";
+        }
         Rectangle {
             x: parent.width - 16 * root.u; y: 5 * root.u; width: 16 * root.u; height: 14 * root.u;
             Icon { x: 3 * root.u; y: 2 * root.u; width: 10 * root.u; height: 10 * root.u; d: Icons.plus; ink: add-ta.has-hover ? #ffffff : #ffffffcc; stroke-width: 1.6px; }
-            add-ta := TouchArea { clicked => { Studio.chat-placeholder("Add send"); } }
+            add-ta := TouchArea {
+                clicked => { Studio.open-send-menu(root.s.id, parent.absolute-position.x, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 2px); }
+                accessible-role: button; accessible-label: "Add send";
+            }
         }
         Rectangle { y: parent.height - 1 * root.u; height: 1 * root.u; background: #ffffff14; }
+    }
+    // Expanded Sends section: one row per send, stacked upward from the Sends row (every strip
+    // reserves room for the track with the most sends, so the rows line up across strips). It
+    // takes at most the room under the insert pill; more rows scroll with the wheel.
+    if Studio.sends-open && !root.master && !root.s.is-return: sends-box := Rectangle {
+        property <length> content-h: (Studio.strip-sends-max * 20 + 4) * root.u;
+        property <length> max-scroll: max(0px, self.content-h - self.height);
+        property <length> scroll: min(self.scroll-raw, self.max-scroll);
+        property <length> scroll-raw: 0px;
+        x: 8 * root.u; y: root.sends-y - self.height; width: 92 * root.u; height: min(self.content-h, max(0px, root.sends-y - 52 * root.u));
+        clip: true;
+        TouchArea {
+            scroll-event(e) => {
+                if (sends-box.max-scroll <= 0) { return reject; }
+                sends-box.scroll-raw = max(0px, min(sends-box.max-scroll, sends-box.scroll - e.delta-y));
+                accept
+            }
+            // Only this strip's rows (a contiguous range of strip-sends), not every strip's.
+            for k in root.s.send-count: SendLine {
+                r: Studio.strip-sends[root.s.send-first + k];
+                x: 0; y: self.r.row * 20 * root.u - sends-box.scroll; width: parent.width;
+            }
+        }
+        if sends-box.max-scroll > 0: Rectangle {
+            x: parent.width - 2px; y: sends-box.scroll / sends-box.content-h * parent.height; width: 2px;
+            height: parent.height * parent.height / sends-box.content-h; border-radius: 1px; background: #ffffff33;
+        }
+    }
+    // Return strips: a "Return" caption where the Sends row sits on track strips.
+    if root.s.is-return: Text {
+        x: 10 * root.u; y: root.sends-y + 5 * root.u; height: 14 * root.u; text: "Return"; color: #ffffff4d; font-size: 10 * root.u; font-weight: 600; letter-spacing: -0.2 * root.u; vertical-alignment: center;
     }
     // Gain row: pan knob (32 pt cell, 5 pt in) and the gain readout pill.
     Knob {
@@ -96,6 +172,8 @@ component Strip inherits Rectangle {
     }
     // Strip separator (1 pt rule on the right; the master strip has its rule on the left).
     Rectangle { x: root.master ? 0 : parent.width - 1 * root.u; y: 0; width: 1 * root.u; height: parent.height; background: #ffffff14; }
+    // Return strips are their own group: a brighter divider before the first one.
+    if root.s.group-start: Rectangle { x: 0; y: 0; width: 2 * root.u; height: parent.height; background: #5a5b60; }
 }
 
 export component MixerPanel inherits Panel {
@@ -134,7 +212,7 @@ export component MixerPanel inherits Panel {
             Icon { x: (parent.width - 13px) / 2; y: parent.height / 2 - 14 * root.u; width: 13px; height: 13px; d: Icons.plus; ink: add-col.ink; stroke-width: 1.4px; }
             Text { x: 0; y: parent.height / 2 + 1 * root.u; width: parent.width; height: 16 * root.u; text: "Add track"; color: add-col.ink; font-size: 12 * root.u; font-weight: 700;
                 letter-spacing: -0.48 * root.u; horizontal-alignment: center; vertical-alignment: center; }
-            add-ta := TouchArea { clicked => { Studio.add-track(); } }
+            add-ta := TouchArea { clicked => { Studio.open-add-track-menu(self.absolute-position.x + (parent.width - 120px) / 2, (self.absolute-position.y - Studio.menu-dy) + parent.height / 2 + 18 * root.u); } }
         }
         // Horizontal scroll indicator (only when strips overflow)
         if strips.max-scroll > 0: Rectangle {

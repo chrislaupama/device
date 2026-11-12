@@ -359,7 +359,8 @@ export component Knob inherits Rectangle {
         mouse-cursor: ns-resize;
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) { root.start-value = root.value; }
-            if (e.kind == PointerEventKind.up) { root.released(); }
+            // A cancelled drag ends its gesture too.
+            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) { root.released(); }
         }
         moved => {
             root.value-changed(max(root.min-value, min(root.max-value,

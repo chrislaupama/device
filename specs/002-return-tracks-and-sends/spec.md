@@ -21,7 +21,8 @@ has a name, a colour, an insert chain (Devices tab), volume, pan, mute, solo, me
 pan automation. Return tracks are lettered in order (A, B, C ...); a new one is called
 "Return A", "Return B" and so on, and can be renamed.
 
-- **Adding one.** The Add track menus get a "Return track" entry. The Sends "+" menus (mixer and
+- **Adding one.** Add track (timeline and mixer) opens a menu: Audio track, Instrument track,
+  Return track (the shortcut still adds an audio track). The Sends "+" menus (mixer and
   channel strip) list the existing returns the track does not send to yet, then "New return
   track", which creates a return and the send in one step.
 - **Where they show.** Return tracks sit after the ordinary tracks, always in their own group.

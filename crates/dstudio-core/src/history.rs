@@ -37,6 +37,9 @@ pub struct Document {
     saved_revision: u64,
     pub coalesce_window: Duration,
     pub max_history: usize,
+    /// A gesture holds the last entry open ([`hold_coalescing`](Self::hold_coalescing)): a
+    /// command with its coalesce key merges into it however long the pause since the last one.
+    held: bool,
 }
 
 impl Document {
@@ -49,6 +52,7 @@ impl Document {
             saved_revision: 0,
             coalesce_window: Duration::from_millis(750),
             max_history: 1000,
+            held: false,
         }
     }
 
@@ -95,13 +99,14 @@ impl Document {
 
         if let (Some(k), Some(last)) = (&key, self.undo.last_mut())
             && last.coalesce_key.as_deref() == Some(k.as_str())
-            && now.duration_since(last.at) <= self.coalesce_window
+            && (self.held || now.duration_since(last.at) <= self.coalesce_window)
         {
             // Keep the original undo, update redo to the newest value.
             last.redo = redo;
             last.at = now;
             return Ok(());
         }
+        self.held = false;
         self.undo.push(Entry { label, redo, undo, coalesce_key: key, at: now, made: SystemTime::now() });
         if self.undo.len() > self.max_history {
             self.undo.remove(0);
@@ -109,9 +114,17 @@ impl Document {
         Ok(())
     }
 
+    /// Hold the last undo entry open for the gesture that made it (a knob drag): later commands
+    /// with its coalesce key merge into it even after a pause longer than the coalescing window,
+    /// until [`seal_coalescing`](Self::seal_coalescing) ends the gesture or another entry is made.
+    pub fn hold_coalescing(&mut self) {
+        self.held = true;
+    }
+
     /// Mark the end of a gesture: the next command never merges into the
     /// current last undo entry, whatever its coalesce key or timing.
     pub fn seal_coalescing(&mut self) {
+        self.held = false;
         if let Some(last) = self.undo.last_mut() {
             last.coalesce_key = None;
         }
@@ -190,6 +203,7 @@ impl Document {
     }
 
     pub fn undo(&mut self) -> Result<bool, EditError> {
+        self.held = false;
         let Some(mut e) = self.undo.pop() else { return Ok(false) };
         let redo = match e.undo.clone().apply(&mut self.project) {
             Ok(redo) => redo,
@@ -206,6 +220,7 @@ impl Document {
     }
 
     pub fn redo(&mut self) -> Result<bool, EditError> {
+        self.held = false;
         let Some(mut e) = self.redo.pop() else { return Ok(false) };
         let undo = match e.redo.clone().apply(&mut self.project) {
             Ok(undo) => undo,

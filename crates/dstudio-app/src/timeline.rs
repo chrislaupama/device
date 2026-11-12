@@ -276,11 +276,27 @@ pub struct View {
     pub pitches: Vec<f32>,
     /// Height of the master row pinned to the bottom (taller while automation is shown).
     pub master_h: f32,
+    /// Tracks from this index on (the return tracks while the Returns pill is lit) are pinned
+    /// above the master row instead of scrolling; `pinned_h` is their total height.
+    pub pinned_from: usize,
+    pub pinned_h: f32,
+    /// Lanes height (ruler included), for the pinned rows' positions.
+    pub height: f32,
 }
 
 impl Default for View {
     fn default() -> Self {
-        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), pitches: Vec::new(), master_h: MASTER_H }
+        View {
+            start_beats: 0.0,
+            px_per_beat: DEFAULT_PX_PER_BEAT,
+            scroll_y: 0.0,
+            extra: Vec::new(),
+            pitches: Vec::new(),
+            master_h: MASTER_H,
+            pinned_from: usize::MAX,
+            pinned_h: 0.0,
+            height: 0.0,
+        }
     }
 }
 
@@ -303,22 +319,54 @@ impl View {
     pub fn track_span(&self, i: usize) -> f32 {
         self.pitch(i) + self.extra.get(i).copied().unwrap_or(0.0)
     }
+    /// Pinned rows plus the master row: the band at the bottom that does not scroll.
+    pub fn footer_h(&self) -> f32 {
+        self.master_h + self.pinned_h
+    }
+    /// Top of the pinned rows (the bottom of the scrolling lanes).
+    pub fn pinned_top(&self) -> f32 {
+        self.height - self.footer_h()
+    }
+    pub fn is_pinned(&self, i: usize) -> bool {
+        i >= self.pinned_from
+    }
     pub fn track_top(&self, i: usize) -> f32 {
+        if self.is_pinned(i) {
+            return self.pinned_top() + self.track_offset(i) - self.track_offset(self.pinned_from);
+        }
         RULER_H + self.track_offset(i) - self.scroll_y as f32
     }
     /// Track whose row (or expanded automation rows) contains `y`.
     pub fn track_at(&self, y: f32) -> Option<usize> {
+        let n = self.extra.len().max(self.pitches.len());
+        if self.pinned_from < n && y >= self.pinned_top() {
+            let mut top = self.pinned_top();
+            for i in self.pinned_from..n {
+                let h = self.track_span(i);
+                if y < top + h {
+                    return Some(i);
+                }
+                top += h;
+            }
+            return None;
+        }
         let mut top = RULER_H - self.scroll_y as f32;
         if y < top {
             return None;
         }
-        let n = self.extra.len().max(self.pitches.len());
+        let pinned = self.pinned_from < n;
+        let n = n.min(self.pinned_from);
         for i in 0..n {
             let h = self.track_span(i);
             if y < top + h {
                 return Some(i);
             }
             top += h;
+        }
+        // Empty space under the ordinary tracks: with pinned rows below it, no index past them is
+        // an ordinary track, and a synthesized one would land on a pinned row.
+        if pinned {
+            return None;
         }
         Some(n + ((y - top) / TRACK_PITCH).floor() as usize)
     }
@@ -332,8 +380,8 @@ impl View {
         self.start_beats = self.start_beats.max(0.0);
     }
     pub fn clamp_scroll(&mut self, tracks: usize, lanes_h: f32) {
-        let content = self.track_offset(tracks) + 40.0;
-        let visible = lanes_h - RULER_H - self.master_h;
+        let content = self.track_offset(tracks.min(self.pinned_from)) + 40.0;
+        let visible = lanes_h - RULER_H - self.footer_h();
         self.scroll_y = self.scroll_y.clamp(0.0, (content - visible).max(0.0) as f64);
     }
 }
@@ -415,7 +463,9 @@ pub fn hit_test(v: &View, size: (f32, f32), tracks: usize, clips: &[ClipVis], x:
     if y >= size.1 - v.master_h {
         return Hit::Master;
     }
-    for (i, c) in clips.iter().enumerate().rev() {
+    // Pinned rows (return tracks) cover the scrolling lanes and take no clips.
+    let pinned = y >= size.1 - v.footer_h();
+    for (i, c) in clips.iter().enumerate().rev().filter(|_| !pinned) {
         let (cx, cy, cw, ch) = c.rect(v);
         if x >= cx && x < cx + cw && y >= cy && y < cy + ch {
             let edge = EDGE_GRAB.min(cw / 3.0);
@@ -523,13 +573,13 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let px = Px { s: sc.scale };
     let (w, h) = sc.size;
     let v = &sc.view;
-    let lanes_bottom = h - v.master_h;
+    let lanes_bottom = h - v.footer_h();
     dl.clear = [0.0745, 0.0784, 0.0902];
     dl.lanes_clip = ((RULER_H * sc.scale).round() as u32, (lanes_bottom * sc.scale).round() as u32);
 
     // ---- lanes (scrolling) ----
     bands_and_grid(&mut dl.base, sc, &px, RULER_H, lanes_bottom, LANE);
-    for (i, t) in sc.tracks.iter().enumerate() {
+    for (i, t) in sc.tracks.iter().enumerate().take(v.pinned_from) {
         let top = v.track_top(i);
         let row_h = v.pitch(i) - 0.5;
         if top > lanes_bottom || top + row_h + 0.5 < RULER_H {
@@ -658,6 +708,26 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         o.push(px.rect(x0 + RADIUS, BLOCK_Y + BLOCK_H - t, bw - 2.0 * RADIUS, t, rim));
         o.push(px.rect(x0, BLOCK_Y + RADIUS, t, BLOCK_H - 2.0 * RADIUS, rim));
         o.push(px.rect(x0 + bw - t, BLOCK_Y + RADIUS, t, BLOCK_H - 2.0 * RADIUS, rim));
+    }
+
+    // ---- pinned rows (return tracks, over): their own group above the master lane ----
+    if v.pinned_h > 0.0 {
+        let y0 = h - v.footer_h();
+        let mut tmp = Vec::new();
+        bands_and_grid(&mut tmp, sc, &px, y0, h - v.master_h, LANE);
+        o.extend(tmp);
+        for (i, t) in sc.tracks.iter().enumerate().skip(v.pinned_from) {
+            let top = v.track_top(i);
+            let row_h = v.pitch(i) - 0.5;
+            if t.selected {
+                let mut tmp = Vec::new();
+                bands_and_grid(&mut tmp, sc, &px, top, top + row_h, LANE_SEL);
+                o.extend(tmp);
+            }
+            let sep = if t.selected { 0x2c2d30 } else { 0x26272a };
+            o.push(px.rect(0.0, top + row_h - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
+        }
+        o.push(px.rect(0.0, y0 - 0.75, w, 1.5, rgba(rgb(0x5a5b60), 1.0)));
     }
 
     // ---- master lane (over, pinned to the bottom) ----
@@ -1024,6 +1094,17 @@ mod tests {
         assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT)[..4], ["1", "2", "3", "4"]);
         assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT / 4.0)[..4], ["1", "5", "9", "13"]);
         assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT * 8.0)[..3], ["1", "2", "3"]);
+    }
+
+    #[test]
+    fn empty_space_above_pinned_rows_hits_no_track() {
+        // One ordinary track and one pinned return: the space between them is no track.
+        let v = View { pitches: vec![TRACK_PITCH; 2], pinned_from: 1, pinned_h: TRACK_PITCH, height: 600.0, ..View::default() };
+        assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
+        assert_eq!(v.track_at(RULER_H + 2.0 * TRACK_PITCH + 10.0), None);
+        assert_eq!(v.track_at(v.pinned_top() - 1.0), None);
+        assert_eq!(v.track_at(v.pinned_top() + 1.0), Some(1));
+        assert_eq!(hit_test(&v, (900.0, 600.0), 2, &[], 10.0, 120.0), Hit::Empty);
     }
 
     #[test]

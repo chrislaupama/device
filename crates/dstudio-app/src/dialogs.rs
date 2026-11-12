@@ -178,6 +178,20 @@ pub fn stem_tracks(p: &Project, pick: StemsPick, selected: Option<TrackId>) -> V
         .collect()
 }
 
+/// The mix with only track `id` sounding, dry: every other track muted and no track routed
+/// through a return (no sends, every output on the master), so a stem whose output goes to a
+/// return, which is muted here, still plays.
+pub(crate) fn stem_snapshot(mix: &dstudio_core::snapshot::SessionSnapshot, id: TrackId) -> dstudio_core::snapshot::SessionSnapshot {
+    let mut snap = mix.clone();
+    for t in &mut snap.tracks {
+        t.solo = false;
+        t.mute = t.track_id != id.0;
+        t.output = None;
+        t.sends.clear();
+    }
+    snap
+}
+
 /// "3.7 MB • 0:14" for "files" stereo PCM files of "frames" each at "bits".
 pub fn estimate_text(frames: u64, rate: f64, bits: u32, files: usize) -> String {
     let mb = files as f64 * frames as f64 * 2.0 * (bits / 8) as f64 / 1e6;
@@ -586,6 +600,10 @@ impl Controller {
             let _ = writeln!(notes, "\nMuted in DStudio, so turned off in the set: {}.", off.join(", "));
         }
         let _ = writeln!(notes, "\nNot carried over: automation and device settings. Track colours are not matched to Live's palette.");
+        let returns: Vec<&str> = p.returns().map(|r| r.name.as_str()).collect();
+        if !returns.is_empty() {
+            let _ = writeln!(notes, "Return tracks ({}) and sends are not carried over either: every track is rendered dry, without its sends and as if its Out went to the master.", returns.join(", "));
+        }
         std::fs::write(folder.join("DStudio Export Notes.txt"), notes).map_err(|e| e.to_string())?;
         Ok((vec![als], restart))
     }
@@ -654,12 +672,7 @@ impl Controller {
         let written = (|| {
             for pass in passes {
                 if let Some(id) = pass.track {
-                    let mut snap = mix.clone();
-                    for t in &mut snap.tracks {
-                        t.solo = false;
-                        t.mute = t.track_id != id.0;
-                    }
-                    e.publish(&snap).map_err(|e| e.to_string())?;
+                    e.publish(&stem_snapshot(&mix, id)).map_err(|e| e.to_string())?;
                 } else if solo_passes {
                     e.publish(&mix).map_err(|e| e.to_string())?;
                 }
@@ -853,6 +866,23 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stem_snapshot_is_dry_and_solo() {
+        use dstudio_core::{Track, TrackKind, TrackSend};
+        let mut p = Project::default();
+        p.tracks.clear();
+        let ret = Track::new(TrackId(2), TrackKind::Return, "Return A", dstudio_core::ColorIndex(0));
+        let mut a = Track::new(TrackId(1), TrackKind::Audio, "Audio", dstudio_core::ColorIndex(0));
+        a.output = Some(ret.id);
+        a.sends.push(TrackSend::new(ret.id));
+        p.tracks = vec![a, ret];
+        let (mix, _) = dstudio_core::snapshot::build(&p, 48000.0, &Default::default());
+        assert_eq!(mix.tracks[0].output, Some(2));
+        let s = stem_snapshot(&mix, TrackId(1));
+        assert!(s.tracks.iter().all(|t| t.output.is_none() && t.sends.is_empty() && !t.solo));
+        assert!(!s.tracks[0].mute && s.tracks[1].mute);
+    }
 
     #[test]
     fn estimate_matches_the_reference_readout() {

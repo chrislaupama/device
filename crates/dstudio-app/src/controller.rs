@@ -423,6 +423,8 @@ pub struct Controller {
     pub(crate) synth_menu_model: Rc<VecModel<MenuItem>>,
     // ---- recording (src/recording.rs) + settings (src/settings.rs) ----
     pub rec: crate::recording::RecState,
+    /// Return tracks, sends and Out (src/routing.rs).
+    pub routing: crate::routing::RoutingUi,
     pub settings: crate::settings::SettingsState,
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
@@ -558,6 +560,7 @@ impl Controller {
             synth_displays_model: Rc::new(VecModel::default()),
             synth_menu_model: Rc::new(VecModel::default()),
             rec: Default::default(),
+            routing: Default::default(),
             settings: Default::default(),
             input_menu_model: Rc::new(VecModel::default()),
             export_tracks_model: Rc::new(VecModel::default()),
@@ -619,6 +622,9 @@ impl Controller {
         s.set_synth_displays(ModelRc::from(self.synth_displays_model.clone()));
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
+        s.set_route_menu_items(ModelRc::from(self.routing.menu_model.clone()));
+        s.set_strip_sends(ModelRc::from(self.routing.strip_sends_model.clone()));
+        s.set_sel_sends(ModelRc::from(self.routing.sel_sends_model.clone()));
         s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
         s.set_export_range_items(ModelRc::from(self.export_range_model.clone()));
         s.set_undo_history_rows(ModelRc::from(self.undo_history_model.clone()));
@@ -967,13 +973,12 @@ impl Controller {
     }
 
     pub fn add_audio_track(&mut self) -> Option<TrackId> {
-        let track = Track::new(TrackId(0), TrackKind::Audio, "Audio", next_track_color(self.project()));
+        // The new track goes after the ordinary tracks, before any return tracks.
+        let id = TrackId(self.project().next_id);
+        let track = Track::new(id, TrackKind::Audio, "Audio", next_track_color(self.project()));
         if self.execute(Command::AddTrack { index: None, track }) {
-            let id = self.project().tracks.last().map(|t| t.id);
-            if let Some(id) = id {
-                self.select_track(id);
-            }
-            return id;
+            self.select_track(id);
+            return Some(id);
         }
         None
     }
@@ -1067,8 +1072,12 @@ impl Controller {
     /// its middle) is in view.
     fn reveal_track(&mut self, id: TrackId) {
         let Some(i) = self.project().track_index(id) else { return };
+        if self.view.is_pinned(i) {
+            return; // A pinned return row is always in view.
+        }
         let (top, h) = (self.view.track_offset(i), self.view.pitch(i));
-        let visible = self.lanes_size.1 - timeline::RULER_H - self.view.master_h;
+        // The scrolling lanes end at the pinned band (return rows and master).
+        let visible = self.lanes_size.1 - timeline::RULER_H - self.view.footer_h();
         let y = self.view.scroll_y as f32;
         if h > visible {
             // Taller than the lanes: the header's controls (the name field with them) sit around
@@ -1304,6 +1313,7 @@ impl Controller {
     /// Start over with `project` (no undo history). Used by `--state` setups.
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
+        self.route_menu_close(); // its items name tracks of the old project
         self.onsets.clear();
         self.tempos.clear();
         self.doc_epoch += 1;
@@ -1348,6 +1358,7 @@ impl Controller {
         };
         self.stop_return();
         self.close_all_editors();
+        self.route_menu_close(); // its items name tracks of the old project
         for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
@@ -1405,7 +1416,7 @@ impl Controller {
             self.view.scroll_y -= dy as f64;
             self.view.clamp();
         }
-        let n = self.project().tracks.len();
+        let n = self.lane_tracks();
         self.view.clamp_scroll(n, self.lanes_size.1);
     }
 
@@ -1424,7 +1435,7 @@ impl Controller {
         if self.auto.shown && y >= timeline::RULER_H {
             return 0;
         }
-        match timeline::hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y) {
+        match timeline::hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y) {
             Hit::Clip { zone: Zone::Left | Zone::Right, .. } => 1,
             Hit::Clip { zone: Zone::Body, .. } => 2,
             _ => 0,
@@ -1453,7 +1464,7 @@ impl Controller {
         let beat = self.view.beat_at(x).max(0.0);
         match kind {
             0 => {
-                let hit = timeline::hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y);
+                let hit = timeline::hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
                 match hit {
                     Hit::Ruler => {
                         self.seek_beats(beat);
@@ -1856,7 +1867,8 @@ impl Controller {
             let (l, r, hold) = self.ballistics.get(id);
             TrackLevel { l: header_meter(l), r: header_meter(r), clip: hold >= 1.0 }
         };
-        let levels: Vec<TrackLevel> = p.tracks.iter().map(|t| level(t.id.0)).collect();
+        let n = self.lane_tracks();
+        let levels: Vec<TrackLevel> = p.tracks.iter().take(n).map(|t| level(t.id.0)).collect();
         sync_model(&self.track_levels_model, levels);
         let ml = level(MASTER_METER_ID);
         if s.get_master_level() != ml {
@@ -1915,7 +1927,7 @@ impl Controller {
             self.push_models(app);
         }
         self.auto_sync_view();
-        self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
+        self.view.clamp_scroll(self.lane_tracks(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
         self.update_minimap(app);
@@ -1991,13 +2003,27 @@ impl Controller {
         }
         // ---- mixer strips ----
         s.set_mixer_open(self.mixer_open);
+        let first_return = p.ordinary_track_count();
+        // Each strip's range in the strip-sends model (push_routing: ordinary tracks in order,
+        // one row per send to an existing return).
+        let mut send_first = 0;
         let strips: Vec<MixerStrip> = p
             .tracks
             .iter()
-            .map(|t| MixerStrip {
+            .enumerate()
+            .map(|(i, t)| {
+                let n = if t.is_return() { 0 } else { t.sends.iter().filter(|x| p.track(x.target).is_some_and(|r| r.is_return())).count() as i32 };
+                send_first += n;
+                (i, t, send_first - n, n)
+            })
+            .map(|(i, t, first, n)| MixerStrip {
+                send_first: first,
+                send_count: n,
                 id: t.id.0 as i32,
                 name: t.name.clone().into(),
                 instrument: t.kind == TrackKind::Instrument,
+                is_return: t.is_return(),
+                group_start: t.is_return() && i == first_return,
                 color: slint_color(track_color(t.color)),
                 selected: Some(t.id) == self.selected_track,
                 mute: t.mute,
@@ -2043,6 +2069,7 @@ impl Controller {
         self.push_clip_editor(&s);
         self.push_synth(&s);
         self.push_recording(&s);
+        self.push_routing(&s);
         self.push_settings(&s);
         self.push_dialogs(&s);
         self.push_clip_render(&s);
@@ -2082,7 +2109,7 @@ impl Controller {
             self.ruler_model.set_vec(labels.into_iter().map(|(x, t)| RulerLabel { x, text: t.into() }).collect::<Vec<_>>());
         }
         let w = self.lanes_size.0;
-        let bottom = self.lanes_size.1 - v.master_h;
+        let bottom = self.lanes_size.1 - v.footer_h();
         let labels: Vec<ClipLabel> = self
             .clip_vis
             .iter()
