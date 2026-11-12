@@ -7,8 +7,8 @@
 # they are updated by hand. For Cargo, security fixes still arrive as pull requests once
 # "Dependabot security updates" is on in the repository settings, and the Security workflow
 # checks Cargo.lock against the RustSec advisory database every week. Dependabot cannot see
-# the C++ SDKs that engine/CMakeLists.txt fetches, so nothing watches those automatically:
-# check their release notes and advisories by hand when updating them.
+# the C++ SDKs that engine/CMakeLists.txt fetches: the weekly Engine pins workflow
+# (tools/ci/engine_pins.py) reports those when they fall behind upstream.
 version: 2
 updates:
   - package-ecosystem: github-actions
