@@ -20,6 +20,11 @@
 //!              [--card-accent <RRGGBB>  (device cards in that colour, e.g. white as on the Master track)]
 //! ```
 
+// Drawing and layout code passes geometry, colours and state as plain arguments and keeps
+// per-widget closures and tuples inline; splitting those into structs and type aliases
+// would add names without making the code clearer.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// With `review-clip-bounce-menu`: the audio clip menu opens with its Bounce submenu showing.
 static CLIP_MENU_BOUNCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -2217,10 +2222,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Typing in a name field only records the draft: no model push per keystroke.
         let ctl2 = ctl.clone();
         studio.on_track_rename_draft(move |id, t, epoch| {
-            if let Ok(mut c) = ctl2.try_borrow_mut() {
-                if epoch == c.doc_epoch as i32 {
-                    c.rename_draft = Some((TrackId(id as u64), t.to_string()));
-                }
+            if let Ok(mut c) = ctl2.try_borrow_mut()
+                && epoch == c.doc_epoch as i32
+            {
+                c.rename_draft = Some((TrackId(id as u64), t.to_string()));
             }
         });
         let ctl2 = ctl.clone();
@@ -3336,7 +3341,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
-            let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
+            let median = if n.is_multiple_of(2) { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
             println!(
                 "{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3},\"update_ui_mean_ms\":{:.3}}}",
                 ms[(n * 95 / 100).min(n - 1)],

@@ -525,7 +525,6 @@ fn midi_steps() -> Vec<Step> {
             Box::new(|c, _| {
                 let label = c.doc.undo_label();
                 label
-                    .as_deref()
                     .is_some_and(|l| l.starts_with("Smart Quantize") || l.starts_with("Quantize Notes"))
                     .then_some(())
                     .ok_or(format!("last {label:?}"))
@@ -779,9 +778,7 @@ fn midi_steps() -> Vec<Step> {
                     before.iter().map(|n| dstudio_core::Note { start: lo + hi - n.start - n.length, ..*n }).collect();
                 let mut got = notes_of(c);
                 got.sort_by_key(|n| n.id);
-                (got == want && c.doc.undo_label().as_deref() == Some("Reverse Notes"))
-                    .then_some(())
-                    .ok_or(format!("{got:?} want {want:?}"))
+                (got == want && c.doc.undo_label() == Some("Reverse Notes")).then_some(()).ok_or(format!("{got:?} want {want:?}"))
             }),
         ),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
@@ -1118,7 +1115,7 @@ fn midi_steps() -> Vec<Step> {
                 (key.root == 5
                     && key.kind == 0
                     && !scale.highlight
-                    && c.doc.undo_label().as_deref() == Some("Clip Scale")
+                    && c.doc.undo_label() == Some("Clip Scale")
                     && s.get_pr_scale_root() == "Eb"
                     && s.get_pr_scale_type() == "Major")
                     .then_some(())
@@ -1188,7 +1185,7 @@ fn midi_steps() -> Vec<Step> {
             "Space toggled Loop off (and played nothing)",
             Box::new(|c, _| {
                 let l = instrument_clip(c).and_then(|m| m.clip_loop).ok_or("no loop")?;
-                (!l.on && !c.engine.transport().playing && c.doc.undo_label().as_deref() == Some("Clip Loop"))
+                (!l.on && !c.engine.transport().playing && c.doc.undo_label() == Some("Clip Loop"))
                     .then_some(())
                     .ok_or(format!("{l:?} playing {}", c.engine.transport().playing))
             }),
@@ -1204,7 +1201,7 @@ fn midi_steps() -> Vec<Step> {
             "Down picked the next root (C#), one \"Clip Scale\" step",
             Box::new(|c, a| {
                 let k = instrument_clip(c).and_then(|m| m.scale).and_then(|s| s.key).ok_or("no key")?;
-                (k.root == 1 && a.global::<Studio>().get_pr_scale_root() == "C#" && c.doc.undo_label().as_deref() == Some("Clip Scale"))
+                (k.root == 1 && a.global::<Studio>().get_pr_scale_root() == "C#" && c.doc.undo_label() == Some("Clip Scale"))
                     .then_some(())
                     .ok_or(format!("{k:?}"))
             }),
@@ -1291,9 +1288,11 @@ fn midi_steps() -> Vec<Step> {
             Box::new(|c, _| {
                 let m = instrument_clip(c).ok_or("clip gone")?;
                 let l = m.clip_loop.ok_or("no loop")?;
-                (l.on && l.start == 0 && l.end == m.length - PPQ && c.doc.undo_label().as_deref() == Some("Clip Loop"))
-                    .then_some(())
-                    .ok_or(format!("{l:?} len {} {:?}", m.length, c.doc.undo_label()))
+                (l.on && l.start == 0 && l.end == m.length - PPQ && c.doc.undo_label() == Some("Clip Loop")).then_some(()).ok_or(format!(
+                    "{l:?} len {} {:?}",
+                    m.length,
+                    c.doc.undo_label()
+                ))
             }),
         ),
         Do("click the footer Loop switch (off)", Box::new(|a| click(a, pr_origin().0 + 202.0 + 10.0, bottom_end() - 54.5 + 13.0 + 7.0))),
@@ -3047,7 +3046,7 @@ fn steps() -> Vec<Step> {
                     && l.end == content
                     && l.length == content
                     && c.project().clip_length_ticks(clip) == content
-                    && c.doc.undo_label().as_deref() == Some("Clip Loop")
+                    && c.doc.undo_label() == Some("Clip Loop")
                     && a.global::<Studio>().get_pr_loop_on())
                 .then_some(())
                 .ok_or(format!("{l:?} content {content} {:?}", c.doc.undo_label()))
@@ -3089,7 +3088,7 @@ fn steps() -> Vec<Step> {
                     && l.start == content / 4
                     && (l.end - content * 3 / 4).abs() <= g
                     && (l.end % g == 0 || l.end == content)
-                    && c.doc.undo_label().as_deref() == Some("Clip Loop"))
+                    && c.doc.undo_label() == Some("Clip Loop"))
                 .then_some(())
                 .ok_or(format!("{l:?} content {content}"))
             }),
@@ -3146,7 +3145,7 @@ fn steps() -> Vec<Step> {
                 let tpb = c.project().ticks_per_bar();
                 (l.start == want
                     && a.global::<Studio>().get_pr_position_text() == crate::pianoroll::fmt_pos(want, tpb)
-                    && c.doc.undo_label().as_deref() == Some("Clip Loop"))
+                    && c.doc.undo_label() == Some("Clip Loop"))
                 .then_some(())
                 .ok_or(format!("{l:?} want start {want} content {content}"))
             }),
@@ -3198,7 +3197,7 @@ fn steps() -> Vec<Step> {
                 let tpb = c.project().ticks_per_bar();
                 let ok = (len - 2 * content).abs() <= PPQ / 2
                     && clip.clip_loop.is_some_and(|l| l.on && l.length == len)
-                    && c.doc.undo_label().as_deref() == Some("Clip Loop")
+                    && c.doc.undo_label() == Some("Clip Loop")
                     && (c.clip_vis[i].len_beats - len as f64 / PPQ as f64).abs() < 1e-6
                     && (last - len as f64 / PPQ as f64).abs() < 1e-6
                     && segs.len() > 2
@@ -3471,7 +3470,7 @@ fn steps() -> Vec<Step> {
             Box::new(|c, _| {
                 let ppb = c.view.px_per_beat;
                 let anchor = c.view.beat_at(446.35);
-                let expected = 4.0 + 446.35 as f64 / crate::timeline::DEFAULT_PX_PER_BEAT;
+                let expected = 4.0 + 446.35_f64 / crate::timeline::DEFAULT_PX_PER_BEAT;
                 ((ppb - crate::timeline::DEFAULT_PX_PER_BEAT).abs() > 1.0 && (anchor - expected).abs() < 0.05)
                     .then_some(())
                     .ok_or(format!("ppb {ppb} anchor {anchor} vs {expected}"))
@@ -6895,7 +6894,7 @@ fn limiter_family_steps() -> Vec<Step> {
         }
         c.update_ui(a);
     }
-    let mut out = vec![DoC("dynamics: select the audio track and clear its chain", Box::new(|a, ctl| clear_audio_chain(a, ctl)))];
+    let mut out = vec![DoC("dynamics: select the audio track and clear its chain", Box::new(clear_audio_chain))];
     for id in ["limiter", "gate", "glue-compressor", "transient-shaper", "mastering-limiter"] {
         let def = dstudio_core::builtin::find(id).expect("registered");
         let name = def.name;
@@ -7042,7 +7041,7 @@ fn limiter_family_steps() -> Vec<Step> {
                 .ok_or(format!("history {} -> {n}, clip {:?}", u5.get(), param(c, "transient-shaper", "clip")))
         }),
     ));
-    out.push(DoC("dynamics: remove the section's devices", Box::new(|a, ctl| clear_audio_chain(a, ctl))));
+    out.push(DoC("dynamics: remove the section's devices", Box::new(clear_audio_chain)));
     out.push(Check(
         "dynamics: the audio track's chain is empty again",
         Box::new(|c, _| {
@@ -8581,7 +8580,7 @@ fn modulation_device_steps() -> Vec<Step> {
                 c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
                 let errors = c.engine.plugin_load_errors();
                 let ok = cd.field.visible
-                    && cd.field.main != ""
+                    && !cd.field.main.is_empty()
                     && slint::Model::row_count(&cd.knobs) == knobs
                     && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
                     && r.len() == 1
@@ -8995,7 +8994,7 @@ fn field_device_steps() -> Vec<Step> {
             Box::new(|a, _| {
                 let Some(cd) = card_named(a, "Auto Filter") else { return };
                 let Some(dot) =
-                    (0..slint::Model::row_count(&cd.canvas.dots)).filter_map(|i| slint::Model::row_data(&cd.canvas.dots, i)).last()
+                    (0..slint::Model::row_count(&cd.canvas.dots)).filter_map(|i| slint::Model::row_data(&cd.canvas.dots, i)).next_back()
                 else {
                     return;
                 };
@@ -9203,7 +9202,7 @@ fn step_sequencer_steps() -> Vec<Step> {
                 let p = seq_clip(c).and_then(|m| m.pattern).ok_or("no pattern")?;
                 let v = p.cell(36, 0).map(|x| x.velocity).unwrap_or(0);
                 let nv = seq_clip(c).and_then(|m| m.notes.iter().find(|n| n.start == 0 && n.pitch == 36).map(|n| n.velocity)).unwrap_or(0);
-                (a.global::<Studio>().get_seq_lane() == 1 && v < 60 && v >= 1 && nv == v)
+                (a.global::<Studio>().get_seq_lane() == 1 && (1..60).contains(&v) && nv == v)
                     .then_some(())
                     .ok_or(format!("lane {} velocity {v} note {nv}", a.global::<Studio>().get_seq_lane()))
             }),
@@ -11021,7 +11020,7 @@ fn devminimap_steps() -> Vec<Step> {
                 (!c.devmm_animating() && dim == 0).then_some(()).ok_or(format!("animating {} dim tiles {dim}", c.devmm_animating()))
             }),
         ),
-        DoC("devices minimap: remove the effects again", Box::new(|a, ctl| clear(a, ctl))),
+        DoC("devices minimap: remove the effects again", Box::new(clear)),
         Check(
             "the chain is empty again and the strip is hidden",
             Box::new(|c, a| {

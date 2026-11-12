@@ -48,7 +48,7 @@ pub fn chat_width(saved: f32, win_w: f32, sounds: bool) -> f32 {
 
 /// Widest a splitter drag can make the chat right now.
 pub fn chat_drag_max(win_w: f32, sounds: bool) -> f32 {
-    chat_room(win_w, sounds).min(CHAT_MAX_W).max(CHAT_MIN_W)
+    chat_room(win_w, sounds).clamp(CHAT_MIN_W, CHAT_MAX_W)
 }
 
 /// Whether the header hides its zoom sliders (mirrors `zoom-hidden` in ui/app.slint).

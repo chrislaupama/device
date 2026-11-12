@@ -340,8 +340,7 @@ mod tests {
 
     #[test]
     fn meters_rise_fast_and_fall_slowly() {
-        let mut st = ViewState::default();
-        st.last = Some(Instant::now() - std::time::Duration::from_millis(30));
+        let mut st = ViewState { last: Some(Instant::now() - std::time::Duration::from_millis(30)), ..Default::default() };
         assert!(st.poll(&[0.0, 0.0, -10.0, -100.0, -100.0, -6.0, 0.0, 0.0]));
         assert!(st.level[0] > -50.0, "one time constant up: {}", st.level[0]);
         assert!(st.gain[0] < -3.0);

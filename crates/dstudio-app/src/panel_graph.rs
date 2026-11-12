@@ -943,7 +943,7 @@ fn spectrum_points(shown: &[f32; BANDS], g: &Geo) -> Vec<(f32, f32)> {
     let band_hz = |i: usize| BAND_LO_HZ * (BAND_HI_HZ / BAND_LO_HZ).powf(i as f32 / (BANDS - 1) as f32);
     let y = |db: f32| g.y0 + (-db / SPEC_SCALE_DB).clamp(0.0, 1.0) * (g.y1 - g.y0);
     let mut pts = Vec::new();
-    for i in 0..BANDS {
+    for (i, &level) in sm.iter().enumerate() {
         let f = band_hz(i);
         let prev = if i > 0 { band_hz(i - 1) } else { 0.0 };
         let next = if i + 1 < BANDS { band_hz(i + 1) } else { f32::MAX };
@@ -951,7 +951,7 @@ fn spectrum_points(shown: &[f32; BANDS], g: &Geo) -> Vec<(f32, f32)> {
         if next < g.lo || prev > g.hi {
             continue;
         }
-        pts.push((g.x_of(f).clamp(g.x0, g.x1), y(sm[i])));
+        pts.push((g.x_of(f).clamp(g.x0, g.x1), y(level)));
     }
     pts
 }

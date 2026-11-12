@@ -76,6 +76,10 @@ impl ClipLoop {
         self.end - self.start
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.end <= self.start
+    }
+
     /// The shortest loop: below the finest grid step (1/48), so every snapped range fits,
     /// and long enough that unrolling stays small.
     pub const MIN_LEN: Ticks = crate::PPQ / 16;
@@ -291,11 +295,10 @@ pub fn legato(notes: &[Note], clip_length: Ticks) -> Vec<Note> {
 
 /// Duplicate the clip's content after itself. Returns (notes, new clip length).
 pub fn double(notes: &[Note], clip_length: Ticks) -> (Vec<Note>, Ticks) {
-    let mut next_id = notes.iter().map(|n| n.id + 1).max().unwrap_or(1);
+    let first_id = notes.iter().map(|n| n.id + 1).max().unwrap_or(1);
     let mut out = notes.to_vec();
-    for n in notes.iter().filter(|n| n.start < clip_length) {
-        out.push(Note { id: next_id, start: n.start + clip_length, ..*n });
-        next_id += 1;
+    for (id, n) in (first_id..).zip(notes.iter().filter(|n| n.start < clip_length)) {
+        out.push(Note { id, start: n.start + clip_length, ..*n });
     }
     (out, clip_length * 2)
 }

@@ -1479,12 +1479,8 @@ mod tests {
         assert_eq!(starts, [0.0, 0.25, 0.5, 0.75]);
         // Two hits in silence.
         let mut pairs = vec![[0.0f32, 0.0f32]; 3000];
-        for i in 1000..1100 {
-            pairs[i] = [-0.8, 0.8];
-        }
-        for i in 2000..2100 {
-            pairs[i] = [-0.6, 0.6];
-        }
+        pairs[1000..1100].fill([-0.8, 0.8]);
+        pairs[2000..2100].fill([-0.6, 0.6]);
         let s = chop(&pairs, 32.0, 48_000.0, 96_000, true, 2, 50.0, 120.0);
         assert_eq!(s.len(), 3, "{s:?}");
         assert!((s[1].start - 1000.0 * 32.0 / 96_000.0).abs() < 1e-3);

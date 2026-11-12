@@ -766,13 +766,13 @@ fn arpeggiate(v: &[Note], shape: &Shape) -> Vec<Note> {
                 }
                 "Thumb" => {
                     let j = k % (2 * (m - 1)).max(1);
-                    vec![if m < 2 || j % 2 == 0 { pool[0] } else { pool[1 + j / 2] }]
+                    vec![if m < 2 || j.is_multiple_of(2) { pool[0] } else { pool[1 + j / 2] }]
                 }
                 "Pinky" => {
                     let j = k % (2 * (m - 1)).max(1);
                     vec![if m < 2 {
                         pool[0]
-                    } else if j % 2 == 0 {
+                    } else if j.is_multiple_of(2) {
                         pool[j / 2]
                     } else {
                         pool[m - 1]

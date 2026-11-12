@@ -83,6 +83,7 @@ pub fn clip_curve(shape: u32, u: f32, s: f32) -> f32 {
 }
 
 /// Drawn transfer: (x (1 - mix) + c clip(x a / c) m mix) o.
+#[allow(clippy::too_many_arguments, reason = "one argument per device parameter, in panel order")]
 pub fn clipper_transfer(
     x: f32,
     input_db: f32,
