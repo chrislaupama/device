@@ -136,9 +136,13 @@ without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software 
 are reported as skipped off macOS), as a required step; on Windows with WARP
 (DX12 software adapter) the same, also failing the job when a check fails (the
 full self-test runs on main, nightly and labelled pull requests that change
-the app; see docs/building.md): the screenshot renders and the self-test passes, but the
-process exits with code 0x87A after the run (not yet explained; macOS/Linux
-exit 0), so CI prints that exit code and checks the summary line instead.
+the app; see docs/building.md): the screenshot renders, the self-test passes and the
+exit code is checked on all three systems. On Windows the app ends its process directly
+once `run` has returned (`exit_now` in `crates/dstudio-app/src/main.rs`): with a normal
+exit, any run that had opened the window reported 0x87A instead of our code. The code is
+set after `main` returns, while the process unloads its DLLs, with or without audio, a
+screenshot or presented frames; a run that exits before the window exists returns 0.
+Seen with WARP on the hosted runner; not yet checked on a real GPU.
 Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
 debug-only lock tracing runs in a TLS destructor when Slint's thread-local
 backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
