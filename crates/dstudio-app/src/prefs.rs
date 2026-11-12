@@ -76,6 +76,10 @@ pub struct Preferences {
     /// Settings › MIDI.
     #[serde(default, skip_serializing_if = "MidiPrefs::is_default")]
     pub midi: MidiPrefs,
+    /// Settings › Plugins › Add folder: plugin folders searched besides the standard ones,
+    /// oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_folders: Vec<String>,
 }
 
 /// Settings › MIDI: MIDI inputs are on by default, including ones plugged in
@@ -181,7 +185,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dstudio-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.dsproj".into()], recent_resolved: vec!["/private/tmp/Song.dsproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() }, midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] }, hide_returns: true };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.dsproj".into()], recent_resolved: vec!["/private/tmp/Song.dsproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() }, midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] }, hide_returns: true, plugin_folders: vec!["/opt/plugins".into()] };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());
@@ -194,6 +198,7 @@ mod tests {
         assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
         assert!(!loaded.hide_returns, "files without the Returns pill state show the returns");
         assert!(loaded.midi.disabled_inputs.is_empty(), "MIDI inputs default to on");
+        assert!(loaded.plugin_folders.is_empty(), "files without custom plugin folders have none");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

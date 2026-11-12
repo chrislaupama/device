@@ -468,3 +468,18 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   pull request media guidance to the organization URL. The old repository URL redirects to the new location.
 - The project website is https://devicedaw.github.io/. Repository ownership and documentation links changed;
   application code and CI behavior are unchanged.
+
+### 2026-11-12: custom plugin folders
+
+- Settings › Plugins › Add folder works (it was a placeholder): it opens a folder picker, keeps the folder in the
+  preferences (`plugin_folders`) and checks for new plugins, so what the folder holds shows up. Custom folders are
+  listed after the standard ones with a "Custom" badge and a remove button; the standard ones can't be removed. A
+  folder that is gone shows the "Missing" badge and is skipped by the scan. "Check for new plugins" and "Rescan all
+  plugins" include them, and removing one drops the plugins only it held. A folder already scanned, or whose path the
+  scanner can't take (a ':' on macOS and Linux), is refused with a status message. Folder changes during a scan queue
+  one more check.
+- Engine: `dstudio_engine::scan_plugins_in` passes extra folders to the scanner process first in its
+  `$DSTUDIO_PLUGIN_PATH` (no scanner change).
+- Tests: `scanner_searches_custom_folders` (a copy of the test gain CLAP in a temp folder is found, a missing folder
+  is skipped, and the plugin goes when the folder does), `custom_plugin_folders_are_added_once_and_never_shadow_a_standard_one`,
+  the preferences round trip, and self-test section `plugin_folder_steps`. Review state `review-plugin-folders`.

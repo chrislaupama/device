@@ -133,6 +133,8 @@ pub struct Catalog {
     /// Scans started so far and the `rescan` flag of the last one.
     pub scans: usize,
     pub last_rescan: bool,
+    /// The custom plugin folders changed while a scan ran: check again when it ends.
+    pub check_again: bool,
 }
 
 impl Catalog {
@@ -285,6 +287,24 @@ pub fn configured_scan_dirs() -> Vec<(PathBuf, &'static str)> {
         }
     }
     v
+}
+
+/// Badge of a custom plugin folder row in Settings › Plugins (the rows that can be removed).
+pub const CUSTOM_BADGE: &str = "Custom";
+
+/// Adds `dir` to the custom plugin folders. Refused when the scanner already searches it (a
+/// standard, environment or custom folder) or when its path cannot be passed to the scanner (a
+/// ':' on macOS and Linux, a '"' on Windows).
+pub fn add_plugin_folder(folders: &mut Vec<String>, dir: &Path) -> Result<(), String> {
+    if std::env::join_paths([dir]).is_err() {
+        return Err(format!("A plugin folder's path can't contain '{}'", if cfg!(windows) { '"' } else { ':' }));
+    }
+    let known = scan_dirs().into_iter().chain(configured_scan_dirs().into_iter().map(|(d, _)| d)).chain(folders.iter().map(PathBuf::from));
+    if known.into_iter().any(|d| d == dir) {
+        return Err("That folder is already scanned".into());
+    }
+    folders.push(dir.to_string_lossy().into_owned());
+    Ok(())
 }
 
 // ------------------------------------------------------------------ UI state
@@ -571,10 +591,11 @@ impl Controller {
             let _ = tx.send(JobResult::PluginScan(Ok(report)));
         } else if let Some(cache) = self.devices.catalog.cache_path.clone() {
             let progress = self.devices.catalog.progress.clone();
+            let folders: Vec<PathBuf> = self.settings.prefs.plugin_folders.iter().map(PathBuf::from).collect();
             std::thread::Builder::new()
                 .name("plugin-scan".into())
                 .spawn(move || {
-                    let r = dstudio_engine::scan_plugins(&cache, rescan, &mut |s: &str| {
+                    let r = dstudio_engine::scan_plugins_in(&cache, rescan, &folders, &mut |s: &str| {
                         if let Ok(mut p) = progress.lock() {
                             *p = s.to_string();
                         }
@@ -586,6 +607,40 @@ impl Controller {
             let _ = tx.send(JobResult::PluginScan(Err("no app support directory for the plugin cache".into())));
         }
         self.set_status(if rescan { "Rescanning plugins…" } else { "Scanning plugins…" }, 600);
+    }
+
+    /// Settings › Plugins › Add folder (the folder picked in the dialog): keeps it in the
+    /// preferences and checks for new plugins, so what it holds shows up.
+    pub fn plugins_add_folder(&mut self, dir: &Path) {
+        match add_plugin_folder(&mut self.settings.prefs.plugin_folders, dir) {
+            Ok(()) => {
+                self.save_prefs();
+                self.ui_dirty = true;
+                self.check_plugins_again();
+            }
+            Err(e) => self.set_status(&e, 4),
+        }
+    }
+
+    /// The remove button of a custom folder row: forgets it and checks again, which drops the
+    /// plugins only it held.
+    pub fn plugins_remove_folder(&mut self, dir: &str) {
+        let before = self.settings.prefs.plugin_folders.len();
+        self.settings.prefs.plugin_folders.retain(|f| f != dir);
+        if self.settings.prefs.plugin_folders.len() != before {
+            self.save_prefs();
+            self.ui_dirty = true;
+            self.check_plugins_again();
+        }
+    }
+
+    /// "Check for new plugins" after the folder list changed; after the running scan, if any.
+    fn check_plugins_again(&mut self) {
+        if self.devices.catalog.state == ScanState::Scanning {
+            self.devices.catalog.check_again = true;
+        } else {
+            self.start_plugin_scan(false);
+        }
     }
 
     pub(crate) fn finish_plugin_scan(&mut self, r: Result<ScanReport, String>) {
@@ -610,6 +665,9 @@ impl Controller {
             }
         }
         self.ui_dirty = true;
+        if std::mem::take(&mut self.devices.catalog.check_again) {
+            self.start_plugin_scan(false);
+        }
     }
 
     /// Cheap periodic work (UI timer): scan progress, engine load errors,
@@ -1537,6 +1595,11 @@ impl Controller {
             .chain(configured_scan_dirs())
             // A configured path may be a folder or a single bundle.
             .map(|(d, badge)| PluginRow { name: tilde(&d).into(), detail: "".into(), badge: badge.into(), warn: !d.exists() || (badge == "Default" && !d.is_dir()) })
+            // Custom folders last; `detail` carries the path the remove button names.
+            .chain(self.settings.prefs.plugin_folders.iter().map(|f| {
+                let d = Path::new(f);
+                PluginRow { name: tilde(d).into(), detail: f.into(), badge: CUSTOM_BADGE.into(), warn: !d.is_dir() }
+            }))
             .collect();
         sync_model(&self.scan_dirs_model, dirs);
         let mut found: Vec<&PluginInfo> = cat.plugins.iter().collect();
@@ -1565,6 +1628,18 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_plugin_folders_are_added_once_and_never_shadow_a_standard_one() {
+        let mut v = Vec::new();
+        let dir = std::env::temp_dir().join("dstudio-custom-plugins");
+        add_plugin_folder(&mut v, &dir).unwrap();
+        assert!(add_plugin_folder(&mut v, &dir).is_err(), "added twice");
+        assert!(add_plugin_folder(&mut v, &scan_dirs()[0]).is_err(), "a standard folder is already scanned");
+        let bad = if cfg!(windows) { "a\"b" } else { "a:b" };
+        assert!(add_plugin_folder(&mut v, &std::env::temp_dir().join(bad)).is_err(), "the scanner could not split it");
+        assert_eq!(v, [dir.to_string_lossy().into_owned()]);
+    }
 
     fn info(name: &str, vendor: &str, fmt: PluginFormat, kind: PluginKind) -> PluginInfo {
         PluginInfo {

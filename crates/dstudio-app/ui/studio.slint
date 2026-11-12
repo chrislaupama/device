@@ -1030,6 +1030,8 @@ export global Studio {
     in property <[PluginRow]> plugin-rows;
     in property <[PluginRow]> plugin-failed;
     callback plugins-rescan(bool);              // false: check for new plugins (cache), true: rescan all
+    callback plugins-add-folder();              // Settings › Plugins › Add folder (opens a folder picker)
+    callback plugins-remove-folder(string);     // a custom folder row's remove button (its path)
     callback placeholder(string);               // PLACEHOLDER controls report "not implemented"
 
     // ---- automation (src/automation.rs) ----

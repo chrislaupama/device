@@ -60,7 +60,8 @@ wgpu.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
   macros.
 - **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
-  is blocklisted instead of taking the app down, and their editors open in their own windows.
+  is blocklisted instead of taking the app down, and their editors open in their own windows. Besides the standard
+  plugin folders, Settings › Plugins scans any folders you add.
 - **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
   can be switched off.
 - **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
