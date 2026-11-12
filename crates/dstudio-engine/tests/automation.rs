@@ -31,14 +31,14 @@ fn random_lane(rng: &mut Rng, target: AutomationTarget) -> AutomationLane {
     let mut points = Vec::new();
     for i in 0..n {
         // Vertical steps (equal times) now and then, including at the first point.
-        if i > 0 && rng.next() % 4 != 0 {
+        if i > 0 && !rng.next().is_multiple_of(4) {
             t += 1 + (rng.next() % 5000) as i64;
         }
         let curve = match rng.next() % 4 {
             0 => 0.0,
             1 => 1.0 - 2.0 * rng.unit(),
             2 => {
-                if rng.next() % 2 == 0 {
+                if rng.next().is_multiple_of(2) {
                     1.0
                 } else {
                     -1.0

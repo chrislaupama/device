@@ -922,8 +922,8 @@ pub struct DeviceStatus {
     pub buffer_size: u32,
     pub input_channels: u32,
     pub output_channels: u32,
-    /// Input-side latency in engine frames (device + safety offset + stream
-    /// + one buffer). Recorded takes are compensated by
+    /// Input-side latency in engine frames (device, safety offset, stream
+    /// and one buffer). Recorded takes are compensated by
     /// `input_latency_frames + output_latency_frames`.
     pub input_latency_frames: u32,
     pub output_latency_frames: u32,
@@ -1040,7 +1040,7 @@ impl Engine {
     /// .input_name` is `None`, [`Engine::input_error`] says why, and a
     /// running restart returns `SE_ERR_DEVICE` with that message.
     pub fn configure_device(&self, cfg: &DeviceConfig) -> Result<(), EngineError> {
-        let out = cfg.output.as_deref().map(|s| CString::new(s)).transpose().map_err(|_| nul_error())?;
+        let out = cfg.output.as_deref().map(CString::new).transpose().map_err(|_| nul_error())?;
         let input_enabled = cfg.input.is_some();
         let inp = cfg.input.as_deref().filter(|s| !s.is_empty()).map(CString::new).transpose().map_err(|_| nul_error())?;
         let c = ffi::se_device_config {
