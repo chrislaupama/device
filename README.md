@@ -54,8 +54,8 @@ wgpu.
   what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Each
   track's channel strip adds a trim (±24 dB), a stereo width knob (0 to 200 %) and a mono switch. Return
-  tracks share one effect between many tracks: send any track to them pre- or post-fader, or route its output into
-  one, and delay compensation keeps the direct and the returned signal aligned.
+  tracks share one effect between many tracks: every track has a send knob for each return, pre- or post-fader, and
+  delay compensation keeps the direct and the returned signal aligned.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight

@@ -808,28 +808,32 @@ component Inspector inherits Rectangle {
         color: root.tab == i ? #ffffff : tab-ta.has-hover ? #ffffffb3 : #63656d;
         tab-ta := TouchArea { clicked => { root.tab = i; } }
     }
-    if root.tab == 1 && Studio.sel-can-send: Rectangle {
+    // "+" beside Sends (while the tab is open): a new return track; every track gets a silent
+    // send slot for it, and this track stays selected.
+    if root.tab == 1 && Studio.sel-can-send && Studio.can-add-return: Rectangle {
         x: 146 * StripMetrics.u; y: 108 * StripMetrics.u; width: 16 * StripMetrics.u; height: 16 * StripMetrics.u;
         Icon { x: 3 * StripMetrics.u; y: 3 * StripMetrics.u; width: 10 * StripMetrics.u; height: 10 * StripMetrics.u; d: Icons.plus; ink: send-add.has-hover ? #ffffffb3 : #63656d; stroke-width: 1.4px; }
         send-add := TouchArea {
-            clicked => { Studio.open-send-menu(Studio.sel-id, parent.absolute-position.x, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 2px); }
-            accessible-role: button; accessible-label: "Add send";
+            clicked => { Studio.sends-add-return(Studio.sel-id); }
+            accessible-role: button; accessible-label: "Add return track";
         }
     }
-    // Sends tab: one row per send (return colour and name, level knob with its dB readout, Pre
-    // switch, remove). Double-clicking the knob resets to 0 dB.
+    // Sends tab: one knob per return track, two to a row like the Input tab's knobs: a Post / Pre
+    // chip above (once the send is stored), the level knob, its dB value and the return's name.
+    // A silent slot (nothing sent yet, or all the way down) is dim; moving its knob sends.
+    // Double-clicking a knob sets 0 dB. With no return tracks, a dim "Return A" placeholder
+    // creates the return and sends to it at 0 dB.
     if root.tab == 1: sends-list := Rectangle {
         x: 0; y: 128 * StripMetrics.u; width: 170px; height: 324 * StripMetrics.u - self.y - 4px;
         clip: true;
-        // More sends than fit scroll with the wheel.
-        property <length> max-scroll: max(0px, Studio.sel-sends.length * 42px - self.height);
+        property <length> cell-h: 78px;
+        property <int> rows: (Studio.sel-sends.length + 1) / 2;
+        // More returns than fit scroll with the wheel.
+        property <length> max-scroll: max(0px, self.rows * self.cell-h + 6px - self.height);
         property <length> scroll: min(self.scroll-raw, self.max-scroll);
         property <length> scroll-raw: 0px;
         if !Studio.sel-can-send: Text {
             x: 10px; y: 10px; width: 150px; text: Studio.has-selection ? "Return tracks have no sends." : ""; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
-        }
-        if Studio.sel-can-send && Studio.sel-sends.length == 0: Text {
-            x: 10px; y: 10px; width: 150px; text: "No sends. Use + to send this track to a return track."; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
         }
         TouchArea {
             scroll-event(e) => {
@@ -837,14 +841,31 @@ component Inspector inherits Rectangle {
                 sends-list.scroll-raw = max(0px, min(sends-list.max-scroll, sends-list.scroll - e.delta-y));
                 accept
             }
+        // Placeholder: no return tracks yet.
+        if Studio.sel-can-send && Studio.sel-sends.length == 0: Rectangle {
+            x: 10px; y: 6px; width: 74px; height: sends-list.cell-h;
+            Knob { x: 18px; y: 14px; width: 38px; height: 38px; body: 20.5px; groove: true; show-arc: false; value-angle: -135; tick-color: #63656d; arc-color: #63656d; }
+            Text { x: 0; y: 50px; width: parent.width; height: 13px; text: "−∞"; color: #4a4b50; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 0; y: 65px; width: parent.width; height: 14px; text: "Return A"; color: new-ta.has-hover ? Tokens.text-primary : #63656d; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            new-ta := TouchArea {
+                clicked => { Studio.send-new-return(Studio.sel-id); }
+                accessible-role: button; accessible-label: "Create Return A and send to it";
+            }
+        }
         for r[k] in Studio.sel-sends: Rectangle {
-            x: 0; y: k * 42px - sends-list.scroll; width: parent.width; height: 42px;
-            Rectangle { x: 10px; y: 9px; width: 3.4px; height: 24px; border-radius: 1.7px; background: r.color; }
-            Text { x: 18px; y: 6px; width: 64px; height: 13px; text: r.name; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
-            Text { x: 18px; y: 21px; width: 64px; height: 13px; text: r.db-text; color: r.color.mix(#7d7e80, 0.62); font-size: 9px; font-weight: 600; vertical-alignment: center; }
+            x: mod(k, 2) == 0 ? 10px : 86px; y: 6px + floor(k / 2) * sends-list.cell-h - sends-list.scroll; width: 74px; height: sends-list.cell-h;
+            property <color> value-color: r.live ? r.color.mix(#7d7e80, 0.62) : #4a4b50;
+            if r.stored: Rectangle {
+                x: (parent.width - 26px) / 2; y: 0; width: 26px; height: 12px;
+                Text { text: r.pre ? "Pre" : "Post"; color: r.pre ? Tokens.text-primary : (chip-ta.has-hover ? #ffffffb3 : #63656d); font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                chip-ta := TouchArea {
+                    clicked => { Studio.send-toggle-pre(r.track, r.target); }
+                    accessible-role: button; accessible-label: (r.pre ? "Pre-fader send to " : "Post-fader send to ") + r.name;
+                }
+            }
             Knob {
-                x: 82px; y: 2px; width: 38px; height: 38px; body: 20.5px; groove: true; show-arc: true; arc-from: -135;
-                min-value: 0; max-value: 1; value: r.pos; value-angle: -135 + r.pos * 270; tick-color: #ffffff; arc-color: r.color.mix(#7d7e80, 0.62);
+                x: 18px; y: 14px; width: 38px; height: 38px; body: 20.5px; groove: true; show-arc: r.live; arc-from: -135;
+                min-value: 0; max-value: 1; value: r.pos; value-angle: -135 + r.pos * 270; tick-color: r.live ? #ffffff : #63656d; arc-color: parent.value-color;
                 value-changed(v) => { Studio.send-pos(r.track, r.target, v); }
                 released => { Studio.send-gesture-end(); }
                 reset => { Studio.send-reset(r.track, r.target); }
@@ -852,19 +873,13 @@ component Inspector inherits Rectangle {
                 accessible-action-increment => { Studio.send-pos(r.track, r.target, min(1, r.pos + 0.02)); Studio.send-gesture-end(); }
                 accessible-action-decrement => { Studio.send-pos(r.track, r.target, max(0, r.pos - 0.02)); Studio.send-gesture-end(); }
             }
-            Text { x: 124px; y: 6px; width: 20px; height: 12px; text: "Pre"; color: Tokens.text-tertiary; font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-            Switch { x: 124px; y: 21px; on: r.pre; toggled => { Studio.send-toggle-pre(r.track, r.target); } }
-            Rectangle {
-                x: 149px; y: 13px; width: 16px; height: 16px;
-                Icon { x: 3px; y: 3px; width: 10px; height: 10px; d: Icons.close; ink: rm-ta.has-hover ? #ffffffb3 : #63656d; stroke-width: 1.4px; }
-                rm-ta := TouchArea { clicked => { Studio.send-remove(r.track, r.target); } accessible-role: button; accessible-label: "Remove send to " + r.name; }
-            }
-            Rectangle { x: 10px; y: 41.5px; width: 150px; height: 0.5px; background: #ffffff0d; }
+            Text { x: 0; y: 50px; width: parent.width; height: 13px; text: r.live ? r.db-text : "−∞"; color: parent.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 0; y: 65px; width: parent.width; height: 14px; text: r.name; color: r.live ? Tokens.text-primary : #63656d; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
         }
         }
         if sends-list.max-scroll > 0: Rectangle {
-            x: parent.width - 3px; y: sends-list.scroll / (Studio.sel-sends.length * 42px) * parent.height; width: 2px;
-            height: parent.height * parent.height / (Studio.sel-sends.length * 42px); border-radius: 1px; background: #ffffff33;
+            x: parent.width - 3px; y: sends-list.scroll / (sends-list.rows * sends-list.cell-h + 6px) * parent.height; width: 2px;
+            height: parent.height * parent.height / (sends-list.rows * sends-list.cell-h + 6px); border-radius: 1px; background: #ffffff33;
         }
     }
     Rectangle { x: 10px; y: 128 * StripMetrics.u - 0.5px; width: 150px; height: 0.5px; background: #ffffff14; }

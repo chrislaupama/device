@@ -520,6 +520,24 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
   list. Not yet opened in Live itself (spec 006, T5).
 
+### 2026-11-12: return tracks and sends read as one pair
+
+- A return track is the shared effect track ("Return A"); a send is how much of one track goes into it. Every
+  ordinary track now has a send slot for every return, so the two always appear together: the channel strip's Sends
+  tab shows one knob per return (two to a row, like the Input tab) with the return's name, its dB value and a
+  Post / Pre chip, and the mixer's Sends section one row per return on every strip. A slot with nothing sent is
+  silent and dim; moving it stores a post-fader send ("Send Level Change"), double-clicking sets 0 dB.
+- The "+" beside Sends (Sends tab and mixer strips) adds the next lettered return ("Add Return Track") and keeps the
+  track selected; the add-send menu is gone. With no returns, the Sends tab shows a dim "Return A" placeholder that
+  creates the return and a 0 dB send, and the Timeline's Returns pill adds Return A.
+- Mixer: a send row's letter tag opens its options: Post-fader, Pre-fader, Reset to 0 dB, Remove send.
+- Out lists Master only (send to a return to share an effect); a track an older project routed into a return lists
+  that return too, so it can be moved back. Spec 002 is updated to match.
+- Tests: `every_return_is_a_send_slot_on_every_track`, `moving_a_silent_send_turns_it_on`,
+  `returns_pill_and_out_menu`, and the self-test's returns section rewritten for the new flow.
+- Not yet: sends from one return track into another (needs engine routing and solo rules), and return rows in the
+  timeline without a pan knob.
+
 ### 2026-11-12: automate any device control, mute and device on/off
 
 - Every device control's right-click menu starts with "Automate <parameter>": built-in device knobs, buttons, choice
