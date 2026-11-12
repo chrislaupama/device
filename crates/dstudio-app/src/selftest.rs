@@ -3773,6 +3773,120 @@ fn route_row(ctl: &Ctl, i: usize) -> (f32, f32) {
 /// Return tracks, sends and Out through the interface (spec 002, A8): a return created from the
 /// Sends tab's "+", a send level drag (one undo step), Pre, the Out menu, the mixer's Sends
 /// section, the Returns pill, removing a send, and removing the return with its routing.
+/// Channel strip trim, width and mono (spec 005): drag, reset, the switch and undo.
+fn strip_steps() -> Vec<Step> {
+    use Step::*;
+    let n0 = Rc::new(std::cell::Cell::new(0usize));
+    let n1 = n0.clone();
+    let count = |c: &crate::controller::Controller, label: &str| c.doc.history_labels().iter().filter(|l| l.as_str() == label).count();
+    // Knob centres in the channel strip's Input tab (ui/app.slint): Trim (47, 141), Width (123, 141),
+    // Mono switch (122.5, 210.5).
+    let at = |x: f32, y: f32| (bottom_x() + x, bottom_y() + y);
+    vec![
+        DoC(
+            "strip: close the mixer, select track 1, Devices tab, the strip's Input tab",
+            Box::new(move |a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                let t = c.project().tracks[0].id;
+                c.select_track(t);
+                c.set_bottom_tab(BottomTab::Devices);
+                a.global::<Studio>().set_strip_tab(0);
+                n0.set(count(&c, "Trim Change"));
+                // Coalescing window 0: only the held gesture merges the moves into one step.
+                c.doc.coalesce_window = std::time::Duration::ZERO;
+                c.ui_dirty = true;
+            }),
+        ),
+        Do(
+            "strip: drag the Trim knob up 30 pt",
+            Box::new(move |a| {
+                let (x, y) = at(47.0, 141.0);
+                drag(a, x, y, x, y - 30.0)
+            }),
+        ),
+        Check(
+            "strip: trim raised (+9.6 dB), readout '+9.6 dB', one 'Trim Change' step",
+            Box::new(move |c, a| {
+                let t = c.project().tracks[0].trim_db;
+                let txt = a.global::<Studio>().get_sel_trim_text();
+                let n = count(c, "Trim Change");
+                (approx(t, 9.6, 0.25) && txt.starts_with('+') && txt.ends_with(" dB") && n == n1.get() + 1)
+                    .then_some(())
+                    .ok_or(format!("trim {t} text {txt} steps {n} (was {})", n1.get()))
+            }),
+        ),
+        Do(
+            "strip: double-click the Trim knob",
+            Box::new(move |a| {
+                let (x, y) = at(47.0, 141.0);
+                double_click(a, x, y)
+            }),
+        ),
+        Check(
+            "strip: trim reset to 0.0 dB",
+            Box::new(|c, a| {
+                let t = c.project().tracks[0].trim_db;
+                let txt = a.global::<Studio>().get_sel_trim_text();
+                (t == 0.0 && txt == "0.0 dB").then_some(()).ok_or(format!("trim {t} text {txt}"))
+            }),
+        ),
+        Do(
+            "strip: drag the Width knob down 30 pt",
+            Box::new(move |a| {
+                let (x, y) = at(123.0, 141.0);
+                drag(a, x, y, x, y + 30.0)
+            }),
+        ),
+        Check(
+            "strip: width 60 %, readout '60%'",
+            Box::new(|c, a| {
+                let w = c.project().tracks[0].width;
+                let txt = a.global::<Studio>().get_sel_width_text();
+                (approx(w, 0.6, 0.02) && txt == "60%").then_some(()).ok_or(format!("width {w} text {txt}"))
+            }),
+        ),
+        Do(
+            "strip: click the Mono switch",
+            Box::new(move |a| {
+                let (x, y) = at(122.5, 210.5);
+                click(a, x, y)
+            }),
+        ),
+        Check(
+            "strip: mono on ('Mono Change'), switch on",
+            Box::new(|c, a| {
+                let on = c.project().tracks[0].mono;
+                (on && a.global::<Studio>().get_sel_mono() && c.doc.undo_label() == Some("Mono Change"))
+                    .then_some(())
+                    .ok_or(format!("mono {on} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        Do("strip: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "strip: undo turned mono off and kept the width",
+            Box::new(|c, _| {
+                let t = &c.project().tracks[0];
+                (!t.mono && approx(t.width, 0.6, 0.02)).then_some(()).ok_or(format!("mono {} width {}", t.mono, t.width))
+            }),
+        ),
+        DoC(
+            "strip: back to 100 % width, coalescing window restored",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.doc.coalesce_window = std::time::Duration::from_millis(750);
+                let t = c.project().tracks[0].id;
+                c.set_track_width(t, 1.0);
+                c.strip_gesture_end();
+            }),
+        ),
+        Check(
+            "strip: track 1 neutral again",
+            Box::new(|c, _| c.project().tracks[0].strip_is_neutral().then_some(()).ok_or("not neutral".into())),
+        ),
+    ]
+}
+
 /// Settings › Plugins custom folders (issue #33): add one holding a copy of the test gain CLAP
 /// and one that does not exist, remove them again.
 fn plugin_folder_steps() -> Vec<Step> {
@@ -13529,6 +13643,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
     all.extend(live_import_steps());
+    all.extend(strip_steps());
     all.extend(returns_steps());
     all.extend(plugin_folder_steps());
     all.extend(shortcut_steps());

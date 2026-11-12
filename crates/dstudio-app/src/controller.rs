@@ -121,6 +121,23 @@ pub fn parse_pan_text(s: &str) -> Option<f32> {
     t.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| (v / 100.0).clamp(-1.0, 1.0))
 }
 
+/// Channel-strip trim: "0.0 dB", "+3.5 dB", "−6.0 dB".
+pub(crate) fn fmt_trim(db: f32) -> String {
+    let v = (db * 10.0).round() / 10.0;
+    if v == 0.0 {
+        "0.0 dB".into()
+    } else if v < 0.0 {
+        format!("−{:.1} dB", -v)
+    } else {
+        format!("+{v:.1} dB")
+    }
+}
+
+/// Channel-strip width as a percentage: "100%".
+pub(crate) fn fmt_width(w: f32) -> String {
+    format!("{:.0}%", w * 100.0)
+}
+
 pub(crate) fn fmt_pan(p: f32) -> String {
     let v = (p * 100.0).round() as i32;
     match v {
@@ -1182,6 +1199,45 @@ impl Controller {
         }
     }
 
+    /// Channel-strip trim in dB, in 0.1 dB steps. A held knob drag is one undo step
+    /// (sealed by [Self::strip_gesture_end]).
+    pub fn set_track_trim(&mut self, id: TrackId, db: f32) -> bool {
+        let (lo, hi) = dstudio_core::Track::TRIM_RANGE_DB;
+        let db = (db.clamp(lo, hi) * 10.0).round() / 10.0;
+        if self.project().track(id).is_none_or(|t| t.trim_db == db) {
+            return false;
+        }
+        let ok = self.execute(Command::SetTrackTrim { track: id, trim_db: db });
+        if ok {
+            self.doc.hold_coalescing();
+        }
+        ok
+    }
+
+    /// Channel-strip width (0..2, 1 = unchanged) in 1 % steps; one held drag is one undo step.
+    pub fn set_track_width(&mut self, id: TrackId, width: f32) -> bool {
+        let (lo, hi) = dstudio_core::Track::WIDTH_RANGE;
+        let width = (width.clamp(lo, hi) * 100.0).round() / 100.0;
+        if self.project().track(id).is_none_or(|t| t.width == width) {
+            return false;
+        }
+        let ok = self.execute(Command::SetTrackWidth { track: id, width });
+        if ok {
+            self.doc.hold_coalescing();
+        }
+        ok
+    }
+
+    pub fn toggle_track_mono(&mut self, id: TrackId) -> bool {
+        let Some(mono) = self.project().track(id).map(|t| !t.mono) else { return false };
+        self.execute(Command::SetTrackMono { track: id, mono })
+    }
+
+    /// A trim or width knob was released: the next drag is a new undo step.
+    pub fn strip_gesture_end(&mut self) {
+        self.doc.seal_coalescing();
+    }
+
     pub fn set_master_gain(&mut self, gain: f32) {
         if self.auto_intercept(None, dstudio_core::AutomationTarget::Volume, gain_to_db(gain)) {
             return;
@@ -2098,6 +2154,11 @@ impl Controller {
             s.set_sel_solo(t.solo);
             s.set_sel_pan(t.pan);
             s.set_sel_pan_text(fmt_pan(t.pan).into());
+            s.set_sel_trim(t.trim_db);
+            s.set_sel_trim_text(fmt_trim(t.trim_db).into());
+            s.set_sel_width(t.width);
+            s.set_sel_width_text(fmt_width(t.width).into());
+            s.set_sel_mono(t.mono);
             let db = gain_to_db(t.gain);
             s.set_sel_fader(fader_from_db(db));
             s.set_sel_db_text(fmt_db(db).into());

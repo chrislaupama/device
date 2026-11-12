@@ -39,6 +39,15 @@ void kernel_add_scaled2(float* __restrict dst_l, float* __restrict dst_r, const 
     }
 }
 
+void kernel_strip(float* __restrict l, float* __restrict r, float a, float b, uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) {
+        const float x = l[i];
+        const float y = r[i];
+        l[i] = a * x + b * y;
+        r[i] = b * x + a * y;
+    }
+}
+
 void kernel_scale(float* __restrict buf, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) buf[i] *= gain;
 }
@@ -728,6 +737,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             if (!plain) router.discard_edges(track, t);
             continue;
         }
+        if (track.strip_on) kernel_strip(tl, tr, track.strip_a, track.strip_b, frames);
 
         const bool automated = track.vol_lane >= 0 || track.pan_lane >= 0;
         float* const gl = ctx.gain_l();

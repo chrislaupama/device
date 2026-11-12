@@ -461,6 +461,13 @@ int32_t Engine::publish(const se_session_desc_v8& desc8, std::string& err) {
 }
 
 int32_t Engine::publish(const se_session_desc_v9& desc9, std::string& err) {
+    se_session_desc_v10 d10{};
+    d10.v9 = desc9;
+    return publish(d10, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v10& desc10, std::string& err) {
+    const se_session_desc_v9& desc9 = desc10.v9;
     const se_session_desc_v8& desc8 = desc9.v8;
     const se_session_desc_v6& desc = desc8.v7.v6;
     std::unique_ptr<RenderGraph> built;
@@ -469,7 +476,7 @@ int32_t Engine::publish(const se_session_desc_v9& desc9, std::string& err) {
         auto it = assets_.find(id);
         return it == assets_.end() ? nullptr : it->second;
     };
-    const int32_t rc = build_render_graph(desc9, lookup, built, err);
+    const int32_t rc = build_render_graph(desc10, lookup, built, err);
     if (rc != SE_OK) return rc;
     built->sample_rate = sample_rate_;
     warp_renderer_.resolve(*built);

@@ -186,6 +186,13 @@ struct TrackNode {
     int32_t out_bus = -1;
     uint32_t send_begin = 0;
     uint32_t send_count = 0;
+    // Channel strip (se_session_publish_v10): trim, width and mono folded
+    // into a 2x2 matrix applied after the insert chain, before pre-fader
+    // sends and the fader: L' = a L + b R, R' = b L + a R. strip_on: the
+    // matrix is not the identity.
+    bool strip_on = false;
+    float strip_a = 1.0f;
+    float strip_b = 0.0f;
     // Delay compensation: extra delay on the output edge (after the fader)
     // when its destination receives later than the track's earliest one.
     uint32_t out_delay = 0;
@@ -343,12 +350,18 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g);
 // balance control to stereo sources (left gain on the left channel).
 void constant_power_pan(float pan, float& left, float& right) noexcept;
 
+// The channel-strip matrix (see TrackNode::strip_a): trim (linear), width
+// (0..2) and mono folded into L' = a L + b R, R' = b L + a R.
+void strip_matrix(float trim, float width, bool mono, float& a, float& b) noexcept;
+
 // Validates and copies the description. Returns an se_result code. The v1..v8
 // entry points convert to v6 (v1..v5: no automation lanes) (v1: no instrument, no notes; v1/v2: default
 // synth parameters; v1..v3: no arm/monitor/input; v1..v4: no devices).
 // Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
 // is sized and null. Plugin slots are created with null instances (the
 // engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v10& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v9& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v8& desc, const AssetLookup& lookup,
