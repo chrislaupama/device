@@ -626,7 +626,15 @@ pub struct se_plugin_param_info {
 
 impl Default for se_plugin_param_info {
     fn default() -> Self {
-        se_plugin_param_info { id: 0, steps: 0, default_normalized: 0.0, automatable: 0, _pad: [0; 3], name: [0; SE_PARAM_STRING_MAX], group: [0; SE_PARAM_STRING_MAX] }
+        se_plugin_param_info {
+            id: 0,
+            steps: 0,
+            default_normalized: 0.0,
+            automatable: 0,
+            _pad: [0; 3],
+            name: [0; SE_PARAM_STRING_MAX],
+            group: [0; SE_PARAM_STRING_MAX],
+        }
     }
 }
 
@@ -864,17 +872,42 @@ unsafe extern "C" {
     pub fn se_record_start(engine: *mut se_engine, utf8_dir: *const c_char) -> i32;
     pub fn se_record_stop(engine: *mut se_engine, out_take_count: *mut usize) -> i32;
     pub fn se_record_get_take(engine: *mut se_engine, index: usize, out: *mut se_recorded_take) -> i32;
-    pub fn se_record_state(engine: *mut se_engine, out_active: *mut u8, out: *mut se_live_take, capacity: usize, out_count: *mut usize) -> i32;
-    pub fn se_record_peaks(engine: *mut se_engine, track_id: u64, frames_per_peak: u32, out_minmax: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_record_state(
+        engine: *mut se_engine,
+        out_active: *mut u8,
+        out: *mut se_live_take,
+        capacity: usize,
+        out_count: *mut usize,
+    ) -> i32;
+    pub fn se_record_peaks(
+        engine: *mut se_engine,
+        track_id: u64,
+        frames_per_peak: u32,
+        out_minmax: *mut f32,
+        capacity: usize,
+        out_count: *mut usize,
+    ) -> i32;
     pub fn se_record_stats_get(engine: *mut se_engine, out: *mut se_record_stats) -> i32;
-    pub fn se_render_offline_with_input(engine: *mut se_engine, input_interleaved: *const f32, input_channels: u32, out_interleaved: *mut f32, frames: u32) -> i32;
+    pub fn se_render_offline_with_input(
+        engine: *mut se_engine,
+        input_interleaved: *const f32,
+        input_channels: u32,
+        out_interleaved: *mut f32,
+        frames: u32,
+    ) -> i32;
 
     // plugins
     pub fn se_session_publish_v5(engine: *mut se_engine, session: *const se_session_desc_v5) -> i32;
     pub fn se_plugin_is_live(engine: *mut se_engine, device_id: u64) -> i32;
     pub fn se_plugin_load_errors(engine: *mut se_engine, out: *mut se_plugin_message, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_plugin_save_states(engine: *mut se_engine, out_count: *mut usize) -> i32;
-    pub fn se_plugin_saved_state(engine: *mut se_engine, index: usize, out_device_id: *mut u64, out_data: *mut *const u8, out_len: *mut usize) -> i32;
+    pub fn se_plugin_saved_state(
+        engine: *mut se_engine,
+        index: usize,
+        out_device_id: *mut u64,
+        out_data: *mut *const u8,
+        out_len: *mut usize,
+    ) -> i32;
     pub fn se_plugin_editor_open(engine: *mut se_engine, device_id: u64) -> i32;
     pub fn se_plugin_editor_close(engine: *mut se_engine, device_id: u64) -> i32;
     pub fn se_plugin_editor_is_open(engine: *mut se_engine, device_id: u64) -> i32;
@@ -887,7 +920,13 @@ unsafe extern "C" {
     // plugin delay compensation
     pub fn se_pdc_set_enabled(engine: *mut se_engine, enabled: u8) -> i32;
     pub fn se_pdc_is_enabled(engine: *const se_engine) -> i32;
-    pub fn se_pdc_report_get(engine: *mut se_engine, out: *mut se_pdc_report, tracks: *mut se_pdc_track, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_pdc_report_get(
+        engine: *mut se_engine,
+        out: *mut se_pdc_report,
+        tracks: *mut se_pdc_track,
+        capacity: usize,
+        out_count: *mut usize,
+    ) -> i32;
     pub fn se_transport_audible_position(engine: *const se_engine, out_frame: *mut i64) -> i32;
 
     // automation and plugin parameters
@@ -899,18 +938,44 @@ unsafe extern "C" {
     pub fn se_session_publish_v9(engine: *mut se_engine, session: *const se_session_desc_v9) -> i32;
     pub fn se_session_publish_v10(engine: *mut se_engine, session: *const se_session_desc_v10) -> i32;
     pub fn se_warp_renders_pending(engine: *const se_engine, out_count: *mut usize) -> i32;
-    pub fn se_asset_detect_onsets(engine: *mut se_engine, asset_id: u64, out: *mut se_onset, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_asset_detect_onsets(engine: *mut se_engine, asset_id: u64, out: *mut se_onset, capacity: usize, out_count: *mut usize)
+    -> i32;
     pub fn se_automation_eval(lane: *const se_auto_lane_desc, frames: *const i64, count: usize, out_values: *mut f32) -> i32;
-    pub fn se_plugin_params(engine: *mut se_engine, device_id: u64, out: *mut se_plugin_param_info, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_plugin_params(
+        engine: *mut se_engine,
+        device_id: u64,
+        out: *mut se_plugin_param_info,
+        capacity: usize,
+        out_count: *mut usize,
+    ) -> i32;
     pub fn se_plugin_param_value(engine: *mut se_engine, device_id: u64, param_id: u32, out_normalized: *mut f32) -> i32;
-    pub fn se_plugin_param_text(engine: *mut se_engine, device_id: u64, param_id: u32, normalized: f32, out: *mut c_char, capacity: usize) -> i32;
-    pub fn se_plugin_take_param_changes(engine: *mut se_engine, out: *mut se_plugin_param_change, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_plugin_param_text(
+        engine: *mut se_engine,
+        device_id: u64,
+        param_id: u32,
+        normalized: f32,
+        out: *mut c_char,
+        capacity: usize,
+    ) -> i32;
+    pub fn se_plugin_take_param_changes(
+        engine: *mut se_engine,
+        out: *mut se_plugin_param_change,
+        capacity: usize,
+        out_count: *mut usize,
+    ) -> i32;
 
     // built-in devices
     pub fn se_builtin_registry(out_count: *mut usize) -> *const se_builtin_desc;
     pub fn se_builtin_set_param(engine: *mut se_engine, device_id: u64, index: u32, value: f32) -> i32;
     pub fn se_builtin_readouts(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
-    pub fn se_builtin_analysis(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize, out_seq: *mut u64) -> i32;
+    pub fn se_builtin_analysis(
+        engine: *mut se_engine,
+        device_id: u64,
+        out: *mut f32,
+        capacity: usize,
+        out_count: *mut usize,
+        out_seq: *mut u64,
+    ) -> i32;
 
     // modulation
     pub fn se_plugin_set_param(engine: *mut se_engine, device_id: u64, param_id: u32, normalized: f32) -> i32;
@@ -967,7 +1032,13 @@ mod abi_layout {
         // se_note_desc 24/8: start 0, end 8, pitch 16, velocity 17, _pad 18.
         assert_eq!((size_of::<se_note_desc>(), align_of::<se_note_desc>()), (24, 8));
         assert_eq!(
-            (offset_of!(se_note_desc, start), offset_of!(se_note_desc, end), offset_of!(se_note_desc, pitch), offset_of!(se_note_desc, velocity), offset_of!(se_note_desc, _pad)),
+            (
+                offset_of!(se_note_desc, start),
+                offset_of!(se_note_desc, end),
+                offset_of!(se_note_desc, pitch),
+                offset_of!(se_note_desc, velocity),
+                offset_of!(se_note_desc, _pad)
+            ),
             (0, 8, 16, 17, 18)
         );
         // se_track_desc_v2 48/8: track_id 0, gain 8, pan 12, mute 16, solo 17,
@@ -992,7 +1063,11 @@ mod abi_layout {
         // se_session_desc_v2 16/8: tracks 0, track_count 8, master_gain 12.
         assert_eq!((size_of::<se_session_desc_v2>(), align_of::<se_session_desc_v2>()), (16, 8));
         assert_eq!(
-            (offset_of!(se_session_desc_v2, tracks), offset_of!(se_session_desc_v2, track_count), offset_of!(se_session_desc_v2, master_gain)),
+            (
+                offset_of!(se_session_desc_v2, tracks),
+                offset_of!(se_session_desc_v2, track_count),
+                offset_of!(se_session_desc_v2, master_gain)
+            ),
             (0, 8, 12)
         );
     }
@@ -1073,7 +1148,11 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_session_desc_v3>(), align_of::<se_session_desc_v3>()), (16, 8));
         assert_eq!(
-            (offset_of!(se_session_desc_v3, tracks), offset_of!(se_session_desc_v3, track_count), offset_of!(se_session_desc_v3, master_gain)),
+            (
+                offset_of!(se_session_desc_v3, tracks),
+                offset_of!(se_session_desc_v3, track_count),
+                offset_of!(se_session_desc_v3, master_gain)
+            ),
             (0, 8, 12)
         );
     }
@@ -1100,7 +1179,10 @@ mod abi_layout {
             ),
             (0, 8, 12, 16, 17, 18, 19, 20, 21, 22, 24, 32)
         );
-        assert_eq!((offset_of!(se_track_desc_v4, note_count), offset_of!(se_track_desc_v4, notes), offset_of!(se_track_desc_v4, synth)), (36, 40, 48));
+        assert_eq!(
+            (offset_of!(se_track_desc_v4, note_count), offset_of!(se_track_desc_v4, notes), offset_of!(se_track_desc_v4, synth)),
+            (36, 40, 48)
+        );
         assert_eq!((size_of::<se_session_desc_v4>(), align_of::<se_session_desc_v4>()), (16, 8));
         assert_eq!((size_of::<se_device_info>(), align_of::<se_device_info>()), (656, 8));
         assert_eq!(
@@ -1116,13 +1198,24 @@ mod abi_layout {
             (256, 512, 516, 520, 521, 524, 528)
         );
         assert_eq!((size_of::<se_midi_input_info>(), align_of::<se_midi_input_info>()), (528, 8));
-        assert_eq!((offset_of!(se_midi_input_info, name), offset_of!(se_midi_input_info, events), offset_of!(se_midi_input_info, open)), (256, 512, 520));
+        assert_eq!(
+            (offset_of!(se_midi_input_info, name), offset_of!(se_midi_input_info, events), offset_of!(se_midi_input_info, open)),
+            (256, 512, 520)
+        );
         assert_eq!((size_of::<se_midi_captured>(), align_of::<se_midi_captured>()), (16, 8));
-        assert_eq!((offset_of!(se_midi_captured, status), offset_of!(se_midi_captured, data1), offset_of!(se_midi_captured, data2)), (8, 9, 10));
+        assert_eq!(
+            (offset_of!(se_midi_captured, status), offset_of!(se_midi_captured, data1), offset_of!(se_midi_captured, data2)),
+            (8, 9, 10)
+        );
         assert_eq!((size_of::<se_midi_stats>(), align_of::<se_midi_stats>()), (32, 8));
         assert_eq!((size_of::<se_device_config>(), align_of::<se_device_config>()), (32, 8));
         assert_eq!(
-            (offset_of!(se_device_config, input_uid), offset_of!(se_device_config, sample_rate), offset_of!(se_device_config, buffer_size), offset_of!(se_device_config, input_enabled)),
+            (
+                offset_of!(se_device_config, input_uid),
+                offset_of!(se_device_config, sample_rate),
+                offset_of!(se_device_config, buffer_size),
+                offset_of!(se_device_config, input_enabled)
+            ),
             (8, 16, 24, 28)
         );
         assert_eq!((size_of::<se_device_status>(), align_of::<se_device_status>()), (808, 8));
@@ -1144,7 +1237,13 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_recorded_take>(), align_of::<se_recorded_take>()), (1064, 8));
         assert_eq!(
-            (offset_of!(se_recorded_take, start_frame), offset_of!(se_recorded_take, frames), offset_of!(se_recorded_take, channels), offset_of!(se_recorded_take, sample_rate), offset_of!(se_recorded_take, path)),
+            (
+                offset_of!(se_recorded_take, start_frame),
+                offset_of!(se_recorded_take, frames),
+                offset_of!(se_recorded_take, channels),
+                offset_of!(se_recorded_take, sample_rate),
+                offset_of!(se_recorded_take, path)
+            ),
             (8, 16, 24, 32, 40)
         );
         assert_eq!((size_of::<se_live_take>(), align_of::<se_live_take>()), (24, 8));
@@ -1216,7 +1315,10 @@ mod abi_layout {
             [0, 4, 8, 12, 13, 14]
         );
         assert_eq!((size_of::<se_pdc_track>(), align_of::<se_pdc_track>()), (16, 8));
-        assert_eq!([offset_of!(se_pdc_track, track_id), offset_of!(se_pdc_track, latency_frames), offset_of!(se_pdc_track, delay_frames)], [0, 8, 12]);
+        assert_eq!(
+            [offset_of!(se_pdc_track, track_id), offset_of!(se_pdc_track, latency_frames), offset_of!(se_pdc_track, delay_frames)],
+            [0, 8, 12]
+        );
     }
 
     #[test]
@@ -1240,11 +1342,24 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_track_desc_v6>(), align_of::<se_track_desc_v6>()), (104, 8));
         assert_eq!(
-            [offset_of!(se_track_desc_v6, synth), offset_of!(se_track_desc_v6, track_name), offset_of!(se_track_desc_v6, lanes), offset_of!(se_track_desc_v6, lane_count), offset_of!(se_track_desc_v6, _pad3)],
+            [
+                offset_of!(se_track_desc_v6, synth),
+                offset_of!(se_track_desc_v6, track_name),
+                offset_of!(se_track_desc_v6, lanes),
+                offset_of!(se_track_desc_v6, lane_count),
+                offset_of!(se_track_desc_v6, _pad3)
+            ],
             [48, 80, 88, 96, 100]
         );
         assert_eq!((size_of::<se_session_desc_v6>(), align_of::<se_session_desc_v6>()), (32, 8));
-        assert_eq!([offset_of!(se_session_desc_v6, master_lanes), offset_of!(se_session_desc_v6, master_lane_count), offset_of!(se_session_desc_v6, _pad)], [16, 24, 28]);
+        assert_eq!(
+            [
+                offset_of!(se_session_desc_v6, master_lanes),
+                offset_of!(se_session_desc_v6, master_lane_count),
+                offset_of!(se_session_desc_v6, _pad)
+            ],
+            [16, 24, 28]
+        );
         assert_eq!((size_of::<se_warp_point>(), size_of::<se_warp_slice>(), size_of::<se_onset>()), (16, 16, 16));
         assert_eq!((size_of::<se_clip_warp_desc>(), align_of::<se_clip_warp_desc>()), (40, 8));
         assert_eq!(
@@ -1267,7 +1382,12 @@ mod abi_layout {
         assert_eq!((size_of::<se_send_desc>(), offset_of!(se_send_desc, gain), offset_of!(se_send_desc, pre_fader)), (24, 16, 20));
         assert_eq!((size_of::<se_session_desc_v9>(), align_of::<se_session_desc_v9>()), (88, 8));
         assert_eq!(
-            [offset_of!(se_session_desc_v9, routes), offset_of!(se_session_desc_v9, route_count), offset_of!(se_session_desc_v9, send_count), offset_of!(se_session_desc_v9, sends)],
+            [
+                offset_of!(se_session_desc_v9, routes),
+                offset_of!(se_session_desc_v9, route_count),
+                offset_of!(se_session_desc_v9, send_count),
+                offset_of!(se_session_desc_v9, sends)
+            ],
             [64, 72, 76, 80]
         );
         assert_eq!((size_of::<se_track_strip>(), align_of::<se_track_strip>()), (24, 8));
@@ -1277,7 +1397,13 @@ mod abi_layout {
         assert_eq!([offset_of!(se_onset, strength), offset_of!(se_onset, percussive)], [8, 12]);
         assert_eq!((size_of::<se_plugin_param_info>(), align_of::<se_plugin_param_info>()), (272, 4));
         assert_eq!(
-            [offset_of!(se_plugin_param_info, steps), offset_of!(se_plugin_param_info, default_normalized), offset_of!(se_plugin_param_info, automatable), offset_of!(se_plugin_param_info, name), offset_of!(se_plugin_param_info, group)],
+            [
+                offset_of!(se_plugin_param_info, steps),
+                offset_of!(se_plugin_param_info, default_normalized),
+                offset_of!(se_plugin_param_info, automatable),
+                offset_of!(se_plugin_param_info, name),
+                offset_of!(se_plugin_param_info, group)
+            ],
             [4, 8, 12, 16, 144]
         );
         assert_eq!((size_of::<se_plugin_param_change>(), align_of::<se_plugin_param_change>()), (32, 8));
@@ -1298,13 +1424,23 @@ mod abi_layout {
         assert_eq!([offset_of!(se_builtin_desc, sample_slots), offset_of!(se_builtin_desc, instrument)], [40, 44]);
         assert_eq!((size_of::<se_builtin_state_v2>(), align_of::<se_builtin_state_v2>()), (32, 8));
         assert_eq!(
-            [offset_of!(se_builtin_state_v2, sample_count), offset_of!(se_builtin_state_v2, slice_count), offset_of!(se_builtin_state_v2, route_count)],
+            [
+                offset_of!(se_builtin_state_v2, sample_count),
+                offset_of!(se_builtin_state_v2, slice_count),
+                offset_of!(se_builtin_state_v2, route_count)
+            ],
             [16, 20, 24]
         );
         assert_eq!((size_of::<se_builtin_sample>(), size_of::<se_builtin_slice>()), (16, 16));
         assert_eq!((size_of::<se_mod_route>(), align_of::<se_mod_route>()), (40, 8));
         assert_eq!(
-            [offset_of!(se_mod_route, param_id), offset_of!(se_mod_route, kind), offset_of!(se_mod_route, log), offset_of!(se_mod_route, min), offset_of!(se_mod_route, p_step)],
+            [
+                offset_of!(se_mod_route, param_id),
+                offset_of!(se_mod_route, kind),
+                offset_of!(se_mod_route, log),
+                offset_of!(se_mod_route, min),
+                offset_of!(se_mod_route, p_step)
+            ],
             [8, 12, 15, 16, 36]
         );
         assert_eq!(

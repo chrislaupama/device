@@ -65,10 +65,20 @@ fn publish_ramp(e: &Engine, dir: &Path, frames: u32) -> Vec<f32> {
             arm: false,
             monitor: false,
             input: None,
-            clips: vec![ClipSnapshot { clip_id: 1, engine_asset: info.asset_id, timeline_start: 0, source_offset: 0, length: frames as i64, gain: 1.0, warp: None, clip_loop: None }],
+            clips: vec![ClipSnapshot {
+                clip_id: 1,
+                engine_asset: info.asset_id,
+                timeline_start: 0,
+                source_offset: 0,
+                length: frames as i64,
+                gain: 1.0,
+                warp: None,
+                clip_loop: None,
+            }],
         }],
         master_gain: 1.0,
-        master_automation: vec![], device_assets: Default::default(),
+        master_automation: vec![],
+        device_assets: Default::default(),
     };
     e.publish(&snap).unwrap();
     src
@@ -217,10 +227,20 @@ fn export_excludes_loop_and_metronome() {
             arm: false,
             monitor: false,
             input: None,
-            clips: vec![ClipSnapshot { clip_id: 1, engine_asset: info.asset_id, timeline_start: 0, source_offset: 0, length: 5_000, gain: 1.0, warp: None, clip_loop: None }],
+            clips: vec![ClipSnapshot {
+                clip_id: 1,
+                engine_asset: info.asset_id,
+                timeline_start: 0,
+                source_offset: 0,
+                length: 5_000,
+                gain: 1.0,
+                warp: None,
+                clip_loop: None,
+            }],
         }],
         master_gain: 1.0,
-        master_automation: vec![], device_assets: Default::default(),
+        master_automation: vec![],
+        device_assets: Default::default(),
     };
     e.publish(&snap).unwrap();
     e.set_metronome(MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 1.0, beats_per_bar: 1 }).unwrap();

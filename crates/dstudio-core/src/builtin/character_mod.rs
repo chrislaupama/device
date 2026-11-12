@@ -7,7 +7,8 @@
 use super::*;
 
 /// Circuits in the order of the model parameter.
-pub const CIRCUITS: &[&str] = &["Single BBD", "Crossed", "Twin BBD", "Ensemble", "Tape", "Photocell", "Flanger", "Phaser", "Tremolo", "Rotary", "Panner"];
+pub const CIRCUITS: &[&str] =
+    &["Single BBD", "Crossed", "Twin BBD", "Ensemble", "Tape", "Photocell", "Flanger", "Phaser", "Tremolo", "Rotary", "Panner"];
 pub const SINGLE: u32 = 0;
 pub const CROSSED: u32 = 1;
 pub const TWIN: u32 = 2;
@@ -59,7 +60,6 @@ pub fn artifact_defaults(circuit: u32) -> [f32; 4] {
     d
 }
 
-
 /// The Rate a circuit (in a mode) starts from, when it has its own.
 pub fn rate_default(circuit: u32, mode: u32) -> Option<f32> {
     match circuit {
@@ -79,37 +79,83 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
     category: "Modulation",
     purpose: "Classic modulation hardware in one box: bucket-brigade choruses, ensemble, tape, photocell vibe, flanger, phaser, tremolo, rotary speaker and panner, with their noise and colour.",
     params: &[
-        ParamDef::choice("model", "Character", CIRCUITS, TWIN).not_automatable().help("The circuit: each has its own modes, sweep and artifacts."),
-        ParamDef::choice("mode_single", "Mode (Single BBD)", &["Chorus", "Vibrato"], 0).label("Mode").help("Chorus blends a moving copy; Vibrato bends the pitch."),
-        ParamDef::choice("mode_crossed", "Mode (Crossed)", &["1", "2", "3", "4"], 0).label("Mode").help("Four cross-wired stereo chorus settings, from subtle to glassy."),
-        ParamDef::choice("mode_twin", "Mode (Twin BBD)", &["I", "II", "I+II"], 0).label("Mode").help("Slow, faster, or the fast shallow combination of the twin bucket-brigade chorus."),
-        ParamDef::choice("mode_tape", "Mode (Tape)", &["ADT", "TZF Flange", "TZF Phase"], 0).label("Mode").help("Double tracking, or two tape machines flanging through zero."),
-        ParamDef::choice("mode_photocell", "Mode (Photocell)", &["Chorus", "Vibrato"], 0).label("Mode").help("Lamp-driven phase shifter blended (Chorus) or alone (Vibrato)."),
-        ParamDef::choice("mode_flanger", "Mode (Flanger)", &["Soft", "Jet", "Dark"], 0).label("Mode").help("Gentle, resonant, or a filtered bucket-brigade flanger."),
+        ParamDef::choice("model", "Character", CIRCUITS, TWIN)
+            .not_automatable()
+            .help("The circuit: each has its own modes, sweep and artifacts."),
+        ParamDef::choice("mode_single", "Mode (Single BBD)", &["Chorus", "Vibrato"], 0)
+            .label("Mode")
+            .help("Chorus blends a moving copy; Vibrato bends the pitch."),
+        ParamDef::choice("mode_crossed", "Mode (Crossed)", &["1", "2", "3", "4"], 0)
+            .label("Mode")
+            .help("Four cross-wired stereo chorus settings, from subtle to glassy."),
+        ParamDef::choice("mode_twin", "Mode (Twin BBD)", &["I", "II", "I+II"], 0)
+            .label("Mode")
+            .help("Slow, faster, or the fast shallow combination of the twin bucket-brigade chorus."),
+        ParamDef::choice("mode_tape", "Mode (Tape)", &["ADT", "TZF Flange", "TZF Phase"], 0)
+            .label("Mode")
+            .help("Double tracking, or two tape machines flanging through zero."),
+        ParamDef::choice("mode_photocell", "Mode (Photocell)", &["Chorus", "Vibrato"], 0)
+            .label("Mode")
+            .help("Lamp-driven phase shifter blended (Chorus) or alone (Vibrato)."),
+        ParamDef::choice("mode_flanger", "Mode (Flanger)", &["Soft", "Jet", "Dark"], 0)
+            .label("Mode")
+            .help("Gentle, resonant, or a filtered bucket-brigade flanger."),
         ParamDef::choice("mode_phaser", "Mode (Phaser)", &["Four Plain", "Four Peak", "OTA Dark", "Dual Six", "Barber"], 0)
             .label("Mode")
             .help("Four-stage plain or resonant, a dark transconductance phaser, two six-stage phasers, or an endless barber-pole rise."),
-        ParamDef::choice("mode_trem", "Mode (Tremolo)", &["Optical", "Bias", "Harmonic"], 0).label("Mode").help("Smooth lamp tremolo, a tube bias pulse, or a two-band harmonic tremolo."),
-        ParamDef::choice("mode_rotary", "Mode (Rotary)", &["Slow", "Fast", "Stop"], 0).label("Mode").help("Rotor speed; the rotors spin up and slow down with their own inertia."),
-        ParamDef::choice("mode_panner", "Mode (Panner)", &["Pan", "Rotary-Pan"], 0).label("Mode").help("Side-to-side panning, or a source circling the listener."),
+        ParamDef::choice("mode_trem", "Mode (Tremolo)", &["Optical", "Bias", "Harmonic"], 0)
+            .label("Mode")
+            .help("Smooth lamp tremolo, a tube bias pulse, or a two-band harmonic tremolo."),
+        ParamDef::choice("mode_rotary", "Mode (Rotary)", &["Slow", "Fast", "Stop"], 0)
+            .label("Mode")
+            .help("Rotor speed; the rotors spin up and slow down with their own inertia."),
+        ParamDef::choice("mode_panner", "Mode (Panner)", &["Pan", "Rotary-Pan"], 0)
+            .label("Mode")
+            .help("Side-to-side panning, or a source circling the listener."),
         ParamDef::choice("input", "Input", &["Off", "Lo", "Hi"], 0).help("Input level into the circuit: Lo and Hi drive it harder."),
-        ParamDef::new("rate", "Rate", 0.02, 20.0, 0.513, Taper::Linear { skew: 0.35 }, "Hz", Format::Freq).help("Modulation speed while the timebase is Free."),
+        ParamDef::new("rate", "Rate", 0.02, 20.0, 0.513, Taper::Linear { skew: 0.35 }, "Hz", Format::Freq)
+            .help("Modulation speed while the timebase is Free."),
         ParamDef::choice("sync", "Sync", OFF_ON, 0).label("Timebase").help("Off runs at Rate in Hz; On follows the song tempo at Note."),
         ParamDef::choice("note", "Note", MOD_NOTES, 10).help("Modulation cycle as a note value while synced."),
-        ParamDef::new("depth", "Depth", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).step(0.1).help("Modulation amount: 50% is the circuit's own depth, 100% doubles it."),
-        ParamDef::new("mix", "Mix", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).step(0.1).help("Balance of the dry and the processed signal."),
-        ParamDef::new("width", "Width", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).step(0.1).help("Stereo spread of the effect; 0% is mono."),
-        ParamDef::new("depth_m", "Depth-M", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).step(0.1).help("Level of the effect's centre (mid) part."),
-        ParamDef::new("depth_s", "Depth-S", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).step(0.1).help("Level of the effect's stereo (side) part."),
-        ParamDef::new("drift", "Drift", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent).step(0.1).help("Slow random wander of the modulation, like ageing parts."),
-        ParamDef::new("voice", "Voice", -100.0, 100.0, 0.0, LINEAR, "%", Format::Percent).step(0.1).help("Negative: a brighter, quicker sheen. Positive: a slower, deeper wobble."),
+        ParamDef::new("depth", "Depth", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Modulation amount: 50% is the circuit's own depth, 100% doubles it."),
+        ParamDef::new("mix", "Mix", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Balance of the dry and the processed signal."),
+        ParamDef::new("width", "Width", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Stereo spread of the effect; 0% is mono."),
+        ParamDef::new("depth_m", "Depth-M", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Level of the effect's centre (mid) part."),
+        ParamDef::new("depth_s", "Depth-S", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Level of the effect's stereo (side) part."),
+        ParamDef::new("drift", "Drift", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Slow random wander of the modulation, like ageing parts."),
+        ParamDef::new("voice", "Voice", -100.0, 100.0, 0.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Negative: a brighter, quicker sheen. Positive: a slower, deeper wobble."),
         ParamDef::new("art_hiss", "Hiss", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent).step(0.1).help("Noise floor of the circuit."),
         ParamDef::new("art_drive", "Drive", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent).step(0.1).help("Saturation of the circuit."),
-        ParamDef::new("art_darken", "Darken", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent).step(0.1).help("High-frequency loss of the circuit."),
-        ParamDef::new("art_wow", "Wow", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent).step(0.1).help("Slow pitch wander of the tape transport."),
+        ParamDef::new("art_darken", "Darken", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("High-frequency loss of the circuit."),
+        ParamDef::new("art_wow", "Wow", 0.0, 100.0, 35.0, LINEAR, "%", Format::Percent)
+            .step(0.1)
+            .help("Slow pitch wander of the tape transport."),
         ParamDef::new("trim", "Output", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).step(0.1).help("Output level."),
-        ParamDef::new("seed", "Seed", 1.0, 9999.0, 1.0, LINEAR, "", Format::Plain(0)).step(1.0).not_automatable().preset_locked().help("Starting point of the random wander and noise."),
-        ParamDef::choice("mono_audition", "Mono Audition", OFF_ON, 0).not_automatable().reset_on_load().help("Listen to the output summed to mono."),
+        ParamDef::new("seed", "Seed", 1.0, 9999.0, 1.0, LINEAR, "", Format::Plain(0))
+            .step(1.0)
+            .not_automatable()
+            .preset_locked()
+            .help("Starting point of the random wander and noise."),
+        ParamDef::choice("mono_audition", "Mono Audition", OFF_ON, 0)
+            .not_automatable()
+            .reset_on_load()
+            .help("Listen to the output summed to mono."),
         ParamDef::new("patch", "Patch", 0.0, 1.0, 0.0, LINEAR, "", Format::Plain(2)).not_automatable().help("Internal patch slot."),
     ],
     layout: Layout {
@@ -130,7 +176,11 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
         ],
         view: Some(View::Field(Field::new("character-mod", "Sweep", &["rate", "note"], &["depth"], 354.0))),
         sliders: &[Control::Slider("trim")],
-        clusters: &[&[Control::Swap(&["rate", "note"]), Control::Knob("depth")], &[Control::Knob("width"), Control::Knob("voice")], &[Control::Knob("mix")]],
+        clusters: &[
+            &[Control::Swap(&["rate", "note"]), Control::Knob("depth")],
+            &[Control::Knob("width"), Control::Knob("voice")],
+            &[Control::Knob("mix")],
+        ],
         faces: &[],
         min_height: 202.0,
         fixed_width: 0.0,
@@ -158,28 +208,122 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
     factory: &[
         FactoryPreset { name: "Juno Wash", values: &[("mix", 45.0)] },
         FactoryPreset { name: "Fast Twin Sparkle", values: &[("mode_twin", 2.0), ("rate", 9.75), ("mix", 30.0), ("voice", -50.0)] },
-        FactoryPreset { name: "Mono BBD Thicken", values: &[("model", 0.0), ("rate", 0.45), ("depth", 40.0), ("mix", 30.0), ("width", 0.0)] },
-        FactoryPreset { name: "Warbly Vibrato", values: &[("model", 0.0), ("mode_single", 1.0), ("rate", 5.0), ("depth", 45.0), ("mix", 100.0), ("art_hiss", 20.0)] },
-        FactoryPreset { name: "Cross Glass", values: &[("model", 1.0), ("mode_crossed", 3.0), ("rate", 0.5), ("mix", 35.0), ("trim", -2.0), ("voice", -60.0)] },
-        FactoryPreset { name: "Cross Wide Double", values: &[("model", 1.0), ("mode_crossed", 1.0), ("rate", 0.25), ("depth", 55.0), ("mix", 40.0)] },
+        FactoryPreset {
+            name: "Mono BBD Thicken",
+            values: &[("model", 0.0), ("rate", 0.45), ("depth", 40.0), ("mix", 30.0), ("width", 0.0)],
+        },
+        FactoryPreset {
+            name: "Warbly Vibrato",
+            values: &[("model", 0.0), ("mode_single", 1.0), ("rate", 5.0), ("depth", 45.0), ("mix", 100.0), ("art_hiss", 20.0)],
+        },
+        FactoryPreset {
+            name: "Cross Glass",
+            values: &[("model", 1.0), ("mode_crossed", 3.0), ("rate", 0.5), ("mix", 35.0), ("trim", -2.0), ("voice", -60.0)],
+        },
+        FactoryPreset {
+            name: "Cross Wide Double",
+            values: &[("model", 1.0), ("mode_crossed", 1.0), ("rate", 0.25), ("depth", 55.0), ("mix", 40.0)],
+        },
         FactoryPreset { name: "String Machine", values: &[("model", 3.0), ("rate", 0.6), ("depth", 60.0), ("mix", 55.0), ("drift", 45.0)] },
         FactoryPreset { name: "Tape Double", values: &[("model", 4.0), ("rate", 0.3), ("mix", 30.0), ("drift", 50.0), ("art_wow", 40.0)] },
-        FactoryPreset { name: "Zero-Point Flange", values: &[("model", 4.0), ("mode_tape", 1.0), ("rate", 0.09), ("depth", 85.0), ("mix", 50.0)] },
-        FactoryPreset { name: "Tape Phase Drift", values: &[("model", 4.0), ("mode_tape", 2.0), ("rate", 0.12), ("depth", 90.0), ("mix", 50.0), ("drift", 60.0)] },
-        FactoryPreset { name: "Lamp Throb", values: &[("model", 5.0), ("mode_photocell", 1.0), ("rate", 5.5), ("depth", 55.0), ("mix", 100.0), ("art_darken", 0.0)] },
+        FactoryPreset {
+            name: "Zero-Point Flange",
+            values: &[("model", 4.0), ("mode_tape", 1.0), ("rate", 0.09), ("depth", 85.0), ("mix", 50.0)],
+        },
+        FactoryPreset {
+            name: "Tape Phase Drift",
+            values: &[("model", 4.0), ("mode_tape", 2.0), ("rate", 0.12), ("depth", 90.0), ("mix", 50.0), ("drift", 60.0)],
+        },
+        FactoryPreset {
+            name: "Lamp Throb",
+            values: &[("model", 5.0), ("mode_photocell", 1.0), ("rate", 5.5), ("depth", 55.0), ("mix", 100.0), ("art_darken", 0.0)],
+        },
         FactoryPreset { name: "Vibe Chorus", values: &[("model", 5.0), ("rate", 3.5), ("mix", 50.0), ("art_darken", 0.0), ("trim", 2.0)] },
         FactoryPreset { name: "Soft BBD Flange", values: &[("model", 6.0), ("rate", 0.18), ("depth", 60.0), ("mix", 50.0)] },
-        FactoryPreset { name: "Jet Sweep", values: &[("model", 6.0), ("mode_flanger", 1.0), ("rate", 0.22), ("depth", 70.0), ("mix", 50.0)] },
+        FactoryPreset {
+            name: "Jet Sweep",
+            values: &[("model", 6.0), ("mode_flanger", 1.0), ("rate", 0.22), ("depth", 70.0), ("mix", 50.0)],
+        },
         FactoryPreset { name: "Plain Four Phase", values: &[("model", 7.0), ("rate", 0.6), ("mix", 50.0), ("art_hiss", 0.0)] },
-        FactoryPreset { name: "Peaky Phase", values: &[("model", 7.0), ("mode_phaser", 1.0), ("rate", 0.5), ("depth", 60.0), ("art_hiss", 0.0)] },
-        FactoryPreset { name: "Endless Rise", values: &[("model", 7.0), ("mode_phaser", 4.0), ("rate", 0.2), ("mix", 55.0), ("width", 70.0), ("art_hiss", 0.0)] },
-        FactoryPreset { name: "Lamp Tremolo", values: &[("model", 8.0), ("rate", 4.8), ("depth", 60.0), ("mix", 100.0), ("art_hiss", 0.0), ("art_darken", 0.0), ("trim", -2.5)] },
-        FactoryPreset { name: "Two-Band Pulse", values: &[("model", 8.0), ("mode_trem", 2.0), ("rate", 3.8), ("depth", 55.0), ("mix", 100.0), ("art_hiss", 0.0), ("art_darken", 0.0)] },
-        FactoryPreset { name: "Eighth Chop", values: &[("model", 8.0), ("mode_trem", 1.0), ("sync", 1.0), ("note", 13.0), ("depth", 90.0), ("mix", 100.0), ("voice", 60.0), ("art_hiss", 0.0), ("art_darken", 0.0)] },
-        FactoryPreset { name: "Organ Speaker Slow", values: &[("model", 9.0), ("rate", 6.5), ("mix", 100.0), ("art_hiss", 0.0), ("trim", 3.5)] },
-        FactoryPreset { name: "Organ Speaker Fast", values: &[("model", 9.0), ("mode_rotary", 1.0), ("rate", 6.5), ("mix", 100.0), ("art_hiss", 0.0), ("trim", 3.5)] },
-        FactoryPreset { name: "Side to Side", values: &[("model", 10.0), ("rate", 1.5), ("depth", 75.0), ("mix", 100.0), ("art_hiss", 0.0), ("art_drive", 0.0), ("art_darken", 0.0)] },
-        FactoryPreset { name: "Circling Source", values: &[("model", 10.0), ("mode_panner", 1.0), ("rate", 0.35), ("depth", 90.0), ("mix", 100.0), ("art_hiss", 0.0), ("art_drive", 0.0), ("art_darken", 0.0)] },
+        FactoryPreset {
+            name: "Peaky Phase",
+            values: &[("model", 7.0), ("mode_phaser", 1.0), ("rate", 0.5), ("depth", 60.0), ("art_hiss", 0.0)],
+        },
+        FactoryPreset {
+            name: "Endless Rise",
+            values: &[("model", 7.0), ("mode_phaser", 4.0), ("rate", 0.2), ("mix", 55.0), ("width", 70.0), ("art_hiss", 0.0)],
+        },
+        FactoryPreset {
+            name: "Lamp Tremolo",
+            values: &[
+                ("model", 8.0),
+                ("rate", 4.8),
+                ("depth", 60.0),
+                ("mix", 100.0),
+                ("art_hiss", 0.0),
+                ("art_darken", 0.0),
+                ("trim", -2.5),
+            ],
+        },
+        FactoryPreset {
+            name: "Two-Band Pulse",
+            values: &[
+                ("model", 8.0),
+                ("mode_trem", 2.0),
+                ("rate", 3.8),
+                ("depth", 55.0),
+                ("mix", 100.0),
+                ("art_hiss", 0.0),
+                ("art_darken", 0.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Eighth Chop",
+            values: &[
+                ("model", 8.0),
+                ("mode_trem", 1.0),
+                ("sync", 1.0),
+                ("note", 13.0),
+                ("depth", 90.0),
+                ("mix", 100.0),
+                ("voice", 60.0),
+                ("art_hiss", 0.0),
+                ("art_darken", 0.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Organ Speaker Slow",
+            values: &[("model", 9.0), ("rate", 6.5), ("mix", 100.0), ("art_hiss", 0.0), ("trim", 3.5)],
+        },
+        FactoryPreset {
+            name: "Organ Speaker Fast",
+            values: &[("model", 9.0), ("mode_rotary", 1.0), ("rate", 6.5), ("mix", 100.0), ("art_hiss", 0.0), ("trim", 3.5)],
+        },
+        FactoryPreset {
+            name: "Side to Side",
+            values: &[
+                ("model", 10.0),
+                ("rate", 1.5),
+                ("depth", 75.0),
+                ("mix", 100.0),
+                ("art_hiss", 0.0),
+                ("art_drive", 0.0),
+                ("art_darken", 0.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Circling Source",
+            values: &[
+                ("model", 10.0),
+                ("mode_panner", 1.0),
+                ("rate", 0.35),
+                ("depth", 90.0),
+                ("mix", 100.0),
+                ("art_hiss", 0.0),
+                ("art_drive", 0.0),
+                ("art_darken", 0.0),
+            ],
+        },
     ],
     sidechain: false,
     samples: 0,

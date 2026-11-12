@@ -35,18 +35,16 @@ mod clipedit;
 mod composer;
 mod controller;
 mod device_canvas;
-mod device_mod;
-mod device_fields;
-mod device_panel;
 mod device_editors;
-mod panel_graph;
+mod device_fields;
+mod device_mod;
+mod device_panel;
 mod device_views;
-mod gain_scope;
 mod devices;
 mod devminimap;
 mod dialogs;
 mod files;
-mod panel_multiband;
+mod gain_scope;
 mod gpu;
 mod highlight;
 mod live_import;
@@ -55,26 +53,28 @@ mod midi_in;
 mod minimap;
 mod mixer;
 mod panel_fields;
+mod panel_graph;
+mod panel_multiband;
 mod peaks;
 mod pianoroll;
 mod placeholder;
 mod pointer;
-mod resample;
 mod prefs;
 mod recording;
+mod resample;
 mod routing;
 mod sampler_panel;
+mod sections;
 mod selftest;
 mod settings;
 mod shape_rack;
 mod snap;
-mod transport_fields;
-mod stepseq;
-mod sections;
 mod splitters;
+mod stepseq;
 mod synth;
 mod text_measure;
 mod timeline;
+mod transport_fields;
 mod typing;
 mod warpedit;
 mod wavgen;
@@ -472,7 +472,11 @@ fn parse_args() -> Result<Args, String> {
                         "review-files-project" => 3,
                         "review-files-preview" => 4,
                         "review-files-sort" => 5,
-                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-preview, review-files-sort)")),
+                        _ => {
+                            return Err(format!(
+                                "unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-preview, review-files-sort)"
+                            ));
+                        }
                     };
                 }
                 "review-automation" => {
@@ -639,7 +643,17 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).skip(6).filter(|l| !l.contains("```")).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!(
+                    "{}",
+                    include_str!("main.rs")
+                        .lines()
+                        .take_while(|l| l.starts_with("//!"))
+                        .skip(6)
+                        .filter(|l| !l.contains("```"))
+                        .map(|l| l.trim_start_matches("//! "))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -667,7 +681,13 @@ impl Series {
         s.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let pct = |p: f64| s[((s.len() - 1) as f64 * p).round() as usize];
         let avg = s.iter().sum::<f64>() / s.len() as f64;
-        format!("{{\"avg\":{avg:.3},\"p50\":{:.3},\"p95\":{:.3},\"p99\":{:.3},\"max\":{:.3}}}", pct(0.5), pct(0.95), pct(0.99), s[s.len() - 1])
+        format!(
+            "{{\"avg\":{avg:.3},\"p50\":{:.3},\"p95\":{:.3},\"p99\":{:.3},\"max\":{:.3}}}",
+            pct(0.5),
+            pct(0.95),
+            pct(0.99),
+            s[s.len() - 1]
+        )
     }
 }
 
@@ -724,20 +744,38 @@ fn key_name(text: &str) -> Option<String> {
 pub fn app_keymap() -> Keymap {
     use dstudio_core::keymap::{Binding, Condition};
     let mut k = Keymap::default_preset();
-    for (action, chord) in [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a"), ("view.escape", "escape")] {
-        k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::Always });
+    for (action, chord) in
+        [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a"), ("view.escape", "escape")]
+    {
+        k.bindings.push(Binding {
+            action: action.into(),
+            chords: vec![Chord::parse(chord).expect("valid chord")],
+            when: Condition::Always,
+        });
     }
     // Arm / input monitoring on the selected track (the core preset has no bindings for them).
     // Added only if the core lacks them.
     for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i"), ("track.rename", "primary+r")] {
         if k.chords_for(action).is_empty() {
-            k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
+            k.bindings.push(Binding {
+                action: action.into(),
+                chords: vec![Chord::parse(chord).expect("valid chord")],
+                when: Condition::TrackSelected,
+            });
         }
     }
     // Tap tempo from the keyboard (the transport bar's TAP).
-    k.bindings.push(Binding { action: "transport.tap_tempo".into(), chords: vec![Chord::parse("shift+t").expect("valid chord")], when: Condition::Always });
+    k.bindings.push(Binding {
+        action: "transport.tap_tempo".into(),
+        chords: vec![Chord::parse("shift+t").expect("valid chord")],
+        when: Condition::Always,
+    });
     // Musical typing: the tooltip reads "K / ⇧K"; the core preset has only K.
-    k.bindings.push(Binding { action: "view.musical_typing".into(), chords: vec![Chord::parse("shift+k").expect("valid chord")], when: Condition::Always });
+    k.bindings.push(Binding {
+        action: "view.musical_typing".into(),
+        chords: vec![Chord::parse("shift+k").expect("valid chord")],
+        when: Condition::Always,
+    });
     // Piano roll (↑/↓ transpose, Delete, B/E, the toolbar's R = Reverse
     // and the other chords). While typing is on, its keys are taken before these.
     for (action, chords) in [
@@ -772,7 +810,8 @@ fn pick_project_dir(save: bool) -> Option<PathBuf> {
     if save {
         // A project is a directory; ask for its name and create it.
         // Start in the projects folder Browser › Files › Projects lists.
-        let dialog = rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", dstudio_core::persist::EXTENSION));
+        let dialog =
+            rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", dstudio_core::persist::EXTENSION));
         let dialog = match crate::files::FilesUi::default().projects_dir.filter(|d| std::fs::create_dir_all(d).is_ok()) {
             Some(d) => dialog.set_directory(d),
             None => dialog,
@@ -840,10 +879,29 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "transport.tap_tempo" => ctl.borrow_mut().tap_tempo(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.devmm_cancel()
+                || c.editor_cancel()
+                || c.panel_cancel_drag()
+                || c.panel_cancel_field()
+                || c.panel_cancel_canvas()
+                || c.mod_disarm()
+                || (c.synth.menu.is_none() && c.synth_cancel())
+            {
                 return true;
             }
-            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.routing.menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0 || c.tf.sig_menu || c.tf.key_menu;
+            let popup_open = c.settings.open
+                || c.settings.menu.is_some()
+                || c.menu.open
+                || c.rec.input_menu.is_some()
+                || c.routing.menu.is_some()
+                || c.synth.menu.is_some()
+                || c.devices.menu.is_some()
+                || c.auto.picker.is_some()
+                || c.rename.is_some()
+                || c.rename_section.is_some()
+                || c.pr.menu >= 0
+                || c.tf.sig_menu
+                || c.tf.key_menu;
             if !popup_open && c.cancel_clip_render() {
                 return true;
             }
@@ -937,13 +995,55 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
 /// mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
 fn synth_test_state(device: dstudio_core::DeviceId) -> dstudio_core::Command {
     let params = [
-        ("osc1_wave", 1.0), ("osc1_shape", 0.1), ("osc1_level", 0.8), ("osc2_wave", 5.0), ("osc2_shape", 0.25), ("osc2_octave", 3.0), ("osc2_fine", 7.0), ("osc2_level", 0.3),
-        ("sub_level", 0.0), ("cutoff", 2400.0), ("resonance", 0.1), ("filter_drive", 0.2), ("filter_env", 0.25), ("filter_velocity", 0.35), ("env2_attack", 0.002),
-        ("amp_attack", 0.004), ("amp_decay", 0.9 * 1.0), ("amp_sustain", 0.35), ("amp_release", 1.1), ("volume", -0.74), ("env2_decay", 0.9), ("env2_sustain", 0.1),
-        ("lfo1_rate", 0.18), ("lfo2_rate", 5.0), ("unison_voices", 2.0), ("unison_detune", 0.18), ("unison_spread", 0.8),
-        ("mod1_source", 3.0), ("mod1_target", 5.0), ("mod1_amount", 0.2), ("mod2_source", 7.0), ("mod2_target", 11.0), ("mod2_amount", 0.35), ("mod3_source", 0.0), ("mod3_target", 0.0), ("mod3_amount", 0.0),
-        ("macro1_name", 12.0), ("macro2_name", 18.0), ("macro3_name", 7.0), ("macro4_name", 6.0), ("map1_macro", 1.0), ("map1_param", 22.0), ("map1_from", 0.693), ("map1_to", 0.943),
-        ("fx1_on", 0.0), ("fx3_type", 7.0), ("fx3_on", 1.0), ("fx4_type", 8.0), ("fx4_on", 1.0),
+        ("osc1_wave", 1.0),
+        ("osc1_shape", 0.1),
+        ("osc1_level", 0.8),
+        ("osc2_wave", 5.0),
+        ("osc2_shape", 0.25),
+        ("osc2_octave", 3.0),
+        ("osc2_fine", 7.0),
+        ("osc2_level", 0.3),
+        ("sub_level", 0.0),
+        ("cutoff", 2400.0),
+        ("resonance", 0.1),
+        ("filter_drive", 0.2),
+        ("filter_env", 0.25),
+        ("filter_velocity", 0.35),
+        ("env2_attack", 0.002),
+        ("amp_attack", 0.004),
+        ("amp_decay", 0.9 * 1.0),
+        ("amp_sustain", 0.35),
+        ("amp_release", 1.1),
+        ("volume", -0.74),
+        ("env2_decay", 0.9),
+        ("env2_sustain", 0.1),
+        ("lfo1_rate", 0.18),
+        ("lfo2_rate", 5.0),
+        ("unison_voices", 2.0),
+        ("unison_detune", 0.18),
+        ("unison_spread", 0.8),
+        ("mod1_source", 3.0),
+        ("mod1_target", 5.0),
+        ("mod1_amount", 0.2),
+        ("mod2_source", 7.0),
+        ("mod2_target", 11.0),
+        ("mod2_amount", 0.35),
+        ("mod3_source", 0.0),
+        ("mod3_target", 0.0),
+        ("mod3_amount", 0.0),
+        ("macro1_name", 12.0),
+        ("macro2_name", 18.0),
+        ("macro3_name", 7.0),
+        ("macro4_name", 6.0),
+        ("map1_macro", 1.0),
+        ("map1_param", 22.0),
+        ("map1_from", 0.693),
+        ("map1_to", 0.943),
+        ("fx1_on", 0.0),
+        ("fx3_type", 7.0),
+        ("fx3_on", 1.0),
+        ("fx4_type", 8.0),
+        ("fx4_on", 1.0),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -965,7 +1065,11 @@ fn suppress_appkit_menu_items() {
     use objc2_foundation::{NSDictionary, NSNumber, NSUserDefaults, ns_string};
     let yes = NSNumber::new_bool(true);
     let no = NSNumber::new_bool(false);
-    let keys = [ns_string!("NSDisabledDictationMenuItem"), ns_string!("NSDisabledCharacterPaletteMenuItem"), ns_string!("NSFullScreenMenuItemEverywhere")];
+    let keys = [
+        ns_string!("NSDisabledDictationMenuItem"),
+        ns_string!("NSDisabledCharacterPaletteMenuItem"),
+        ns_string!("NSFullScreenMenuItemEverywhere"),
+    ];
     let values: [&objc2::runtime::AnyObject; 3] = [yes.as_ref(), yes.as_ref(), no.as_ref()];
     let defaults = NSDictionary::from_slices(&keys, &values);
     unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
@@ -1003,7 +1107,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let device_ok = engine.device_running();
-    eprintln!("engine: abi {} @ {} Hz, device {}", Engine::abi_version(), engine.sample_rate(), if device_ok { "running" } else { "offline" });
+    eprintln!(
+        "engine: abi {} @ {} Hz, device {}",
+        Engine::abi_version(),
+        engine.sample_rate(),
+        if device_ok { "running" } else { "offline" }
+    );
 
     // ---- Slint backend: our wgpu device + transparent macOS titlebar ----
     let (cfg, adapter) = gpu::make_wgpu_config()?;
@@ -1016,7 +1125,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if offscreen { attrs.with_visible(false).with_active(false) } else { attrs }
     });
     #[cfg(not(target_os = "macos"))]
-    let selector = selector.with_winit_window_attributes_hook(move |attrs| if offscreen { attrs.with_visible(false).with_active(false) } else { attrs });
+    let selector = selector
+        .with_winit_window_attributes_hook(move |attrs| if offscreen { attrs.with_visible(false).with_active(false) } else { attrs });
     selector.select()?;
 
     let app = AppWindow::new()?;
@@ -1025,7 +1135,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let ctl: Ctl = Rc::new(RefCell::new(Controller::new(engine.clone(), Project::default())));
     // Interface zoom: --zoom, else the saved level, else 100 %. Self-tests keep the
     // design units (85 %) so their scripted geometry is unchanged.
-    let zoom_percent = args.zoom.unwrap_or(if args.self_test { 85 } else if saved_prefs.interface_zoom > 0 { saved_prefs.interface_zoom } else { zoom::DEFAULT_PERCENT });
+    let zoom_percent = args.zoom.unwrap_or(if args.self_test {
+        85
+    } else if saved_prefs.interface_zoom > 0 {
+        saved_prefs.interface_zoom
+    } else {
+        zoom::DEFAULT_PERCENT
+    });
     let zoom = Rc::new(RefCell::new(zoom::Zoom::new(zoom_percent)));
     ctl.borrow().bind_models(&app);
     {
@@ -1035,9 +1151,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let text = std::fs::read_to_string(path).map_err(|e| format!("--assistant-fixture {}: {e}", path.display()))?;
                 assistant_provider::Provider::fixture_from_json(&text, &path.display().to_string())?
             }
-            (None, true) => assistant_provider::Provider::fixture_from_json(include_str!("../fixtures/assistant-selftest.json"), "built-in self-test fixture")?,
+            (None, true) => assistant_provider::Provider::fixture_from_json(
+                include_str!("../fixtures/assistant-selftest.json"),
+                "built-in self-test fixture",
+            )?,
             // Review renders: a stand-in provider so the composer shows its enabled state (never sends).
-            (None, false) if args.assistant_demo.is_some() => assistant_provider::Provider::fixture_from_json("{\"actions\": []}", "assistant demo")?,
+            (None, false) if args.assistant_demo.is_some() => {
+                assistant_provider::Provider::fixture_from_json("{\"actions\": []}", "assistant demo")?
+            }
             (None, false) => assistant_provider::Provider::from_env(),
         };
         eprintln!("assistant: provider {provider:?}{}", if provider.is_fixture() { " (TEST provider, no network)" } else { "" });
@@ -1074,11 +1195,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Plugin catalogue: the scan cache in the app support directory (startup reads the cache;
         // Settings › Plugins can force a rescan). The self-test uses its own cache file and never
         // touches the user's. --plugin-fixture (TEST seam) replaces the scan entirely.
-        c.devices.catalog.cache_path = if args.self_test {
-            Some(selftest::run_plugin_cache())
-        } else {
-            prefs::plugin_cache_path()
-        };
+        c.devices.catalog.cache_path = if args.self_test { Some(selftest::run_plugin_cache()) } else { prefs::plugin_cache_path() };
         if let Some(path) = &args.plugin_fixture {
             c.devices.catalog.fixture = Some(devices::load_fixture(path)?);
             eprintln!("plugins: catalogue from {} (TEST fixture, no scan)", path.display());
@@ -1104,9 +1221,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
             // to E Minor with the footer Scale on; 6 adds scale rows, 7 opens the Scale type menu.
             let line = [(64u8, 0i64), (67, 1), (71, 2), (69, 3), (67, 4), (65, 5), (66, 6), (64, 7), (59, 8), (62, 10), (64, 12), (71, 14)];
-            let notes = line.iter().enumerate().map(|(i, &(pitch, s))| dstudio_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 }).collect();
+            let notes = line
+                .iter()
+                .enumerate()
+                .map(|(i, &(pitch, s))| dstudio_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 })
+                .collect();
             c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes });
-            c.execute(dstudio_core::Command::SetClipScale { clip: id, scale: Some(dstudio_core::scale::ClipScale { key: Some(dstudio_core::scale::ScaleKey { root: 6, kind: 1 }), highlight: true, fold: false }) });
+            c.execute(dstudio_core::Command::SetClipScale {
+                clip: id,
+                scale: Some(dstudio_core::scale::ClipScale {
+                    key: Some(dstudio_core::scale::ScaleKey { root: 6, kind: 1 }),
+                    highlight: true,
+                    fold: false,
+                }),
+            });
             c.select_clip(clip);
             c.seek_beats(22.0);
             c.pr_sync_clip();
@@ -1139,21 +1267,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // REVIEW STATE: the velocity lane open under the line, accents on the beats,
                 // two notes selected.
                 let vels = [118u8, 64, 88, 52, 110, 60, 84, 46, 122, 72, 100, 90];
-                let notes = c.pr_clip().map(|m| m.notes.iter().zip(vels).map(|(n, v)| dstudio_core::midi::Note { velocity: v, ..*n }).collect()).unwrap_or_default();
+                let notes = c
+                    .pr_clip()
+                    .map(|m| m.notes.iter().zip(vels).map(|(n, v)| dstudio_core::midi::Note { velocity: v, ..*n }).collect())
+                    .unwrap_or_default();
                 c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes });
                 c.pr.selected = [5, 6].into();
                 c.pr_action("velocity_lane");
             }
-
         }
         if let (8..=9, Some(id)) = (args.midi_state, clip) {
             // REVIEW STATE: a one-bar line in a four-bar clip that loops beats 2 to 4 of the
             // bar (the first pass plays the whole bar, then the loop repeats); 9 turns Loop off.
             let line = [(60u8, 0i64), (64, 2), (67, 4), (72, 6), (71, 8), (67, 10), (64, 12), (62, 14)];
-            let notes = line.iter().enumerate().map(|(i, &(pitch, s))| dstudio_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 }).collect();
+            let notes = line
+                .iter()
+                .enumerate()
+                .map(|(i, &(pitch, s))| dstudio_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 })
+                .collect();
             let bar = 4 * dstudio_core::PPQ;
             c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes });
-            c.execute(dstudio_core::Command::SetMidiLoop { clip: id, clip_loop: Some(dstudio_core::midi::ClipLoop { on: true, start: bar / 4, end: bar, span: 0 }), length: 4 * bar });
+            c.execute(dstudio_core::Command::SetMidiLoop {
+                clip: id,
+                clip_loop: Some(dstudio_core::midi::ClipLoop { on: true, start: bar / 4, end: bar, span: 0 }),
+                length: 4 * bar,
+            });
             c.select_clip(clip);
             c.seek_beats(22.0);
             c.pr_sync_clip();
@@ -1164,11 +1302,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if (3..=4).contains(&args.midi_state) {
             // REVIEW STATE: a loosely played line (16ths, up to 40 ticks off), a ghost octave
             // and a blip, then (state 4) the toolbar's Smart Quantize on it.
-            let jitter: [(u8, i64); 16] = [(60, 0), (63, 31), (67, -22), (70, 38), (72, -12), (70, 27), (67, -35), (63, 18), (60, 9), (63, -28), (67, 36), (70, -15), (72, 24), (75, -38), (72, 11), (67, -20)];
+            let jitter: [(u8, i64); 16] = [
+                (60, 0),
+                (63, 31),
+                (67, -22),
+                (70, 38),
+                (72, -12),
+                (70, 27),
+                (67, -35),
+                (63, 18),
+                (60, 9),
+                (63, -28),
+                (67, 36),
+                (70, -15),
+                (72, 24),
+                (75, -38),
+                (72, 11),
+                (67, -20),
+            ];
             let mut notes: Vec<dstudio_core::midi::Note> = jitter
                 .iter()
                 .enumerate()
-                .map(|(i, &(pitch, j))| dstudio_core::midi::Note { id: i as u32 + 1, pitch, start: (i as i64 * 240 + j).max(0), length: 200 + (i as i64 % 3) * 25, velocity: 96 })
+                .map(|(i, &(pitch, j))| dstudio_core::midi::Note {
+                    id: i as u32 + 1,
+                    pitch,
+                    start: (i as i64 * 240 + j).max(0),
+                    length: 200 + (i as i64 % 3) * 25,
+                    velocity: 96,
+                })
                 .collect();
             notes.push(dstudio_core::midi::Note { id: 17, pitch: 84, start: 4 * 240 + 15, length: 180, velocity: 30 });
             notes.push(dstudio_core::midi::Note { id: 18, pitch: 55, start: 2210, length: 30, velocity: 8 });
@@ -1257,7 +1418,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
             c.select_track(inst);
             if state == 2 {
-                c.execute(dstudio_core::Command::SetInstrumentPlugin { track: inst, device: Some(dstudio_core::builtin::drum_rack::DRUM_RACK.instantiate()) });
+                c.execute(dstudio_core::Command::SetInstrumentPlugin {
+                    track: inst,
+                    device: Some(dstudio_core::builtin::drum_rack::DRUM_RACK.instantiate()),
+                });
             }
             c.seek_beats(20.0);
             if let Some(id) = c.insert_midi_clip() {
@@ -1299,7 +1463,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     c.shape_draw_toggle();
                     c.shape_stroke(ShapeKey::Tension, 1, &[(0.0, 0.0), (1.0, 0.0), (2.0, 0.5), (3.0, 0.9), (3.9, 0.9)]);
-                    if let Some(mid) = c.pr_clip().filter(|m| !m.notes.is_empty()).map(|m| m.notes.iter().map(|n| n.pitch as f32).sum::<f32>() / m.notes.len() as f32) {
+                    if let Some(mid) = c
+                        .pr_clip()
+                        .filter(|m| !m.notes.is_empty())
+                        .map(|m| m.notes.iter().map(|n| n.pitch as f32).sum::<f32>() / m.notes.len() as f32)
+                    {
                         use crate::pianoroll::{GRID_Y, ROW_H};
                         c.pr.scroll = (127.0 - mid) * ROW_H + ROW_H / 2.0 - (c.pr.size.1 - GRID_Y) / 2.0;
                     }
@@ -1313,7 +1481,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = ctl.borrow_mut();
         if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
             c.select_track(inst);
-            c.execute(dstudio_core::Command::SetInstrumentPlugin { track: inst, device: Some(dstudio_core::builtin::drum_rack::DRUM_RACK.instantiate()) });
+            c.execute(dstudio_core::Command::SetInstrumentPlugin {
+                track: inst,
+                device: Some(dstudio_core::builtin::drum_rack::DRUM_RACK.instantiate()),
+            });
             c.seek_beats(16.0);
             if let Some(id) = c.insert_midi_clip() {
                 let mut p = c.project().midi_clip(id).and_then(|m| m.pattern.clone()).unwrap_or_default();
@@ -1418,7 +1589,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.files.projects_dir = Some(projects.clone());
         if args.files_review == 3 {
             let mut p = c.project().clone();
-            p.assets.push(dstudio_core::Asset { id: dstudio_core::AssetId(p.next_id), relative_path: None, absolute_path: audio.join("sine-a220-steady.wav").to_string_lossy().into_owned(), sample_rate: rate as f64, channels: 1, frames: rate as u64 * 2 });
+            p.assets.push(dstudio_core::Asset {
+                id: dstudio_core::AssetId(p.next_id),
+                relative_path: None,
+                absolute_path: audio.join("sine-a220-steady.wav").to_string_lossy().into_owned(),
+                sample_rate: rate as f64,
+                channels: 1,
+                frames: rate as u64 * 2,
+            });
             p.next_id += 1;
             p.tracks[1].midi_clips.push(dstudio_core::MidiClip::empty(0, 4 * dstudio_core::PPQ));
             let song = projects.join(format!("Song.{}", dstudio_core::persist::EXTENSION));
@@ -1455,10 +1633,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(20.0);
         c.insert_midi_clip();
         let lanes = [
-            (Some(audio), AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![pt(0, -24.0, 0.0), pt(8, 0.0, -0.6), pt(16, -12.0, 0.0), pt(24, -6.0, 0.5), pt(32, -60.0, 0.0)] }),
-            (Some(audio), AutomationLane { target: AutomationTarget::Pan, enabled: false, points: vec![pt(4, -0.5, 0.0), pt(20, 0.5, 0.0)] }),
-            (Some(inst), AutomationLane { target: AutomationTarget::Synth { param: SynthParam::FilterCutoff }, enabled: true, points: vec![pt(0, 200.0, 0.0), pt(16, 8000.0, 0.0), pt(20, 800.0, 0.0)] }),
-            (None, AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![pt(0, 0.0, 0.0), pt(28, 0.0, 0.0), pt(36, -60.0, 0.4)] }),
+            (
+                Some(audio),
+                AutomationLane {
+                    target: AutomationTarget::Volume,
+                    enabled: true,
+                    points: vec![pt(0, -24.0, 0.0), pt(8, 0.0, -0.6), pt(16, -12.0, 0.0), pt(24, -6.0, 0.5), pt(32, -60.0, 0.0)],
+                },
+            ),
+            (
+                Some(audio),
+                AutomationLane { target: AutomationTarget::Pan, enabled: false, points: vec![pt(4, -0.5, 0.0), pt(20, 0.5, 0.0)] },
+            ),
+            (
+                Some(inst),
+                AutomationLane {
+                    target: AutomationTarget::Synth { param: SynthParam::FilterCutoff },
+                    enabled: true,
+                    points: vec![pt(0, 200.0, 0.0), pt(16, 8000.0, 0.0), pt(20, 800.0, 0.0)],
+                },
+            ),
+            (
+                None,
+                AutomationLane {
+                    target: AutomationTarget::Volume,
+                    enabled: true,
+                    points: vec![pt(0, 0.0, 0.0), pt(28, 0.0, 0.0), pt(36, -60.0, 0.4)],
+                },
+            ),
         ];
         for (key, lane) in lanes {
             c.auto_commit(key, lane);
@@ -1581,7 +1783,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // transport stopped.
         let mut c = ctl.borrow_mut();
         let def = dstudio_core::builtin::find(id).expect("built-in is registered");
-        let kind = if def.kind == dstudio_core::PluginKind::Instrument { dstudio_core::TrackKind::Instrument } else { dstudio_core::TrackKind::Audio };
+        let kind = if def.kind == dstudio_core::PluginKind::Instrument {
+            dstudio_core::TrackKind::Instrument
+        } else {
+            dstudio_core::TrackKind::Audio
+        };
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == kind).map(|t| t.id) {
             c.select_track(t);
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
@@ -1607,7 +1813,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             let pc = c.project().track(t).and_then(|tr| tr.devices.first()).map(|d| d.id);
             if let Some(d) = pc {
-                for (param, value) in [("key_follow", 0.0), ("scale", 1.0), ("speed", 100.0), ("retune_speed_ms", 20.0), ("humanize", 15.0)] {
+                for (param, value) in [("key_follow", 0.0), ("scale", 1.0), ("speed", 100.0), ("retune_speed_ms", 20.0), ("humanize", 15.0)]
+                {
                     c.execute(dstudio_core::Command::SetDeviceParam { device: d, param: param.into(), value });
                 }
             }
@@ -1664,7 +1871,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         kind: dstudio_core::PluginKind::Effect,
                     };
                     c.add_to_chain(head, devices::Item::Plugin(gain));
-                    let ids: Vec<dstudio_core::DeviceId> = c.project().track(t).map(|t| t.devices.iter().map(|d| d.id).collect()).unwrap_or_default();
+                    let ids: Vec<dstudio_core::DeviceId> =
+                        c.project().track(t).map(|t| t.devices.iter().map(|d| d.id).collect()).unwrap_or_default();
                     if let [_, comp, plug] = ids[..] {
                         if let Some(p) = c.engine.plugin_params(plug).first().map(|p| p.id) {
                             c.card_toggle_param(plug, p);
@@ -1734,10 +1942,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.start_recording();
         if c.rec.recording {
             let n = 3 * 48_000;
-            let input: Vec<f32> = (0..n).map(|i| {
-                let t = i as f32 / 48_000.0;
-                0.8 * (0.25 + 0.75 * (-(t * 2.0).fract() * 4.0).exp()) * (std::f32::consts::TAU * 220.0 * t).sin()
-            }).collect();
+            let input: Vec<f32> = (0..n)
+                .map(|i| {
+                    let t = i as f32 / 48_000.0;
+                    0.8 * (0.25 + 0.75 * (-(t * 2.0).fract() * 4.0).exp()) * (std::f32::consts::TAU * 220.0 * t).sin()
+                })
+                .collect();
             let mut out = vec![0f32; 2 * n];
             if let Err(e) = c.engine.render_offline_with_input(&input, 1, &mut out) {
                 c.set_status(format!("review-recording: {e}"), 10);
@@ -1905,7 +2115,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if ctl.borrow().modal_open() {
                     return;
                 }
-                if let Some(file) = rfd::FileDialog::new().set_title("Import Ableton Live Set").add_filter("Ableton Live Set", &["als"]).pick_file() {
+                if let Some(file) =
+                    rfd::FileDialog::new().set_title("Import Ableton Live Set").add_filter("Ableton Live Set", &["als"]).pick_file()
+                {
                     ctl.borrow_mut().import_live_set_request(file);
                 }
             } else {
@@ -1939,7 +2151,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let s = a.global::<Studio>();
                 s.set_menu_replay(true);
                 let w = a.window();
-                let mods: Vec<slint::SharedString> = [(primary, Key::Control), (shift, Key::Shift)].into_iter().filter(|m| m.0).map(|m| m.1.into()).collect();
+                let mods: Vec<slint::SharedString> =
+                    [(primary, Key::Control), (shift, Key::Shift)].into_iter().filter(|m| m.0).map(|m| m.1.into()).collect();
                 for m in &mods {
                     w.dispatch_event(WindowEvent::KeyPressed { text: m.clone() });
                 }
@@ -2022,7 +2235,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_auto_toggle_shown, |c| c.auto_toggle_shown());
     on!(on_auto_toggle_draw, |c| c.auto_toggle_draw());
     on!(on_auto_toggle_arm, |c| c.auto_toggle_arm());
-    on!(on_auto_power, |c, id: i32, extra: i32| c.auto_power((id >= 0).then_some(TrackId(id as u64)), (extra >= 0).then_some(extra as usize)));
+    on!(on_auto_power, |c, id: i32, extra: i32| c
+        .auto_power((id >= 0).then_some(TrackId(id as u64)), (extra >= 0).then_some(extra as usize)));
     on!(on_auto_expand, |c, id: i32| c.auto_toggle_expanded(TrackId(id as u64)));
     on!(on_auto_show_extra, |c, id: i32, i: i32| c.auto_show_extra(TrackId(id as u64), i.max(0) as usize));
     on!(on_auto_open_picker, |c, id: i32, x: f32, y: f32| c.auto_open_picker((id >= 0).then_some(TrackId(id as u64)), x, y));
@@ -2166,7 +2380,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let request = ctl.borrow_mut().clip_render.dialog_request.take();
             if let Some((id, name)) = request {
                 let start = ctl.borrow().export.dir.clone();
-                let picked = rfd::FileDialog::new().set_title("Export audio").add_filter("WAV", &["wav"]).set_file_name(name).set_directory(&start).save_file();
+                let picked = rfd::FileDialog::new()
+                    .set_title("Export audio")
+                    .add_filter("WAV", &["wav"])
+                    .set_file_name(name)
+                    .set_directory(&start)
+                    .save_file();
                 if let Some(path) = picked {
                     let is_wav = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
                     let path = if is_wav {
@@ -2254,22 +2473,48 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_device_remove, |c, id: i32| c.device_remove(dstudio_core::DeviceId(id as u64)));
     on!(on_device_use_synth, |c| c.device_use_synth());
     on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(dstudio_core::DeviceId(id as u64), phase, x));
-    on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(dstudio_core::DeviceId(id as u64), p, phase, dy, rate, fine));
-    on!(on_panel_drag_pair, |c, id: i32, p: i32, q: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag_pair(dstudio_core::DeviceId(id as u64), p, q, phase, dy, rate, fine));
+    on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(
+        dstudio_core::DeviceId(id as u64),
+        p,
+        phase,
+        dy,
+        rate,
+        fine
+    ));
+    on!(on_panel_drag_pair, |c, id: i32, p: i32, q: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag_pair(
+        dstudio_core::DeviceId(id as u64),
+        p,
+        q,
+        phase,
+        dy,
+        rate,
+        fine
+    ));
     on!(on_panel_reset, |c, id: i32, p: i32| c.panel_reset(dstudio_core::DeviceId(id as u64), p));
     on!(on_panel_reset_xy, |c, id: i32, px: i32, py: i32| c.panel_reset_xy(dstudio_core::DeviceId(id as u64), [px, py]));
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(dstudio_core::DeviceId(id as u64), p, delta, fine));
-    on!(on_panel_drag_xy, |c, id: i32, px: i32, py: i32, phase: i32, dx: f32, dy: f32, rx: f32, ry: f32, fine: bool| c.panel_drag_xy(dstudio_core::DeviceId(id as u64), [px, py], phase, [dx, dy], [rx, ry], fine));
+    on!(on_panel_drag_xy, |c, id: i32, px: i32, py: i32, phase: i32, dx: f32, dy: f32, rx: f32, ry: f32, fine: bool| c.panel_drag_xy(
+        dstudio_core::DeviceId(id as u64),
+        [px, py],
+        phase,
+        [dx, dy],
+        [rx, ry],
+        fine
+    ));
     on!(on_panel_choice, |c, id: i32, p: i32, i: i32| c.panel_choice(dstudio_core::DeviceId(id as u64), p, i));
     on!(on_panel_text, |c, id: i32, p: i32, text: slint::SharedString| c.panel_text(dstudio_core::DeviceId(id as u64), p, &text));
-    on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(dstudio_core::DeviceId(id as u64), phase, dx, dy, fine));
+    on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(
+        dstudio_core::DeviceId(id as u64),
+        phase,
+        dx,
+        dy,
+        fine
+    ));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(dstudio_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(dstudio_core::DeviceId(id as u64), dir));
     on!(on_panel_latch, |c, id: i32, p: i32, phase: i32| c.panel_latch(dstudio_core::DeviceId(id as u64), p, phase));
-    on!(on_panel_editor, |c, id: i32, kind: i32, x: f32, y: f32, wx: f32, wy: f32, shift: bool, alt: bool, wheel: f32| c.panel_editor(
-        dstudio_core::DeviceId(id as u64),
-        crate::device_editors::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }
-    ));
+    on!(on_panel_editor, |c, id: i32, kind: i32, x: f32, y: f32, wx: f32, wy: f32, shift: bool, alt: bool, wheel: f32| c
+        .panel_editor(dstudio_core::DeviceId(id as u64), crate::device_editors::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }));
     on!(on_panel_view, |c, id: i32, action: i32, v: f32| c.panel_view(dstudio_core::DeviceId(id as u64), action, v));
     {
         use dstudio_core::DeviceId as Id;
@@ -2284,7 +2529,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_mod_menu, |c, d: i32, p: i32, x: f32, y: f32| c.mod_menu(id(d), p, x, y));
         on!(on_mod_map, |c, d: i32, slot: i32| c.mod_map(id(d), slot));
         on!(on_mod_add_menu, |c, d: i32, slot: i32, x: f32, y: f32| c.mod_add_menu(id(d), slot, x, y));
-        on!(on_mod_amount_drag, |c, d: i32, i: i32, phase: i32, dy: f32, fine: bool| c.mod_amount_drag(id(d), i.max(0) as usize, phase, dy, fine));
+        on!(on_mod_amount_drag, |c, d: i32, i: i32, phase: i32, dy: f32, fine: bool| c.mod_amount_drag(
+            id(d),
+            i.max(0) as usize,
+            phase,
+            dy,
+            fine
+        ));
         on!(on_mod_amount_text, |c, d: i32, i: i32, t: slint::SharedString| c.mod_amount_text(id(d), i.max(0) as usize, &t));
         on!(on_mod_amount_step, |c, d: i32, i: i32, delta: i32, fine: bool| c.mod_amount_step(id(d), i.max(0) as usize, delta, fine));
         on!(on_mod_remove, |c, d: i32, i: i32| c.mod_remove(id(d), i.max(0) as usize));
@@ -2299,22 +2550,36 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_sampler_play, |c, id: i32, down: bool| c.sampler_play(dstudio_core::DeviceId(id as u64), down));
     on!(on_sampler_action, |c, id: i32, a: i32| c.sampler_action(dstudio_core::DeviceId(id as u64), a));
     on!(on_sampler_remove, |c, id: i32| c.sampler_remove(dstudio_core::DeviceId(id as u64)));
-    on!(on_sampler_well, |c, id: i32, phase: i32, x: f32, tol: f32, alt: bool| c.sampler_well(dstudio_core::DeviceId(id as u64), phase, x, tol, alt));
-    on!(on_sampler_handle, |c, id: i32, i: i32, phase: i32, x: f32, y: f32| c.sampler_handle(dstudio_core::DeviceId(id as u64), i, phase, x, y));
+    on!(on_sampler_well, |c, id: i32, phase: i32, x: f32, tol: f32, alt: bool| c.sampler_well(
+        dstudio_core::DeviceId(id as u64),
+        phase,
+        x,
+        tol,
+        alt
+    ));
+    on!(on_sampler_handle, |c, id: i32, i: i32, phase: i32, x: f32, y: f32| c.sampler_handle(
+        dstudio_core::DeviceId(id as u64),
+        i,
+        phase,
+        x,
+        y
+    ));
     {
         // The file dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
         let ctl = ctl.clone();
         studio.on_sampler_load(move |id| {
             let target = ctl.borrow().sampler_load_target(dstudio_core::DeviceId(id as u64));
             let Some(target) = target else { return };
-            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("Audio", &crate::files::dialog_exts()).pick_file() {
+            if let Some(file) =
+                rfd::FileDialog::new().set_title("Choose audio file").add_filter("Audio", &crate::files::dialog_exts()).pick_file()
+            {
                 ctl.borrow_mut().import_files(vec![file], target, None);
             }
         });
     }
     {
         // Files dropped from Finder: onto the selected track's sampler, else imported as clips.
-        use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
         let ctl = ctl.clone();
         app.window().on_winit_window_event(move |_, ev| {
             if let WindowEvent::DroppedFile(path) = ev
@@ -2342,7 +2607,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_panel_graph_wheel(move |id, x, y, dy| {
             let used = ctl1.borrow_mut().panel_canvas_wheel(dstudio_core::DeviceId(id as u64), x, y, dy);
             if let Some(a) = aw1.upgrade() {
-                if let Ok(mut c) = ctl1.try_borrow_mut() { c.update_ui(&a); }
+                if let Ok(mut c) = ctl1.try_borrow_mut() {
+                    c.update_ui(&a);
+                }
                 a.window().request_redraw();
             }
             used
@@ -2351,7 +2618,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_panel_graph_key(move |id, key, shift, alt| {
             let used = ctl2.borrow_mut().panel_canvas_key(dstudio_core::DeviceId(id as u64), key.as_str(), shift, alt);
             if let Some(a) = aw2.upgrade() {
-                if let Ok(mut c) = ctl2.try_borrow_mut() { c.update_ui(&a); }
+                if let Ok(mut c) = ctl2.try_borrow_mut() {
+                    c.update_ui(&a);
+                }
                 a.window().request_redraw();
             }
             used
@@ -2399,7 +2668,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(step) = step {
                     let percent = {
                         let mut z = zm.borrow_mut();
-                        if step == 0 { z.reset() } else { z.step(step) }
+                        if step == 0 {
+                            z.reset()
+                        } else {
+                            z.step(step)
+                        }
                         z.percent
                     };
                     if let Some(a) = aw.upgrade() {
@@ -2499,7 +2772,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if args.demo {
-        let dir = if args.self_test { selftest::run_dir().join("demo") } else { std::env::temp_dir().join(format!("dstudio-demo-{}", std::process::id())) };
+        let dir = if args.self_test {
+            selftest::run_dir().join("demo")
+        } else {
+            std::env::temp_dir().join(format!("dstudio-demo-{}", std::process::id()))
+        };
         std::fs::create_dir_all(&dir)?;
         let sine = dir.join("sine-bursts.wav");
         let noise = dir.join("noise-stereo.wav");
@@ -2514,7 +2791,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     // Settings › General › Always load last session.
     if use_prefs && args.import.is_empty() && args.load_sample.is_empty() && args.open.is_none() && !args.demo {
-        let last = ctl.borrow().settings.prefs.general.load_last_session.then(|| ctl.borrow().settings.prefs.recent_projects.first().cloned()).flatten();
+        let last = ctl
+            .borrow()
+            .settings
+            .prefs
+            .general
+            .load_last_session
+            .then(|| ctl.borrow().settings.prefs.recent_projects.first().cloned())
+            .flatten();
         if let Some(dir) = last {
             ctl.borrow_mut().open_recent(0);
             eprintln!("startup: reopened {dir}");
@@ -2563,7 +2847,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if state == 9 {
                         let tpb = c.project().ticks_per_bar();
-                        let _ = c.doc.execute(dstudio_core::Command::SetLoop { enabled: true, start: 2 * tpb, end: 4 * tpb }, dstudio_core::Origin::User);
+                        let _ = c.doc.execute(
+                            dstudio_core::Command::SetLoop { enabled: true, start: 2 * tpb, end: 4 * tpb },
+                            dstudio_core::Origin::User,
+                        );
                         c.after_change();
                         c.export_pick_range(1);
                         c.export_toggle_range_menu();
@@ -2581,8 +2868,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir().join(format!("dstudio-ref-{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("sine-a220-steady.wav");
-        let hit = |i: usize| if args.warp_state { (-((i % 22_050) as f32) / 900.0).exp() * (std::f32::consts::TAU * 90.0 * (i % 22_050) as f32 / 44_100.0).sin() * 0.6 } else { 0.0 };
-        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * if args.warp_state { 0.15 } else { 0.5 } + hit(i)).collect();
+        let hit = |i: usize| {
+            if args.warp_state {
+                (-((i % 22_050) as f32) / 900.0).exp() * (std::f32::consts::TAU * 90.0 * (i % 22_050) as f32 / 44_100.0).sin() * 0.6
+            } else {
+                0.0
+            }
+        };
+        let samples: Vec<f32> = (0..8 * 44_100)
+            .map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * if args.warp_state { 0.15 } else { 0.5 } + hit(i))
+            .collect();
         if args.stereo_state {
             let lr: Vec<f32> = samples.iter().enumerate().flat_map(|(i, &s)| [s, s - hit(i)]).collect();
             wavgen::write_wav(&path, 44_100, 2, &lr)?;
@@ -2611,7 +2906,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 done.set(true);
             }
             if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
-                let mut w = dstudio_core::ClipWarp { enabled: true, mode: dstudio_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, reverse, transpose: 3, ..Default::default() };
+                let mut w = dstudio_core::ClipWarp {
+                    enabled: true,
+                    mode: dstudio_core::WarpMode::Drums,
+                    speed: 1.5,
+                    original_bpm: 120.0,
+                    reverse,
+                    transpose: 3,
+                    ..Default::default()
+                };
                 w.set_marker(0, 0.0);
                 w.set_marker(4 * 44_100, 9.0);
                 c.execute(dstudio_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });
@@ -2770,7 +3073,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     f.last_before = Some(t0);
                     c.poll_jobs();
                     if c.pending_jobs == 0 && CLIP_MENU_AUDIO.load(std::sync::atomic::Ordering::Relaxed) {
-                        let found = c.project().tracks.iter().find_map(|t| t.clips.first().map(|k| (k.id, k.start, c.project().clip_length_ticks(k))));
+                        let found = c
+                            .project()
+                            .tracks
+                            .iter()
+                            .find_map(|t| t.clips.first().map(|k| (k.id, k.start, c.project().clip_length_ticks(k))));
                         if let Some((id, start, len)) = found {
                             CLIP_MENU_AUDIO.store(false, std::sync::atomic::Ordering::Relaxed);
                             c.seek_beats((start + len / 2) as f64 / dstudio_core::PPQ as f64);
@@ -2851,7 +3158,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.phases[ph][2].0.push(ms);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording || c.devmm_animating(), c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
+                        Ok(c) => (
+                            c.pending_jobs > 0
+                                || c.engine.transport().playing
+                                || c.files.audition.animating
+                                || !c.assistant.highlights.is_empty()
+                                || c.rec.recording
+                                || c.devmm_animating(),
+                            c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m),
+                        ),
                         Err(_) => (true, false),
                     };
                     if ready {
@@ -2871,7 +3186,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } else if f.phase == 1 {
                             let busy = ctl.try_borrow().map(|c| c.clip_render.busy() || c.pending_jobs > 0).unwrap_or(true);
-                            if (bounce && !busy && f.ready_frames > f.phase_from + 1) || (!bounce && f.ready_frames >= f.phase_from + clip_bench::IDLE_WINDOW) {
+                            if (bounce && !busy && f.ready_frames > f.phase_from + 1)
+                                || (!bounce && f.ready_frames >= f.phase_from + clip_bench::IDLE_WINDOW)
+                            {
                                 f.phase = 2;
                             }
                         }
@@ -2992,7 +3309,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
             let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
-            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3},\"update_ui_mean_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)], ui_ms / n as f64);
+            println!(
+                "{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3},\"update_ui_mean_ms\":{:.3}}}",
+                ms[(n * 95 / 100).min(n - 1)],
+                ui_ms / n as f64
+            );
             let _ = slint::quit_event_loop();
         });
     }
@@ -3013,7 +3334,15 @@ thread_local! {
 
 /// The per-phase statistics of --bench-clip-render, as a JSON member.
 fn phases_json(f: &Frame) -> String {
-    let one = |name: &str, p: &[Series; 3]| format!("\"{name}\":{{\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}}}", p[0].0.len(), p[0].summary(), p[1].summary(), p[2].summary());
+    let one = |name: &str, p: &[Series; 3]| {
+        format!(
+            "\"{name}\":{{\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}}}",
+            p[0].0.len(),
+            p[0].summary(),
+            p[1].summary(),
+            p[2].summary()
+        )
+    };
     format!(",\"phases\":{{{},{},{}}}", one("before", &f.phases[0]), one("during", &f.phases[1]), one("after", &f.phases[2]))
 }
 

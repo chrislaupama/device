@@ -42,7 +42,10 @@ fn loopback(pdc_latency: Option<u32>) {
         .expect("configure input");
     engine.start_device().expect("start device");
     let st = engine.device_status();
-    eprintln!("device: out {:?} in {:?}, latency in {} + out {} frames", st.output_name, st.input_name, st.input_latency_frames, st.output_latency_frames);
+    eprintln!(
+        "device: out {:?} in {:?}, latency in {} + out {} frames",
+        st.output_name, st.input_name, st.input_latency_frames, st.output_latency_frames
+    );
     assert!(st.input_name.is_some(), "input not open: {:?}", engine.input_error());
 
     let track = TrackSnapshot {
@@ -89,7 +92,7 @@ fn loopback(pdc_latency: Option<u32>) {
         lat.devices = vec![dev];
         tracks.push(lat);
     }
-    engine.publish(&SessionSnapshot { tracks, master_gain: 1.0 , master_automation: vec![], device_assets: Default::default() }).unwrap();
+    engine.publish(&SessionSnapshot { tracks, master_gain: 1.0, master_automation: vec![], device_assets: Default::default() }).unwrap();
     let report = engine.latency_report();
     eprintln!("delay compensation: L = {} frames", report.total_frames);
     assert_eq!(report.total_frames, pdc_latency.unwrap_or(0));

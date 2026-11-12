@@ -7,7 +7,18 @@ fn asset(frames: u64, rate: f64) -> Asset {
 }
 
 fn clip(asset: AssetId, start: Ticks, len: u64) -> Clip {
-    Clip { id: ClipId(0), asset, name: "c".into(), start, source_offset: 0, source_length: len, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None }
+    Clip {
+        id: ClipId(0),
+        asset,
+        name: "c".into(),
+        start,
+        source_offset: 0,
+        source_length: len,
+        gain: 1.0,
+        warp: Default::default(),
+        disabled: false,
+        clip_loop: None,
+    }
 }
 
 fn doc_with_asset() -> (Document, TrackId, AssetId) {
@@ -228,7 +239,11 @@ fn save_and_reopen_project() {
 #[test]
 fn load_rejects_newer_schema_and_foreign_files() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("project.json"), r#"{"format":"device-studio-project","schema_version":99,"saved_with":"x","project":{}}"#).unwrap();
+    std::fs::write(
+        dir.path().join("project.json"),
+        r#"{"format":"device-studio-project","schema_version":99,"saved_with":"x","project":{}}"#,
+    )
+    .unwrap();
     assert!(matches!(persist::load(dir.path()), Err(persist::PersistError::TooNew { .. })));
     std::fs::write(dir.path().join("project.json"), r#"{"format":"other","schema_version":1,"saved_with":"x","project":{}}"#).unwrap();
     assert!(matches!(persist::load(dir.path()), Err(persist::PersistError::WrongFormat(_))));
@@ -349,7 +364,9 @@ fn sections_tile_from_bar_one_and_undo() {
 fn section_validation_and_clear_all_batch() {
     let mut d = Document::new(Project::default());
     assert!(d.execute(Command::InsertSection { index: None, section: section(" ", 8) }, Origin::User).is_err());
-    assert!(d.execute(Command::InsertSection { index: None, section: Section { length: PPQ - 1, ..section("A", 1) } }, Origin::User).is_err());
+    assert!(
+        d.execute(Command::InsertSection { index: None, section: Section { length: PPQ - 1, ..section("A", 1) } }, Origin::User).is_err()
+    );
     assert!(d.execute(Command::RemoveSection { section: SectionId(999) }, Origin::User).is_err());
     for n in ["A", "B", "C"] {
         d.execute(Command::InsertSection { index: None, section: section(n, 8) }, Origin::User).unwrap();
@@ -413,14 +430,50 @@ fn import_track_gives_fresh_ids_and_keeps_references() {
     let mut src = Project::default();
     let t = src.tracks[0].id;
     let a = AssetId(500);
-    src.assets.push(Asset { id: a, relative_path: Some("media/x.wav".into()), absolute_path: "/media/x.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 });
+    src.assets.push(Asset {
+        id: a,
+        relative_path: Some("media/x.wav".into()),
+        absolute_path: "/media/x.wav".into(),
+        sample_rate: 48_000.0,
+        channels: 2,
+        frames: 48_000,
+    });
     let mut c = clip(a, 0, 48_000);
     c.id = ClipId(501);
     src.tracks[0].clips.push(c);
-    let lfo = Device { id: DeviceId(502), links: vec![ModLink { slot: 0, target: DeviceId(503), param: ModParam::Builtin("gain".into()), min: 0.0, max: 1.0 }], ..Device::new(PluginRef { format: PluginFormat::Builtin, id: "lfo".into(), name: "LFO".into(), path: None, vendor: String::new(), version: String::new(), kind: PluginKind::Effect }) };
-    let gain = Device { id: DeviceId(503), chain: Some(DeviceId(502)), sidechain: Some(TrackId(9)), ..Device::new(PluginRef { format: PluginFormat::Builtin, id: "gain".into(), name: "Gain".into(), path: None, vendor: String::new(), version: String::new(), kind: PluginKind::Effect }) };
+    let lfo = Device {
+        id: DeviceId(502),
+        links: vec![ModLink { slot: 0, target: DeviceId(503), param: ModParam::Builtin("gain".into()), min: 0.0, max: 1.0 }],
+        ..Device::new(PluginRef {
+            format: PluginFormat::Builtin,
+            id: "lfo".into(),
+            name: "LFO".into(),
+            path: None,
+            vendor: String::new(),
+            version: String::new(),
+            kind: PluginKind::Effect,
+        })
+    };
+    let gain = Device {
+        id: DeviceId(503),
+        chain: Some(DeviceId(502)),
+        sidechain: Some(TrackId(9)),
+        ..Device::new(PluginRef {
+            format: PluginFormat::Builtin,
+            id: "gain".into(),
+            name: "Gain".into(),
+            path: None,
+            vendor: String::new(),
+            version: String::new(),
+            kind: PluginKind::Effect,
+        })
+    };
     src.tracks[0].devices = vec![lfo, gain];
-    src.tracks[0].automation.push(AutomationLane::new(AutomationTarget::Builtin { device: DeviceId(503), device_type: "gain".into(), param: "gain".into() }));
+    src.tracks[0].automation.push(AutomationLane::new(AutomationTarget::Builtin {
+        device: DeviceId(503),
+        device_type: "gain".into(),
+        param: "gain".into(),
+    }));
     src.tracks[0].solo = true;
 
     let mut d = Document::new(Project::default());
@@ -447,7 +500,6 @@ fn import_track_gives_fresh_ids_and_keeps_references() {
     assert!(d.project().next_id >= next, "next_id {} < {next}", d.project().next_id);
 }
 
-
 #[test]
 fn rejected_add_track_leaves_next_id_alone() {
     let mut p = Project::default();
@@ -460,7 +512,6 @@ fn rejected_add_track_leaves_next_id_alone() {
     // Past the MIDI clip; the built-in Synth an instrument track gets can take ids after it.
     assert!(p.next_id > before + 100, "next_id {}", p.next_id);
 }
-
 
 #[test]
 fn a_failed_undo_keeps_its_history_entry() {

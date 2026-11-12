@@ -271,12 +271,20 @@ impl Controller {
         match f {
             Field::Output => {
                 let mut v = vec![("System default".to_string(), Choice::Device(None))];
-                v.extend(devs.iter().filter(|d| d.output_channels > 0).map(|d| (d.name.clone(), Choice::Device(Some((d.id.clone(), d.name.clone()))))));
+                v.extend(
+                    devs.iter()
+                        .filter(|d| d.output_channels > 0)
+                        .map(|d| (d.name.clone(), Choice::Device(Some((d.id.clone(), d.name.clone()))))),
+                );
                 v
             }
             Field::Input => {
                 let mut v = vec![("None".to_string(), Choice::Device(None))];
-                v.extend(devs.iter().filter(|d| d.input_channels > 0).map(|d| (d.name.clone(), Choice::Device(Some((d.id.clone(), d.name.clone()))))));
+                v.extend(
+                    devs.iter()
+                        .filter(|d| d.input_channels > 0)
+                        .map(|d| (d.name.clone(), Choice::Device(Some((d.id.clone(), d.name.clone()))))),
+                );
                 v
             }
             Field::SampleRate => {
@@ -473,7 +481,16 @@ impl Controller {
                 mono: false,
                 mute: false,
                 solo: false,
-                clips: vec![ClipSnapshot { clip_id: TONE_TRACK_ID, engine_asset: info.asset_id, timeline_start: pos, source_offset: 0, length: info.frames as i64, gain: 1.0, warp: None, clip_loop: None }],
+                clips: vec![ClipSnapshot {
+                    clip_id: TONE_TRACK_ID,
+                    engine_asset: info.asset_id,
+                    timeline_start: pos,
+                    source_offset: 0,
+                    length: info.frames as i64,
+                    gain: 1.0,
+                    warp: None,
+                    clip_loop: None,
+                }],
                 instrument: false,
                 notes: vec![],
                 arm: false,
@@ -485,7 +502,8 @@ impl Controller {
                 automation: vec![],
             }],
             master_gain: 1.0,
-            master_automation: vec![], device_assets: Default::default(),
+            master_automation: vec![],
+            device_assets: Default::default(),
         };
         let e = &self.engine;
         let off = dstudio_engine::MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 24_000.0, beats_per_bar: 4 };
@@ -547,7 +565,13 @@ impl Controller {
                 let rows: Vec<ChoiceItem> = items
                     .iter()
                     .enumerate()
-                    .map(|(i, (label, c))| ChoiceItem { label: label.clone().into(), checked: self.is_current(*f, c), hint: false, y: MENU_PAD + i as f32 * MENU_ROW, h: MENU_ROW })
+                    .map(|(i, (label, c))| ChoiceItem {
+                        label: label.clone().into(),
+                        checked: self.is_current(*f, c),
+                        hint: false,
+                        y: MENU_PAD + i as f32 * MENU_ROW,
+                        h: MENU_ROW,
+                    })
                     .collect();
                 s.set_settings_menu_h(MENU_PAD * 2.0 + rows.len() as f32 * MENU_ROW);
                 s.set_settings_menu_field(*f as i32);

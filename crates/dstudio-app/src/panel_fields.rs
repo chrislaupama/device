@@ -9,9 +9,9 @@
 //! one undo step on release, like a knob drag (src/device_panel.rs).
 
 use crate::controller::Controller;
-use crate::device_panel::{s, Z};
+use crate::device_panel::{Z, s};
 use crate::{PanelCanvas, PanelGrip, PanelPath, PanelText};
-use dstudio_core::builtin::{delay, echo, grains, pitch_shifter, reverb, DeviceDef, View};
+use dstudio_core::builtin::{DeviceDef, View, delay, echo, grains, pitch_shifter, reverb};
 use dstudio_core::{Command, Device, DeviceId};
 use slint::{Color, ModelRc, VecModel};
 use std::collections::{HashMap, VecDeque};
@@ -170,7 +170,8 @@ fn circle(out: &mut String, cx: f32, cy: f32, r: f32) {
 fn capsule(out: &mut String, x0: f32, x1: f32, y: f32, t: f32) {
     let r = t / 2.0;
     let len = (x1 - x0 - t).max(0.0);
-    let _ = write!(out, "M{:.2} {:.2} h{len:.2} a{r:.2} {r:.2} 0 0 1 0 {t:.2} h{:.2} a{r:.2} {r:.2} 0 0 1 0 {:.2} Z ", x0 + r, y - r, -len, -t);
+    let _ =
+        write!(out, "M{:.2} {:.2} h{len:.2} a{r:.2} {r:.2} 0 0 1 0 {t:.2} h{:.2} a{r:.2} {r:.2} 0 0 1 0 {:.2} Z ", x0 + r, y - r, -len, -t);
 }
 
 fn polyline(out: &mut String, pts: &[(f32, f32)]) {
@@ -219,7 +220,13 @@ fn seconds_label(t: f32) -> String {
 }
 
 fn db_label(db: f32) -> String {
-    if db > 0.0 { format!("+{}", db as i32) } else if db < 0.0 { format!("{MINUS}{}", -db as i32) } else { "0".into() }
+    if db > 0.0 {
+        format!("+{}", db as i32)
+    } else if db < 0.0 {
+        format!("{MINUS}{}", -db as i32)
+    } else {
+        "0".into()
+    }
 }
 
 /// Log-frequency axis: x of hz between lo and hi over [x0, x1], and back.
@@ -322,7 +329,9 @@ fn band_hz(i: f32) -> f32 {
 fn delay_times(v: &dyn Fn(&str) -> f32, bpm: f32) -> (f32, f32) {
     let beat = 60.0 / bpm.max(1.0);
     let synced = v("sync") >= 0.5;
-    let side = |ms: &str, div: &str| if synced { delay::DIVISION_BEATS[(v(div).round() as usize).min(14)] * beat } else { v(ms).max(1.0) / 1000.0 };
+    let side = |ms: &str, div: &str| {
+        if synced { delay::DIVISION_BEATS[(v(div).round() as usize).min(14)] * beat } else { v(ms).max(1.0) / 1000.0 }
+    };
     let l = side("timeMs", "timeDivision");
     (l, if v("link") >= 0.5 { l } else { side("timeMsR", "timeDivisionR") })
 }
@@ -412,9 +421,16 @@ fn grains_reach(v: &dyn Fn(&str) -> f32, bpm: f32) -> Reach {
     let rhythm = v("mode").round() as u32 == grains::RHYTHM;
     let frozen = v("freeze") >= 0.5;
     let step = beat * grains::RATE_BEATS[(v("rate").round() as usize).min(11)];
-    let position = if rhythm { grains::POSITION_BEATS[(v("position_note").round() as usize).min(9)] * beat } else { v("position") / 1000.0 };
+    let position =
+        if rhythm { grains::POSITION_BEATS[(v("position_note").round() as usize).min(9)] * beat } else { v("position") / 1000.0 };
     let spray_ms = v("spray");
-    let spray = if !rhythm { spray_ms / 1000.0 } else if spray_ms > 0.5 { step.max(spray_ms / 1000.0) } else { 0.0 };
+    let spray = if !rhythm {
+        spray_ms / 1000.0
+    } else if spray_ms > 0.5 {
+        step.max(spray_ms / 1000.0)
+    } else {
+        0.0
+    };
     let length = if rhythm { step * v("gate") / 100.0 } else { v("size") / 1000.0 };
     let ratio = 2f32.powf(v("pitch") / 12.0);
     let travel = if frozen { length * ratio } else { length * (ratio - 1.0).max(0.0) };
@@ -545,11 +561,37 @@ impl Controller {
         if changed {
             fields.washes_dirty.set(true);
         }
-        PanelCanvas { visible: true, well: true, x, y, w, h, well_y, caption: s(caption), readout: s(value), paths: model(c.paths), texts: model(c.texts), grips: model(c.pills), pointer: true, cursor, ..Default::default() }
+        PanelCanvas {
+            visible: true,
+            well: true,
+            x,
+            y,
+            w,
+            h,
+            well_y,
+            caption: s(caption),
+            readout: s(value),
+            paths: model(c.paths),
+            texts: model(c.texts),
+            grips: model(c.pills),
+            pointer: true,
+            cursor,
+            ..Default::default()
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_delay_echoes(&self, c: &mut Canvas, d: &Device, def: &DeviceDef, live: &Live, accent: Color, w: f32, h: f32, drag: Option<&FieldDrag>) {
+    fn draw_delay_echoes(
+        &self,
+        c: &mut Canvas,
+        d: &Device,
+        def: &DeviceDef,
+        live: &Live,
+        accent: Color,
+        w: f32,
+        h: f32,
+        drag: Option<&FieldDrag>,
+    ) {
         let v = |id: &str| self.fv_named(d, def, id);
         let (left, right, top, bottom) = (18.0 * Z, w - 8.0 * Z, 8.0 * Z, h - 16.0 * Z);
         let pw = right - left;
@@ -584,7 +626,15 @@ impl Controller {
             while t <= span + 1e-4 {
                 seg(&mut grid, x_of(t), top, x_of(t), bottom);
                 if x_of(t) < right - 30.0 * Z {
-                    c.text(x_of(t) + 2.0 * Z, bottom + 8.0 * Z, 40.0 * Z, if t == 0.0 { "0".into() } else { format!("{} s", seconds_label(t)) }, ink(0.5), 10.0 * Z, 0);
+                    c.text(
+                        x_of(t) + 2.0 * Z,
+                        bottom + 8.0 * Z,
+                        40.0 * Z,
+                        if t == 0.0 { "0".into() } else { format!("{} s", seconds_label(t)) },
+                        ink(0.5),
+                        10.0 * Z,
+                        0,
+                    );
                 }
                 t += step;
             }
@@ -632,7 +682,14 @@ impl Controller {
         };
         if let Some(p) = def.param(id) {
             let t = if right_side { tr } else { tl };
-            c.pill(x_of(t) - 9.0 * Z, cy[right_side as usize] - lane * 0.45 + 2.0 * Z, w, def.label_of(d, p), &def.text(d, p, v(id)), drag.is_some());
+            c.pill(
+                x_of(t) - 9.0 * Z,
+                cy[right_side as usize] - lane * 0.45 + 2.0 * Z,
+                w,
+                def.label_of(d, p),
+                &def.text(d, p, v(id)),
+                drag.is_some(),
+            );
         }
     }
 
@@ -651,7 +708,18 @@ impl Controller {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_reverb_tail(&self, c: &mut Canvas, d: &Device, def: &DeviceDef, live: &Live, accent: Color, w: f32, h: f32, drag: Option<&FieldDrag>, hot: Option<Grab>) {
+    fn draw_reverb_tail(
+        &self,
+        c: &mut Canvas,
+        d: &Device,
+        def: &DeviceDef,
+        live: &Live,
+        accent: Color,
+        w: f32,
+        h: f32,
+        drag: Option<&FieldDrag>,
+        hot: Option<Grab>,
+    ) {
         let v = |id: &str| self.fv_named(d, def, id);
         let (left, right, top, bottom) = reverb_box(w, h);
         let (decay, damping, pre) = (v("decay"), v("damping") / 100.0, v("predelay") / 1000.0);
@@ -662,7 +730,9 @@ impl Controller {
         let y_of = |hz: f32| reverb_y(hz, top, bottom);
         let (low, high) = (v("lowcut2"), v("highcut2"));
         let shimmer = if mode as u32 == reverb::SHIMMER { 0.6 } else { 0.0 };
-        let arrivals: Vec<f32> = (1..=8).map(|i| FIRST_ARRIVAL[mode] * (0.6 + size) / 1.1 + ARRIVAL_SPACING[mode] * (i as f32).powf(1.1) * (0.4 + 1.2 * size)).collect();
+        let arrivals: Vec<f32> = (1..=8)
+            .map(|i| FIRST_ARRIVAL[mode] * (0.6 + size) / 1.1 + ARRIVAL_SPACING[mode] * (i as f32).powf(1.1) * (0.4 + 1.2 * size))
+            .collect();
         let first = arrivals[0];
 
         // Wash: WASH_COLS columns x 24 bands of accent at the tail's intensity, drawn smoothed
@@ -895,7 +965,8 @@ impl Controller {
                 let time_id = self.grab_params(def, d, g.grab)[0];
                 let (pw, lanes) = (w - 26.0 * Z, h - 24.0 * Z);
                 let synced = start("sync") >= 0.5;
-                let t0 = if synced { delay::DIVISION_BEATS[(start(time_id).round() as usize).min(14)] * beat } else { start(time_id) / 1000.0 };
+                let t0 =
+                    if synced { delay::DIVISION_BEATS[(start(time_id).round() as usize).min(14)] * beat } else { start(time_id) / 1000.0 };
                 let t = (t0 + dx / pw * g.span * fine).max(0.001);
                 let time = if synced {
                     let near = |i: &usize| (delay::DIVISION_BEATS[*i].ln() - (t / beat).ln()).abs();
@@ -927,7 +998,8 @@ impl Controller {
                     return vec![(if side { "note_r" } else { "note_l" }, note), intensity];
                 }
                 if pic.machine == 2 {
-                    let motor = ((echo::CARTRIDGE.heads_mm[0] - ms / 1000.0 * echo::CARTRIDGE_SPEED) / echo::CARTRIDGE_TRAVEL).clamp(0.0, 1.0);
+                    let motor =
+                        ((echo::CARTRIDGE.heads_mm[0] - ms / 1000.0 * echo::CARTRIDGE_SPEED) / echo::CARTRIDGE_TRAVEL).clamp(0.0, 1.0);
                     return vec![("motor", motor), intensity];
                 }
                 let mut out = echo::authored_patch(&pic, head, ms);
@@ -1000,10 +1072,16 @@ impl Controller {
                 }
                 let ids = self.grab_params(def, &d, grab);
                 if alt {
-                    let params = ids.iter().filter_map(|id| def.param(id)).filter(|p| !p.id.ends_with("Enabled")).map(|p| (p.id.to_string(), p.default)).collect();
+                    let params = ids
+                        .iter()
+                        .filter_map(|id| def.param(id))
+                        .filter(|p| !p.id.ends_with("Enabled"))
+                        .map(|p| (p.id.to_string(), p.default))
+                        .collect();
                     return self.field_commit(device, params);
                 }
-                let start: Vec<(usize, f32)> = ids.iter().filter_map(|id| def.index_of(id).map(|i| (i, def.value(&d, &def.params[i])))).collect();
+                let start: Vec<(usize, f32)> =
+                    ids.iter().filter_map(|id| def.index_of(id).map(|i| (i, def.value(&d, &def.params[i])))).collect();
                 let v = |id: &str| def.param(id).map_or(0.0, |p| def.value(&d, p));
                 let span = match name {
                     "delay" => {
@@ -1015,7 +1093,8 @@ impl Controller {
                     "grains" => grains_reach(&v, self.bpm()).span,
                     _ => 1.0,
                 };
-                self.devices.panel.fields.drag = Some(FieldDrag { device, grab, x0: x, y0: y, x, y, fine: shift, span, start, values: Vec::new(), active: false });
+                self.devices.panel.fields.drag =
+                    Some(FieldDrag { device, grab, x0: x, y0: y, x, y, fine: shift, span, start, values: Vec::new(), active: false });
             }
             1 => {
                 let Some(g) = self.devices.panel.fields.drag.as_mut().filter(|g| g.device == device) else { return };
@@ -1027,7 +1106,11 @@ impl Controller {
                 g.y = y;
                 g.fine = shift;
                 let g = g.clone();
-                let values: Vec<(usize, f32)> = self.drag_values(def, &d, &g, w, h).into_iter().filter_map(|(id, val)| def.index_of(id).map(|i| (i, def.params[i].snap(val)))).collect();
+                let values: Vec<(usize, f32)> = self
+                    .drag_values(def, &d, &g, w, h)
+                    .into_iter()
+                    .filter_map(|(id, val)| def.index_of(id).map(|i| (i, def.params[i].snap(val))))
+                    .collect();
                 for (i, val) in &values {
                     let prev = g.values.iter().find(|v| v.0 == *i).map_or_else(|| def.value(&d, &def.params[*i]), |v| v.1);
                     if prev != *val {
@@ -1078,7 +1161,9 @@ impl Controller {
                         let id = if self.fv_named(&d, def, "machine").round() as u32 == 2 { "motor" } else { "heads" };
                         def.param(id).map(|p| (p.id.to_string(), p.default)).into_iter().collect()
                     }
-                    g => self.grab_params(def, &d, g).iter().filter_map(|id| def.param(id)).map(|p| (p.id.to_string(), p.default)).collect(),
+                    g => {
+                        self.grab_params(def, &d, g).iter().filter_map(|id| def.param(id)).map(|p| (p.id.to_string(), p.default)).collect()
+                    }
                 };
                 self.field_commit(device, params);
             }
@@ -1102,7 +1187,9 @@ impl Controller {
 
     /// One undo step for everything a field gesture changed.
     fn field_commit(&mut self, device: DeviceId, params: Vec<(String, f32)>) {
-        let Some((d, def)) = self.project().device(device).and_then(|d| dstudio_core::builtin::def_of(d).map(|def| (d, def))) else { return };
+        let Some((d, def)) = self.project().device(device).and_then(|d| dstudio_core::builtin::def_of(d).map(|def| (d, def))) else {
+            return;
+        };
         let mut commands: Vec<Command> = params
             .into_iter()
             .filter(|(id, val)| def.param(id).is_some_and(|p| def.value(d, p) != *val))
@@ -1161,7 +1248,8 @@ impl Controller {
                         }
                         dirty |= live.levels.iter().any(|l| l.1 > -48.0);
                     }
-                    let frame: Vec<(f32, f32, f32)> = ro.get(2..).unwrap_or(&[]).chunks(3).filter(|g| g.len() == 3 && g[2] > 0.0).map(|g| (g[0], g[1], g[2])).collect();
+                    let frame: Vec<(f32, f32, f32)> =
+                        ro.get(2..).unwrap_or(&[]).chunks(3).filter(|g| g.len() == 3 && g[2] > 0.0).map(|g| (g[0], g[1], g[2])).collect();
                     dirty |= !frame.is_empty() || live.trail.iter().any(|f| !f.is_empty());
                     live.trail.push_front(frame);
                     live.trail.truncate(TRAIL);
@@ -1288,9 +1376,20 @@ fn draw_delay_eq(c: &mut Canvas, v: &dyn Fn(&str) -> f32, live: &Live, accent: C
         c.stroke(dot, if b == focus { ink(0.95) } else { ink(if on { 0.6 } else { 0.35 }) }, if b == focus { 1.5 } else { 1.0 } * Z);
     }
     let (cx, cy) = delay_handle(focus, &band, w, h);
-    let gain = if is_filter(focus) { String::new() } else { format!(" {}", dstudio_core::builtin::format_value(dstudio_core::builtin::Format::Db, band(focus, 1), "dB", &[], 45.0)) };
+    let gain = if is_filter(focus) {
+        String::new()
+    } else {
+        format!(" {}", dstudio_core::builtin::format_value(dstudio_core::builtin::Format::Db, band(focus, 1), "dB", &[], 45.0))
+    };
     let off = if band(focus, 3) >= 0.5 { "" } else { " (off)" };
-    c.pill(cx + 9.0 * Z, (cy - 14.0 * Z).max(9.0 * Z), w, delay::BANDS[focus].0, &format!("{}{gain}{off}", delay::freq_text(band(focus, 0))), matches!(hot, Some(Grab::DelayBand(_))));
+    c.pill(
+        cx + 9.0 * Z,
+        (cy - 14.0 * Z).max(9.0 * Z),
+        w,
+        delay::BANDS[focus].0,
+        &format!("{}{gain}{off}", delay::freq_text(band(focus, 0))),
+        matches!(hot, Some(Grab::DelayBand(_))),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1306,7 +1405,15 @@ fn draw_echo(c: &mut Canvas, pic: &echo::Picture, smear: f32, accent: Color, w: 
             c.text(8.0 * Z, y_of(db), 28.0 * Z, db_label(db), ink(0.6), 10.0 * Z, 0);
         }
     }
-    let step = if span <= 1.0 { 0.25 } else if span <= 3.0 { 0.5 } else if span <= 8.0 { 1.0 } else { 2.0 };
+    let step = if span <= 1.0 {
+        0.25
+    } else if span <= 3.0 {
+        0.5
+    } else if span <= 8.0 {
+        1.0
+    } else {
+        2.0
+    };
     let mut t = step;
     while t < span - 1e-4 {
         seg(&mut grid, x_of(t), top, x_of(t), bottom);
@@ -1385,12 +1492,28 @@ fn draw_reverb_eq(c: &mut Canvas, v: &dyn Fn(&str) -> f32, live: &Live, accent: 
     }
     let text = format!("{} \u{2013} {}", reverb::cut_text(low), reverb::cut_text(high));
     let pw = pill_width("Filter", &text);
-    let x = if xh - xl > pw { (xl + xh - pw) / 2.0 } else if xl > w - xh { xl - pw - 6.0 * Z } else { xh + 6.0 * Z };
+    let x = if xh - xl > pw {
+        (xl + xh - pw) / 2.0
+    } else if xl > w - xh {
+        xl - pw - 6.0 * Z
+    } else {
+        xh + 6.0 * Z
+    };
     c.pill(x, by + 16.0 * Z, w, "Filter", &text, hot == Some(Grab::ReverbBand));
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_grains(c: &mut Canvas, v: &dyn Fn(&str) -> f32, live: &Live, accent: Color, bpm: f32, w: f32, h: f32, drag: Option<&FieldDrag>, hot: Option<Grab>) {
+fn draw_grains(
+    c: &mut Canvas,
+    v: &dyn Fn(&str) -> f32,
+    live: &Live,
+    accent: Color,
+    bpm: f32,
+    w: f32,
+    h: f32,
+    drag: Option<&FieldDrag>,
+    hot: Option<Grab>,
+) {
     let r = grains_reach(v, bpm);
     let span = drag.map_or(r.span, |g| g.span);
     let (left, right) = (4.0 * Z, w - 5.0 * Z);
@@ -1485,7 +1608,18 @@ fn draw_grains(c: &mut Canvas, v: &dyn Fn(&str) -> f32, live: &Live, accent: Col
     seg(&mut pl, xp, 0.0, xp, h);
     c.stroke(pl, ink(0.95), if pos_hot { 2.0 } else { 1.5 } * Z);
     let mut tab = String::new();
-    let _ = write!(tab, "M{:.2} {:.2} h{:.2} v{:.2} a{:.2} {:.2} 0 0 1 {:.2} 0 v{:.2} Z", xp - 3.5 * Z, 6.0 * Z, 7.0 * Z, 9.0 * Z, 3.5 * Z, 3.5 * Z, -7.0 * Z, -9.0 * Z);
+    let _ = write!(
+        tab,
+        "M{:.2} {:.2} h{:.2} v{:.2} a{:.2} {:.2} 0 0 1 {:.2} 0 v{:.2} Z",
+        xp - 3.5 * Z,
+        6.0 * Z,
+        7.0 * Z,
+        9.0 * Z,
+        3.5 * Z,
+        3.5 * Z,
+        -7.0 * Z,
+        -9.0 * Z
+    );
     c.fill(tab, ink(0.95));
     match drag.map(|g| g.grab) {
         Some(Grab::GrainsPosition { .. }) => c.pill(xp + 6.0 * Z, 26.0 * Z, w, "Position", &grains::ms_text(r.position * 1000.0), true),

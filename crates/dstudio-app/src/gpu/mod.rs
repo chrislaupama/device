@@ -126,7 +126,11 @@ impl Renderer {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
@@ -146,7 +150,11 @@ impl Renderer {
             bind_group_layouts: &[Some(&bgl)],
             immediate_size: 0,
         });
-        let target = [Some(wgpu::ColorTargetState { format: TEX_FORMAT, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })];
+        let target = [Some(wgpu::ColorTargetState {
+            format: TEX_FORMAT,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
         let rect_attrs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
         let wave_attrs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Uint32x4];
         let pipeline = |label: &str, vs: &str, fs: &str, stride: usize, attrs: &[wgpu::VertexAttribute]| {
@@ -157,9 +165,18 @@ impl Renderer {
                     module: &shader,
                     entry_point: Some(vs),
                     compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout { array_stride: stride as u64, step_mode: wgpu::VertexStepMode::Instance, attributes: attrs })],
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: stride as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: attrs,
+                    })],
                 },
-                fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(fs), compilation_options: Default::default(), targets: &target }),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &target,
+                }),
                 primitive: Default::default(),
                 depth_stencil: None,
                 multisample: Default::default(),
@@ -273,7 +290,10 @@ impl Renderer {
             // the very thing this cap prevents. Give up only on a GPU that
             // has made no progress for half a minute (hung or lost).
             for _ in 0..15 {
-                match self.device.poll(wgpu::PollType::Wait { submission_index: Some(idx.clone()), timeout: Some(std::time::Duration::from_secs(2)) }) {
+                match self
+                    .device
+                    .poll(wgpu::PollType::Wait { submission_index: Some(idx.clone()), timeout: Some(std::time::Duration::from_secs(2)) })
+                {
                     Err(wgpu::PollError::Timeout) => continue,
                     _ => break,
                 }

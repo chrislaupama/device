@@ -55,10 +55,34 @@ fn clip_move_resize_delete_undo_and_ids() {
     d.undo().unwrap();
     assert_eq!(d.project().midi_clip(c).unwrap().start, 4 * PPQ);
     // ids are shared with audio clips: a MIDI clip id can't be reused by AddClip
-    d.execute(Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: "/x.wav".into(), sample_rate: 48_000.0, channels: 1, frames: 100 } }, Origin::User).unwrap();
+    d.execute(
+        Command::AddAsset {
+            asset: Asset {
+                id: AssetId(0),
+                relative_path: None,
+                absolute_path: "/x.wav".into(),
+                sample_rate: 48_000.0,
+                channels: 1,
+                frames: 100,
+            },
+        },
+        Origin::User,
+    )
+    .unwrap();
     let a = d.project().assets[0].id;
     let audio = d.project().tracks[0].id;
-    let dup = Clip { id: c, asset: a, name: "x".into(), start: 0, source_offset: 0, source_length: 10, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None };
+    let dup = Clip {
+        id: c,
+        asset: a,
+        name: "x".into(),
+        start: 0,
+        source_offset: 0,
+        source_length: 10,
+        gain: 1.0,
+        warp: Default::default(),
+        disabled: false,
+        clip_loop: None,
+    };
     assert_eq!(d.execute(Command::AddClip { track: audio, clip: dup }, Origin::User), Err(EditError::DuplicateId(c.0)));
 }
 

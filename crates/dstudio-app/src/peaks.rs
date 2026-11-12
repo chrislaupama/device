@@ -122,7 +122,10 @@ pub fn wave_segments(p: &Project, clip: &Clip, engine_rate: f64) -> Vec<WaveSeg>
         // Reversed: the engine's back-to-front copy, read along the mirrored pieces.
         let len = segs.last().map_or(0.0, |s| s.beats.1);
         let frames = p.asset(clip.asset).map_or(0.0, |a| a.frames as f64 * ratio);
-        segs.iter().rev().map(|s| WaveSeg { beats: (len - s.beats.1, len - s.beats.0), frames: (frames - s.frames.1, frames - s.frames.0) }).collect()
+        segs.iter()
+            .rev()
+            .map(|s| WaveSeg { beats: (len - s.beats.1, len - s.beats.0), frames: (frames - s.frames.1, frames - s.frames.0) })
+            .collect()
     } else {
         segs
     };
@@ -160,7 +163,16 @@ fn unroll(segs: &[WaveSeg], start: f64, end: f64, length: f64) -> Vec<WaveSeg> {
 /// `visible` is the logical x range to fill and `(y, h)` the logical band.
 /// Pieces meet on whole pixels, so none overlaps its neighbour.
 #[allow(clippy::too_many_arguments)]
-pub fn push_wave(out: &mut Vec<WaveInst>, slot: Slot, segs: &[WaveSeg], x_of: impl Fn(f64) -> f32, visible: (f32, f32), (y, h): (f32, f32), scale: f32, color: [f32; 4]) {
+pub fn push_wave(
+    out: &mut Vec<WaveInst>,
+    slot: Slot,
+    segs: &[WaveSeg],
+    x_of: impl Fn(f64) -> f32,
+    visible: (f32, f32),
+    (y, h): (f32, f32),
+    scale: f32,
+    color: [f32; 4],
+) {
     let (lo, hi) = ((visible.0 * scale) as f64, (visible.1 * scale) as f64);
     for s in segs {
         let (x0, x1) = ((x_of(s.beats.0) * scale) as f64, (x_of(s.beats.1) * scale) as f64);
@@ -195,8 +207,26 @@ mod tests {
     fn project_with_clip(warp: Option<ClipWarp>) -> (Project, Clip) {
         let mut p = Project::default();
         p.transport.bpm = 120.0;
-        p.assets.push(Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/loop.wav".into(), sample_rate: 44_100.0, channels: 2, frames: 8 * 44_100 });
-        let clip = Clip { id: ClipId(1), asset: AssetId(0), name: String::new(), start: 0, source_offset: 0, source_length: 8 * 44_100, gain: 1.0, warp: warp.unwrap_or_default(), disabled: false, clip_loop: None };
+        p.assets.push(Asset {
+            id: AssetId(0),
+            relative_path: None,
+            absolute_path: "/nonexistent/loop.wav".into(),
+            sample_rate: 44_100.0,
+            channels: 2,
+            frames: 8 * 44_100,
+        });
+        let clip = Clip {
+            id: ClipId(1),
+            asset: AssetId(0),
+            name: String::new(),
+            start: 0,
+            source_offset: 0,
+            source_length: 8 * 44_100,
+            gain: 1.0,
+            warp: warp.unwrap_or_default(),
+            disabled: false,
+            clip_loop: None,
+        };
         (p, clip)
     }
 

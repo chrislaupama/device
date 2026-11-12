@@ -61,7 +61,10 @@ fn lanes(project: &Project, lanes: &[crate::automation::AutomationLane], rate: f
     lanes
         .iter()
         .filter(|l| l.enabled && !l.points.is_empty())
-        .map(|l| LaneSnapshot { target: l.target.clone(), points: l.points.iter().map(|q| (project.ticks_to_frames(q.time, rate), q.value, q.curve)).collect() })
+        .map(|l| LaneSnapshot {
+            target: l.target.clone(),
+            points: l.points.iter().map(|q| (project.ticks_to_frames(q.time, rate), q.value, q.curve)).collect(),
+        })
         .collect()
 }
 
@@ -198,7 +201,9 @@ pub fn build_full(
                         warp: if varispeed {
                             Some(varispeed_snapshot(project, c, ratio, engine_rate))
                         } else {
-                            c.warp.enabled.then(|| warp_snapshot(project, c, asset.sample_rate, engine_rate, transients.get(&c.asset).map_or(&[][..], |v| v)))
+                            c.warp.enabled.then(|| {
+                                warp_snapshot(project, c, asset.sample_rate, engine_rate, transients.get(&c.asset).map_or(&[][..], |v| v))
+                            })
                         },
                         clip_loop: None,
                     };
@@ -218,7 +223,15 @@ pub fn build_full(
             instrument: t.kind == crate::model::TrackKind::Instrument,
             synth: (t.kind == crate::model::TrackKind::Instrument).then(|| t.synth.clone()),
             // A chain head's switch bypasses its members too.
-            devices: t.devices.iter().enumerate().map(|(i, d)| Device { enabled: crate::modulation::effectively_enabled(&t.devices, i), ..crate::builtin::engine_device(d, project.transport.key) }).collect(),
+            devices: t
+                .devices
+                .iter()
+                .enumerate()
+                .map(|(i, d)| Device {
+                    enabled: crate::modulation::effectively_enabled(&t.devices, i),
+                    ..crate::builtin::engine_device(d, project.transport.key)
+                })
+                .collect(),
             instrument_plugin: if t.kind == crate::model::TrackKind::Instrument { t.instrument_plugin.clone() } else { None },
             automation: lanes(project, &t.automation, engine_rate),
             arm: t.arm,
@@ -232,7 +245,9 @@ pub fn build_full(
                     .midi_clips
                     .iter()
                     .filter(|c| !c.disabled)
-                    .flat_map(|c| c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity)))
+                    .flat_map(|c| {
+                        c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity))
+                    })
                     .map(|(s, e, pitch, velocity)| NoteSnapshot {
                         start: project.ticks_to_frames(s, engine_rate),
                         end: project.ticks_to_frames(e, engine_rate),

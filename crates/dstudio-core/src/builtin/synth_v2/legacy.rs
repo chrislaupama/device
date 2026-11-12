@@ -4,7 +4,7 @@
 //! every such instrument track a Synth device with the closest settings, and
 //! moves its synth automation lanes onto the device's parameters.
 
-use super::{fx_param, SYNTH_V2};
+use super::{SYNTH_V2, fx_param};
 use crate::automation::{AutomationLane, AutomationTarget, SynthParam};
 use crate::builtin::DeviceDef;
 use crate::device::{Device, DeviceId};
@@ -193,10 +193,12 @@ pub fn upgrade_track(p: &mut Project, ti: usize) -> bool {
     }
     let id = DeviceId(p.alloc_id());
     let t = &mut p.tracks[ti];
-    let lanes: Vec<SynthParam> = t.automation.iter().filter_map(|l| if let AutomationTarget::Synth { param } = l.target { Some(param) } else { None }).collect();
+    let lanes: Vec<SynthParam> =
+        t.automation.iter().filter_map(|l| if let AutomationTarget::Synth { param } = l.target { Some(param) } else { None }).collect();
     // Untouched classic settings (every new track) start from the Synth's
     // own defaults; edited ones carry over.
-    let mut d = if lanes.is_empty() && t.synth == SynthParams::default() { SYNTH_V2.instantiate() } else { device_from_legacy(&t.synth, &lanes) };
+    let mut d =
+        if lanes.is_empty() && t.synth == SynthParams::default() { SYNTH_V2.instantiate() } else { device_from_legacy(&t.synth, &lanes) };
     d.id = id;
     for lane in &mut t.automation {
         if let AutomationTarget::Synth { param } = lane.target {

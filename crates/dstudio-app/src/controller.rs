@@ -6,16 +6,21 @@
 //! models into the `Studio` Slint global. Transient gesture state (a clip being
 //! dragged) lives here only until the gesture ends and becomes one Command.
 
-use crate::peaks::{L0_FRAMES, PeakStore, Pyramid};
-use crate::timeline::{self, ClipVis, Hit, TrackVis, View, Zone};
 use crate::assistant_panel::AssistantState;
 use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
+use crate::peaks::{L0_FRAMES, PeakStore, Pyramid};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, PatternRow, SeqCell, SeqNum, SeqRow, ShapeRow, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
+use crate::timeline::{self, ClipVis, Hit, TrackVis, View, Zone};
+use crate::{
+    AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PatternRow,
+    PluginRow, RulerLabel, SeqCell, SeqNum, SeqRow, ShapeRow, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow,
+    YLabel,
+};
 use dstudio_core::{
-    Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
+    Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind,
+    db_to_gain, gain_to_db, persist, snapshot,
 };
 use dstudio_engine::{AssetInfo, Engine, Meter, MetronomeConfig};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
@@ -119,7 +124,13 @@ pub fn parse_pan_text(s: &str) -> Option<f32> {
 /// Channel-strip trim: "0.0 dB", "+3.5 dB", "−6.0 dB".
 pub(crate) fn fmt_trim(db: f32) -> String {
     let v = (db * 10.0).round() / 10.0;
-    if v == 0.0 { "0.0 dB".into() } else if v < 0.0 { format!("−{:.1} dB", -v) } else { format!("+{v:.1} dB") }
+    if v == 0.0 {
+        "0.0 dB".into()
+    } else if v < 0.0 {
+        format!("−{:.1} dB", -v)
+    } else {
+        format!("+{v:.1} dB")
+    }
 }
 
 /// Channel-strip width as a percentage: "100%".
@@ -154,7 +165,10 @@ pub fn next_track_color(p: &Project) -> ColorIndex {
     let Some(last) = p.tracks.last() else { return ColorIndex::FIRST };
     let start = last.color.0 as usize % n;
     let used = |c: usize| p.tracks.iter().filter(|t| t.color.0 as usize % n == c).count();
-    (1..=n).map(|k| (start + k) % n).find(|&c| used(c) == 0).map_or_else(|| ColorIndex((0..n).min_by_key(|&c| used(c)).unwrap_or(0) as u8), |c| ColorIndex(c as u8))
+    (1..=n)
+        .map(|k| (start + k) % n)
+        .find(|&c| used(c) == 0)
+        .map_or_else(|| ColorIndex((0..n).min_by_key(|&c| used(c)).unwrap_or(0) as u8), |c| ColorIndex(c as u8))
 }
 
 /// Card accent override for renders (`--card-accent RRGGBB`), e.g. white for effect cards
@@ -187,7 +201,11 @@ pub enum ImportTarget {
     Track(TrackId),
     /// A built-in sampler's sample slot (`next_free`: the first free layer
     /// of the pad that starts at `slot`).
-    DeviceSample { device: dstudio_core::DeviceId, slot: u32, next_free: bool },
+    DeviceSample {
+        device: dstudio_core::DeviceId,
+        slot: u32,
+        next_free: bool,
+    },
 }
 
 pub enum JobResult {
@@ -199,7 +217,11 @@ pub enum JobResult {
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// Takes of one finished recording pass, loaded into the engine.
-    Recorded { doc_epoch: u64, takes: Vec<(dstudio_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)>, midi: Vec<dstudio_core::Command> },
+    Recorded {
+        doc_epoch: u64,
+        takes: Vec<(dstudio_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)>,
+        midi: Vec<dstudio_core::Command>,
+    },
     /// Settings › Audio "Test" tone loaded into the engine.
     TestTone(Result<AssetInfo, String>),
     /// Plugin catalogue scan finished (src/devices.rs).
@@ -227,14 +249,42 @@ pub fn load_and_analyse(engine: &Engine, path: &Path) -> Result<(AssetInfo, Pyra
 #[derive(Debug, Clone)]
 enum Drag {
     Scrub,
-    Move { clip: ClipId, grab_beats: f64, orig_track: TrackId, orig_start: Ticks, track: TrackId, start: Ticks },
-    TrimLeft { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
-    TrimRight { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
+    Move {
+        clip: ClipId,
+        grab_beats: f64,
+        orig_track: TrackId,
+        orig_start: Ticks,
+        track: TrackId,
+        start: Ticks,
+    },
+    TrimLeft {
+        clip: ClipId,
+        orig: (Ticks, u64, u64),
+        cur: (Ticks, u64, u64),
+    },
+    TrimRight {
+        clip: ClipId,
+        orig: (Ticks, u64, u64),
+        cur: (Ticks, u64, u64),
+    },
     /// Right edge of a looping audio clip: its looped length.
-    LoopRight { clip: ClipId, start: Ticks, orig: Ticks, cur: Ticks },
+    LoopRight {
+        clip: ClipId,
+        start: Ticks,
+        orig: Ticks,
+        cur: Ticks,
+    },
     /// MIDI clip edges: (start, length) in ticks.
-    MidiLeft { clip: ClipId, orig: (Ticks, Ticks), cur: (Ticks, Ticks) },
-    MidiRight { clip: ClipId, orig: (Ticks, Ticks), cur: (Ticks, Ticks) },
+    MidiLeft {
+        clip: ClipId,
+        orig: (Ticks, Ticks),
+        cur: (Ticks, Ticks),
+    },
+    MidiRight {
+        clip: ClipId,
+        orig: (Ticks, Ticks),
+        cur: (Ticks, Ticks),
+    },
 }
 
 /// Bottom panel tab ("Clip" / "Devices").
@@ -623,7 +673,10 @@ impl Controller {
         s.set_seq_cells(ModelRc::from(self.seq_cell_model.clone()));
         s.set_seq_nums(ModelRc::from(self.seq_num_model.clone()));
         s.set_seq_flash_rows(ModelRc::from(self.seq_flash_model.clone()));
-        let tips: Vec<SharedString> = std::iter::once("Turn steps on and off").chain(dstudio_core::steps::StepLane::ALL.iter().map(|l| l.spec().tip)).map(Into::into).collect();
+        let tips: Vec<SharedString> = std::iter::once("Turn steps on and off")
+            .chain(dstudio_core::steps::StepLane::ALL.iter().map(|l| l.spec().tip))
+            .map(Into::into)
+            .collect();
         s.set_seq_lane_tips(ModelRc::new(VecModel::from(tips)));
         s.set_composer_rows(ModelRc::from(self.composer_row_model.clone()));
         s.set_composer_shape_rows(ModelRc::from(self.composer_shape_model.clone()));
@@ -799,11 +852,15 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
-        let (mut snap, _skipped) = snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
+        let (mut snap, _skipped) =
+            snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
-            let ls = snapshot::LaneSnapshot { target: lane.target.clone(), points: lane.points.iter().map(|q| (p.ticks_to_frames(q.time, self.rate), q.value, q.curve)).collect() };
+            let ls = snapshot::LaneSnapshot {
+                target: lane.target.clone(),
+                points: lane.points.iter().map(|q| (p.ticks_to_frames(q.time, self.rate), q.value, q.curve)).collect(),
+            };
             let lanes = match key {
                 // A muted master stays silent: no volume lane, not even one being drawn.
                 None if p.master_mute => None,
@@ -840,7 +897,8 @@ impl Controller {
         let (start, end) = (p.ticks_to_frames(tr.loop_start, self.rate), p.ticks_to_frames(tr.loop_end, self.rate));
         let beat_ticks = PPQ * 4 / tr.time_signature.denominator as i64;
         let frames_per_beat = p.ticks_to_seconds(beat_ticks) * self.rate;
-        let cfg = MetronomeConfig { enabled: self.metronome_on, gain: 0.5, frames_per_beat, beats_per_bar: tr.time_signature.numerator as u32 };
+        let cfg =
+            MetronomeConfig { enabled: self.metronome_on, gain: 0.5, frames_per_beat, beats_per_bar: tr.time_signature.numerator as u32 };
         let r = self.engine.set_loop(tr.loop_enabled, start, end).and_then(|_| self.engine.set_metronome(cfg));
         if let Err(e) = r {
             self.set_status(format!("Engine: {e}"), 4);
@@ -1034,7 +1092,11 @@ impl Controller {
         if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
             self.delete_section(s);
         } else if let Some(c) = self.selected_clip.take() {
-            let cmd = if self.project().find_midi_clip(c).is_some() { Command::RemoveMidiClip { clip: c } } else { Command::RemoveClip { clip: c } };
+            let cmd = if self.project().find_midi_clip(c).is_some() {
+                Command::RemoveMidiClip { clip: c }
+            } else {
+                Command::RemoveClip { clip: c }
+            };
             self.execute(cmd);
         } else if let Some(t) = self.selected_track {
             let idx = self.project().track_index(t).unwrap_or(0);
@@ -1345,7 +1407,18 @@ impl Controller {
         let clip_id = ClipId(alloc());
         cmds.push(Command::AddClip {
             track: track_id,
-            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None },
+            clip: Clip {
+                id: clip_id,
+                asset: asset_id,
+                name,
+                start: at.max(0),
+                source_offset: 0,
+                source_length: native_frames,
+                gain: 1.0,
+                warp: Default::default(),
+                disabled: false,
+                clip_loop: None,
+            },
         });
         // Engine asset must be known before the snapshot is published.
         self.peaks.insert(info.asset_id, pyr);
@@ -1529,7 +1602,14 @@ impl Controller {
                             self.select_track(track);
                             self.select_clip(Some(id));
                             self.drag = Some(match zone {
-                                Zone::Body => Drag::Move { clip: id, grab_beats: beat - start as f64 / PPQ as f64, orig_track: track, orig_start: start, track, start },
+                                Zone::Body => Drag::Move {
+                                    clip: id,
+                                    grab_beats: beat - start as f64 / PPQ as f64,
+                                    orig_track: track,
+                                    orig_start: start,
+                                    track,
+                                    start,
+                                },
                                 Zone::Left => Drag::MidiLeft { clip: id, orig: (start, len), cur: (start, len) },
                                 Zone::Right => Drag::MidiRight { clip: id, orig: (start, len), cur: (start, len) },
                             });
@@ -1540,7 +1620,14 @@ impl Controller {
                         self.select_track(track);
                         self.select_clip(Some(id));
                         self.drag = Some(match zone {
-                            Zone::Body => Drag::Move { clip: id, grab_beats: beat - start as f64 / PPQ as f64, orig_track: track, orig_start: start, track, start },
+                            Zone::Body => Drag::Move {
+                                clip: id,
+                                grab_beats: beat - start as f64 / PPQ as f64,
+                                orig_track: track,
+                                orig_start: start,
+                                track,
+                                start,
+                            },
                             Zone::Left => Drag::TrimLeft { clip: id, orig: (start, off, len), cur: (start, off, len) },
                             Zone::Right => match self.project().clip(id).and_then(|c| c.clip_loop).filter(|l| l.on) {
                                 Some(l) => Drag::LoopRight { clip: id, start, orig: l.length, cur: l.length },
@@ -1571,7 +1658,8 @@ impl Controller {
                     Drag::Scrub => self.seek_beats(beat),
                     Drag::Move { clip, grab_beats, orig_track, orig_start, .. } => {
                         let want = beat - grab_beats;
-                        let start = (if on { steps.snap_move(want, orig_start as f64 / PPQ as f64) } else { want.max(0.0) } * PPQ as f64).round() as Ticks;
+                        let start = (if on { steps.snap_move(want, orig_start as f64 / PPQ as f64) } else { want.max(0.0) } * PPQ as f64)
+                            .round() as Ticks;
                         let p = self.project();
                         let kind = p.track(orig_track).map(|t| t.kind);
                         let track = self
@@ -1648,7 +1736,11 @@ impl Controller {
                 match self.drag.take() {
                     Some(Drag::Move { clip, orig_track, orig_start, track, start, .. }) if (track, start) != (orig_track, orig_start) => {
                         let midi = self.project().find_midi_clip(clip).is_some();
-                        self.execute(if midi { Command::MoveMidiClip { clip, track, start } } else { Command::MoveClip { clip, track, start } });
+                        self.execute(if midi {
+                            Command::MoveMidiClip { clip, track, start }
+                        } else {
+                            Command::MoveClip { clip, track, start }
+                        });
                         self.select_track(track);
                     }
                     Some(Drag::MidiRight { clip, orig, cur }) if orig != cur => {
@@ -1664,7 +1756,10 @@ impl Controller {
                     }
                     Some(Drag::LoopRight { clip, orig, cur, .. }) if orig != cur => {
                         if let Some(l) = self.project().clip(clip).and_then(|c| c.clip_loop) {
-                            self.execute(Command::SetClipLoop { clip, clip_loop: Some(dstudio_core::model::AudioLoop { length: cur, ..l }) });
+                            self.execute(Command::SetClipLoop {
+                                clip,
+                                clip_loop: Some(dstudio_core::model::AudioLoop { length: cur, ..l }),
+                            });
                         }
                     }
                     _ => {}
@@ -1775,7 +1870,8 @@ impl Controller {
                 let notes = if self.pr.clip == Some(c.id) { self.pr_notes() } else { c.notes.clone() };
                 let shift = start - c.start; // left-resize preview keeps notes in place on the timeline
                 // A looping clip repeats its loop to the clip end; repeats are drawn dimmer.
-                let looped = if self.pr.clip == Some(c.id) { self.pr_loop_preview() } else { c.clip_loop }.filter(|l| l.on && c.pattern.is_none());
+                let looped =
+                    if self.pr.clip == Some(c.id) { self.pr_loop_preview() } else { c.clip_loop }.filter(|l| l.on && c.pattern.is_none());
                 let notes: Vec<(dstudio_core::Note, bool)> = match looped {
                     Some(l) => l.unroll(&notes, shift + len),
                     None => notes.into_iter().map(|n| (n, false)).collect(),
@@ -1872,7 +1968,9 @@ impl Controller {
             }
         };
         set_if(s.get_bar_text(), format!("{bar:03}"), &|v| s.set_bar_text(v));
-        set_if(s.get_time_text(), format!("{:02}:{:02}.{:03}", ms_total / 60_000, (ms_total / 1000) % 60, ms_total % 1000), &|v| s.set_time_text(v));
+        set_if(s.get_time_text(), format!("{:02}:{:02}.{:03}", ms_total / 60_000, (ms_total / 1000) % 60, ms_total % 1000), &|v| {
+            s.set_time_text(v)
+        });
         if s.get_playing() != tp.playing {
             s.set_playing(tp.playing);
         }
@@ -1998,7 +2096,16 @@ impl Controller {
         if s.get_recording() != self.rec.recording {
             s.set_recording(self.rec.recording);
         }
-        tp.playing || previewing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active() || self.devmm_animating()
+        tp.playing
+            || previewing
+            || metering
+            || highlighting
+            || self.pending_jobs > 0
+            || self.drag.is_some()
+            || self.pr_animating()
+            || self.rec.recording
+            || self.test_tone_active()
+            || self.devmm_animating()
     }
 
     fn push_models(&mut self, app: &AppWindow) {
@@ -2067,7 +2174,11 @@ impl Controller {
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let n = if t.is_return() { 0 } else { t.sends.iter().filter(|x| p.track(x.target).is_some_and(|r| r.is_return())).count() as i32 };
+                let n = if t.is_return() {
+                    0
+                } else {
+                    t.sends.iter().filter(|x| p.track(x.target).is_some_and(|r| r.is_return())).count() as i32
+                };
                 send_first += n;
                 (i, t, send_first - n, n)
             })
@@ -2152,12 +2263,22 @@ impl Controller {
                 let room = x1 - 5.1 - lx;
                 (room >= 8.5 && x1 > 0.0 && x0 < w).then(|| {
                     let ink = crate::sections::label_ink(crate::sections::lift(s.color, s.state));
-                    crate::SectionLabel { x: lx, w: room, text: s.name.clone().into(), ink: slint::Color::from_rgb_f32(ink[0], ink[1], ink[2]) }
+                    crate::SectionLabel {
+                        x: lx,
+                        w: room,
+                        text: s.name.clone().into(),
+                        ink: slint::Color::from_rgb_f32(ink[0], ink[1], ink[2]),
+                    }
                 })
             })
             .collect();
         crate::controller::sync_model(&self.section_label_model, section_labels);
-        let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64, (self.beats_per_bar() * 1024.0) as i64);
+        let key = (
+            (v.start_beats * 4096.0) as i64,
+            (v.px_per_beat * 4096.0) as i64,
+            self.lanes_size.0 as i64,
+            (self.beats_per_bar() * 1024.0) as i64,
+        );
         if key != self.ruler_key {
             self.ruler_key = key;
             let labels = timeline::ruler_labels(&v, self.lanes_size.0, &self.ruler_steps());
@@ -2178,7 +2299,8 @@ impl Controller {
                 Some(ClipLabel { x: x0, y, w: (x + cw).min(w) - x0, text: c.name.clone().into(), selected: c.selected })
             })
             .collect();
-        let same = self.clips_model.row_count() == labels.len() && labels.iter().enumerate().all(|(i, l)| self.clips_model.row_data(i).as_ref() == Some(l));
+        let same = self.clips_model.row_count() == labels.len()
+            && labels.iter().enumerate().all(|(i, l)| self.clips_model.row_data(i).as_ref() == Some(l));
         if !same {
             self.clips_model.set_vec(labels);
         }
@@ -2201,7 +2323,12 @@ pub(crate) fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len
             let s = n.start - shift;
             (s < len && s + n.length > 0).then(|| {
                 let s0 = s.max(0);
-                [s0 as f32 / len as f32, ((s + n.length).min(len) - s0) as f32 / len as f32, (hi - n.pitch as f32) / (hi - lo).max(1.0), if repeat { 0.5 } else { 1.0 }]
+                [
+                    s0 as f32 / len as f32,
+                    ((s + n.length).min(len) - s0) as f32 / len as f32,
+                    (hi - n.pitch as f32) / (hi - lo).max(1.0),
+                    if repeat { 0.5 } else { 1.0 },
+                ]
             })
         })
         .collect()
@@ -2331,11 +2458,31 @@ mod tests {
         c.execute(Command::Batch {
             label: "Fixture".into(),
             commands: vec![
-                Command::AddAsset { asset: Asset { id: asset, relative_path: None, absolute_path: "fixture.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 } },
+                Command::AddAsset {
+                    asset: Asset {
+                        id: asset,
+                        relative_path: None,
+                        absolute_path: "fixture.wav".into(),
+                        sample_rate: 48_000.0,
+                        channels: 2,
+                        frames: 48_000,
+                    },
+                },
                 Command::AddTrack { index: None, track: Track::new(track, TrackKind::Audio, "Audio", next_track_color(c.project())) },
                 Command::AddClip {
                     track,
-                    clip: Clip { id: clip, asset, name: "Loop".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None },
+                    clip: Clip {
+                        id: clip,
+                        asset,
+                        name: "Loop".into(),
+                        start: 0,
+                        source_offset: 0,
+                        source_length: 48_000,
+                        gain: 1.0,
+                        warp: Default::default(),
+                        disabled: false,
+                        clip_loop: None,
+                    },
                 },
             ],
         });

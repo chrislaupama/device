@@ -21,9 +21,8 @@ const ADD_HALF: f32 = 6.8;
 const NEW_BARS: i64 = 8;
 
 /// The section palette (vivid enough for a dark label), before display tinting.
-pub const PALETTE: [u32; 13] = [
-    0xc86040, 0xd0a050, 0xb8c040, 0xa0d050, 0x60d890, 0x50b8b0, 0x68a8c0, 0x7888c8, 0x9080d0, 0xb068d0, 0xd85088, 0xc07030, 0x30a098,
-];
+pub const PALETTE: [u32; 13] =
+    [0xc86040, 0xd0a050, 0xb8c040, 0xa0d050, 0x60d890, 0x50b8b0, 0x68a8c0, 0x7888c8, 0x9080d0, 0xb068d0, 0xd85088, 0xc07030, 0x30a098];
 
 #[derive(Debug, Clone)]
 pub struct SectionVis {
@@ -136,12 +135,19 @@ impl Controller {
             .into_iter()
             .filter_map(|(id, start, len)| {
                 let s = p.section_index(id).map(|i| &p.sections[i])?;
-                let dragging = matches!(self.section_drag, Some(SectionDrag::Move { id: d, .. } | SectionDrag::Resize { id: d, .. }) if d == id);
+                let dragging =
+                    matches!(self.section_drag, Some(SectionDrag::Move { id: d, .. } | SectionDrag::Resize { id: d, .. }) if d == id);
                 Some(SectionVis {
                     start_beats: start as f64 / PPQ as f64,
                     len_beats: len as f64 / PPQ as f64,
                     color: display_rgb(s.color),
-                    state: if dragging { 2 } else if self.selected_section == Some(id) { 1 } else { 0 },
+                    state: if dragging {
+                        2
+                    } else if self.selected_section == Some(id) {
+                        1
+                    } else {
+                        0
+                    },
                     name: s.name.clone(),
                 })
             })
@@ -193,7 +199,12 @@ impl Controller {
     pub fn insert_section(&mut self, index: Option<usize>) -> Option<SectionId> {
         let p = self.project();
         let id = SectionId(p.next_id);
-        let section = Section { id, name: format!("Section {}", p.sections.len() + 1), color: self.next_section_color(), length: NEW_BARS * self.bar_ticks() };
+        let section = Section {
+            id,
+            name: format!("Section {}", p.sections.len() + 1),
+            color: self.next_section_color(),
+            length: NEW_BARS * self.bar_ticks(),
+        };
         if self.execute(Command::InsertSection { index, section }) {
             self.selected_section = Some(id);
             self.ui_dirty = true;
@@ -305,7 +316,9 @@ impl Controller {
                     SectionDrag::Move { id, from, to } if from != to => {
                         self.execute(Command::MoveSection { section: id, index: to });
                     }
-                    SectionDrag::Resize { id, len } if self.project().section_index(id).is_some_and(|i| self.project().sections[i].length != len) => {
+                    SectionDrag::Resize { id, len }
+                        if self.project().section_index(id).is_some_and(|i| self.project().sections[i].length != len) =>
+                    {
                         self.execute(Command::SetSectionLength { section: id, length: len });
                     }
                     _ => {}

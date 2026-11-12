@@ -10,12 +10,12 @@
 //! All geometry below is in 100%-zoom px (CSS); the Controller methods convert the
 //! design units (0.85 x 100%-zoom px) that Slint sends.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use crate::controller::{Controller, track_color};
 use crate::timeline::{ClipVis, MAX_PX_PER_BEAT, MIN_PX_PER_BEAT};
 use crate::{AppWindow, MiniBar, Studio};
 use slint::{ComponentHandle, VecModel};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 /// Design units per 100%-zoom px.
@@ -431,7 +431,12 @@ impl Controller {
         let m = self.minimap_metrics();
         let p = self.doc.project();
         let any_solo = p.tracks.iter().any(|t| t.solo);
-        let tracks: Vec<TrackInfo> = p.tracks.iter().take(p.ordinary_track_count()).map(|t| TrackInfo { color: track_color(t.color), dim: t.mute || (any_solo && !t.solo) }).collect();
+        let tracks: Vec<TrackInfo> = p
+            .tracks
+            .iter()
+            .take(p.ordinary_track_count())
+            .map(|t| TrackInfo { color: track_color(t.color), dim: t.mute || (any_solo && !t.solo) })
+            .collect();
         let mut h = DefaultHasher::new();
         (self.mm.content_key, m.map_end.to_bits()).hash(&mut h);
         for t in &tracks {
@@ -442,7 +447,13 @@ impl Controller {
             self.mm.built = key;
             let rows: Vec<MiniBar> = bars(&tracks, &self.clip_vis, m.map_end)
                 .into_iter()
-                .map(|b| MiniBar { x: b.x, w: b.w, y: b.y, h: b.h, color: slint::Color::from_argb_f32(b.alpha, b.color[0], b.color[1], b.color[2]) })
+                .map(|b| MiniBar {
+                    x: b.x,
+                    w: b.w,
+                    y: b.y,
+                    h: b.h,
+                    color: slint::Color::from_argb_f32(b.alpha, b.color[0], b.color[1], b.color[2]),
+                })
                 .collect();
             crate::controller::sync_model(&self.mm.model, rows);
         }
@@ -466,7 +477,18 @@ mod tests {
     use super::*;
 
     fn clip(track: usize, start: f64, len: f64) -> ClipVis {
-        ClipVis { track_index: track, start_beats: start, len_beats: len, color: [1.0; 3], selected: false, muted: false, name: String::new(), wave: None, midi: None, live: None }
+        ClipVis {
+            track_index: track,
+            start_beats: start,
+            len_beats: len,
+            color: [1.0; 3],
+            selected: false,
+            muted: false,
+            name: String::new(),
+            wave: None,
+            midi: None,
+            live: None,
+        }
     }
 
     fn tracks(n: usize) -> Vec<TrackInfo> {

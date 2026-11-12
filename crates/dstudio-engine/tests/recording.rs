@@ -48,7 +48,8 @@ fn record_armed_track_then_play_back_the_take() {
     let mut doc = Document::new(Project::default());
 
     // An armed audio track listening to device input 2 (channel index 1), mono.
-    doc.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "Vox", ColorIndex(0)) }, Origin::User).unwrap();
+    doc.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "Vox", ColorIndex(0)) }, Origin::User)
+        .unwrap();
     let track = doc.project().tracks.last().unwrap().id;
     doc.execute(Command::SetTrackInput { track, input: Some(InputSource { channel: 1, stereo: false }) }, Origin::User).unwrap();
     doc.execute(Command::SetTrackArm { track, arm: true }, Origin::User).unwrap();
@@ -78,9 +79,7 @@ fn record_armed_track_then_play_back_the_take() {
             break;
         }
         let n = (*chunk).min(total - done);
-        engine
-            .render_offline_with_input(&input[done * 2..(done + n) * 2], channels, &mut out[done * 2..(done + n) * 2])
-            .unwrap();
+        engine.render_offline_with_input(&input[done * 2..(done + n) * 2], channels, &mut out[done * 2..(done + n) * 2]).unwrap();
         done += n;
     }
     // Armed but not monitored: nothing is heard ...
@@ -108,7 +107,10 @@ fn record_armed_track_then_play_back_the_take() {
     engine.stop().unwrap();
     assert_eq!(takes.len(), 1);
     let take = &takes[0];
-    assert_eq!((take.track_id, take.start_frame, take.frames, take.channels, take.sample_rate), (track.0, start_frame, total as u64, 1, RATE));
+    assert_eq!(
+        (take.track_id, take.start_frame, take.frames, take.channels, take.sample_rate),
+        (track.0, start_frame, total as u64, 1, RATE)
+    );
     assert!(take.path.starts_with(dir.path()));
 
     // The file holds exactly the injected channel, bit for bit.
@@ -127,10 +129,30 @@ fn record_armed_track_then_play_back_the_take() {
         Command::Batch {
             label: "Record".into(),
             commands: vec![
-                Command::AddAsset { asset: Asset { id: asset_id, relative_path: None, absolute_path: take.path.to_string_lossy().into(), sample_rate: take.sample_rate, channels: take.channels, frames: take.frames } },
+                Command::AddAsset {
+                    asset: Asset {
+                        id: asset_id,
+                        relative_path: None,
+                        absolute_path: take.path.to_string_lossy().into(),
+                        sample_rate: take.sample_rate,
+                        channels: take.channels,
+                        frames: take.frames,
+                    },
+                },
                 Command::AddClip {
                     track,
-                    clip: Clip { id: ClipId(9_002), asset: asset_id, name: "Vox Take 1".into(), start: doc.project().frames_to_ticks(take.start_frame, RATE), source_offset: 0, source_length: take.frames, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None },
+                    clip: Clip {
+                        id: ClipId(9_002),
+                        asset: asset_id,
+                        name: "Vox Take 1".into(),
+                        start: doc.project().frames_to_ticks(take.start_frame, RATE),
+                        source_offset: 0,
+                        source_length: take.frames,
+                        gain: 1.0,
+                        warp: Default::default(),
+                        disabled: false,
+                        clip_loop: None,
+                    },
                 },
             ],
         },
@@ -156,7 +178,11 @@ fn record_armed_track_then_play_back_the_take() {
     let g = std::f32::consts::FRAC_PI_4.cos();
     let g_engine = ((0.0f64 + 1.0) * std::f64::consts::PI / 4.0).cos() as f32;
     assert!((g - g_engine).abs() < 1e-7);
-    let mismatches = (0..total).filter(|&k| played[2 * k] != expected[k] * g_engine || played[2 * k + 1] != expected[k] * (std::f64::consts::PI / 4.0).sin() as f32).count();
+    let mismatches = (0..total)
+        .filter(|&k| {
+            played[2 * k] != expected[k] * g_engine || played[2 * k + 1] != expected[k] * (std::f64::consts::PI / 4.0).sin() as f32
+        })
+        .count();
     assert_eq!(mismatches, 0);
 
     // Undo removes the clip and the asset again.

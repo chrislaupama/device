@@ -78,7 +78,17 @@ fn main() {
         "macos" => {
             println!("cargo:rustc-link-lib=c++");
             println!("cargo:rustc-link-lib=objc");
-            for fw in ["CoreAudio", "AudioToolbox", "AudioUnit", "CoreAudioKit", "CoreFoundation", "Foundation", "AppKit", "Accelerate", "CoreMIDI"] {
+            for fw in [
+                "CoreAudio",
+                "AudioToolbox",
+                "AudioUnit",
+                "CoreAudioKit",
+                "CoreFoundation",
+                "Foundation",
+                "AppKit",
+                "Accelerate",
+                "CoreMIDI",
+            ] {
                 println!("cargo:rustc-link-lib=framework={fw}");
             }
         }
@@ -87,10 +97,7 @@ fn main() {
                 // CMake found libpipewire through pkg-config, possibly under a
                 // custom prefix (PKG_CONFIG_PATH): forward its -L paths too.
                 println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-                if let Ok(out) = std::process::Command::new("pkg-config")
-                    .args(["--libs-only-L", "libpipewire-0.3"])
-                    .output()
-                {
+                if let Ok(out) = std::process::Command::new("pkg-config").args(["--libs-only-L", "libpipewire-0.3"]).output() {
                     for dir in String::from_utf8_lossy(&out.stdout).split_whitespace() {
                         if let Some(dir) = dir.strip_prefix("-L") {
                             println!("cargo:rustc-link-search=native={dir}");

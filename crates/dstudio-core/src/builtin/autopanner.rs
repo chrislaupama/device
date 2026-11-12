@@ -13,12 +13,19 @@ pub static AUTOPANNER: DeviceDef = DeviceDef {
     purpose: "Moves the sound between the left and right speakers with an LFO.",
     params: &[
         ParamDef::new("rate", "Rate", 0.1, 20.0, 2.0, Taper::Log, "Hz", Format::Freq).help("LFO speed while the timebase is Free."),
-        ParamDef::new("depth", "Depth", 0.0, 100.0, 80.0, LINEAR, "%", Format::Percent).help("How far the sound travels from the centre; 100% reaches the speakers."),
-        ParamDef::choice("shape", "Shape", SHAPES, 0).help("Path of the movement: smooth (Sine, Triangle), a jump between sides (Square) or a new random spot each cycle (Random)."),
-        ParamDef::new("phase", "Phase", 0.0, 360.0, 0.0, LINEAR, "deg", Format::Plain(0)).help("Start point of the LFO cycle (shifts the movement against the beat)."),
+        ParamDef::new("depth", "Depth", 0.0, 100.0, 80.0, LINEAR, "%", Format::Percent)
+            .help("How far the sound travels from the centre; 100% reaches the speakers."),
+        ParamDef::choice("shape", "Shape", SHAPES, 0)
+            .help("Path of the movement: smooth (Sine, Triangle), a jump between sides (Square) or a new random spot each cycle (Random)."),
+        ParamDef::new("phase", "Phase", 0.0, 360.0, 0.0, LINEAR, "deg", Format::Plain(0))
+            .help("Start point of the LFO cycle (shifts the movement against the beat)."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Blend of the panned and the untouched signal."),
-        ParamDef::choice("sync", "Sync", FREE_SYNC, 1).label("Timebase").help("Free runs at Rate in Hz; Sync follows the song tempo at Rate Sync."),
-        ParamDef::choice("rate_sync", "Rate Sync", DIVISIONS, DIVISION_QUARTER).label("Rate").help("LFO cycle length as a note value while synced."),
+        ParamDef::choice("sync", "Sync", FREE_SYNC, 1)
+            .label("Timebase")
+            .help("Free runs at Rate in Hz; Sync follows the song tempo at Rate Sync."),
+        ParamDef::choice("rate_sync", "Rate Sync", DIVISIONS, DIVISION_QUARTER)
+            .label("Rate")
+            .help("LFO cycle length as a note value while synced."),
     ],
     layout: Layout {
         picker: &[Control::Dropdown("shape"), Control::Gap, Control::Menu("sync")],

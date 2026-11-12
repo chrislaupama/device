@@ -5,10 +5,28 @@ use std::collections::HashMap;
 fn audio_doc() -> (Document, TrackId, ClipId) {
     let mut d = Document::new(Project::default());
     let track = d.project().tracks[0].id;
-    let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/t.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 * 10 };
+    let asset = Asset {
+        id: AssetId(0),
+        relative_path: None,
+        absolute_path: "/nonexistent/t.wav".into(),
+        sample_rate: 48_000.0,
+        channels: 2,
+        frames: 48_000 * 10,
+    };
     d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
     let a = d.project().assets[0].id;
-    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: 4 * PPQ, source_offset: 0, source_length: 48_000 * 4, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None };
+    let clip = Clip {
+        id: ClipId(0),
+        asset: a,
+        name: "loop".into(),
+        start: 4 * PPQ,
+        source_offset: 0,
+        source_length: 48_000 * 4,
+        gain: 1.0,
+        warp: Default::default(),
+        disabled: false,
+        clip_loop: None,
+    };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let c = d.project().tracks[0].clips[0].id;
     (d, track, c)
@@ -18,7 +36,11 @@ fn midi_doc() -> (Document, ClipId) {
     let mut d = Document::new(Project::default());
     let inst = d.project().tracks[1].id;
     let mut clip = MidiClip::empty(PPQ, 4 * PPQ);
-    clip.notes = vec![Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 }, Note { id: 2, pitch: 64, start: PPQ, length: 2 * PPQ, velocity: 90 }, Note { id: 3, pitch: 67, start: 3 * PPQ, length: PPQ, velocity: 80 }];
+    clip.notes = vec![
+        Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 },
+        Note { id: 2, pitch: 64, start: PPQ, length: 2 * PPQ, velocity: 90 },
+        Note { id: 3, pitch: 67, start: 3 * PPQ, length: PPQ, velocity: 80 },
+    ];
     d.execute(Command::AddMidiClip { track: inst, clip }, Origin::User).unwrap();
     let c = d.project().tracks[1].midi_clips[0].id;
     (d, c)
@@ -124,7 +146,18 @@ fn disabled_clips_are_left_out_of_the_session_snapshot_and_persist() {
 // ---- Consolidate, Bounce and Export (render_plan) ----
 
 fn audio_clip(id: u64, asset: AssetId, start: Ticks, secs: u64) -> Clip {
-    Clip { id: ClipId(id), asset, name: format!("c{id}"), start, source_offset: 0, source_length: 48_000 * secs, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None }
+    Clip {
+        id: ClipId(id),
+        asset,
+        name: format!("c{id}"),
+        start,
+        source_offset: 0,
+        source_length: 48_000 * secs,
+        gain: 1.0,
+        warp: Default::default(),
+        disabled: false,
+        clip_loop: None,
+    }
 }
 
 /// Audio track with clips at beats 4-8, 6-10 (overlapping), 10-12 (touching) and 20-24 (apart);
@@ -132,7 +165,20 @@ fn audio_clip(id: u64, asset: AssetId, start: Ticks, secs: u64) -> Clip {
 fn overlap_doc() -> (Document, TrackId) {
     let mut d = Document::new(Project::default());
     let track = d.project().tracks[0].id;
-    d.execute(Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/t.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 * 10 } }, Origin::User).unwrap();
+    d.execute(
+        Command::AddAsset {
+            asset: Asset {
+                id: AssetId(0),
+                relative_path: None,
+                absolute_path: "/nonexistent/t.wav".into(),
+                sample_rate: 48_000.0,
+                channels: 2,
+                frames: 48_000 * 10,
+            },
+        },
+        Origin::User,
+    )
+    .unwrap();
     let a = d.project().assets[0].id;
     for (id, beat, secs) in [(101, 4, 2), (102, 6, 2), (103, 10, 1), (104, 20, 2)] {
         d.execute(Command::AddClip { track, clip: audio_clip(id, a, beat * PPQ, secs) }, Origin::User).unwrap();
@@ -184,10 +230,16 @@ fn render_project_keeps_one_track_and_the_chosen_clips() {
     let r = render_plan::render_project(p, &s, render_plan::RenderMode::Material);
     let t = r.track(track).unwrap();
     assert_eq!(t.clips.iter().map(|c| c.id).collect::<Vec<_>>(), vec![ClipId(101), ClipId(102)]);
-    assert!(!t.mute && !t.solo && t.gain == render_plan::CENTRE_UNITY_GAIN && t.pan == 0.0 && r.master_gain == 1.0, "unity through the centre pan law, neutral master");
+    assert!(
+        !t.mute && !t.solo && t.gain == render_plan::CENTRE_UNITY_GAIN && t.pan == 0.0 && r.master_gain == 1.0,
+        "unity through the centre pan law, neutral master"
+    );
     assert!(r.tracks.iter().filter(|o| o.id != track).all(|o| o.mute && o.clips.is_empty() && o.midi_clips.is_empty()));
     let stem = render_plan::render_project(p, &s, render_plan::RenderMode::Stem);
-    assert!(stem.track(track).unwrap().gain == 0.5 && stem.track(track).unwrap().pan == -0.5 && stem.master_gain == 0.25, "a stem keeps the mix settings");
+    assert!(
+        stem.track(track).unwrap().gain == 0.5 && stem.track(track).unwrap().pan == -0.5 && stem.master_gain == 0.25,
+        "a stem keeps the mix settings"
+    );
     assert_eq!(p.track(track).unwrap().clips.len(), 4, "the project is not touched");
 }
 
@@ -197,7 +249,8 @@ fn render_project_clears_devices_only_for_material() {
     let track = d.project().tracks[0].id;
     let dev = dstudio_core::builtin::find("reverb").expect("reverb exists").instantiate();
     d.execute(Command::AddDevice { track, index: None, device: dev }, Origin::User).unwrap();
-    let lane = AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![AutoPoint { time: 0, value: -6.0, curve: 0.0 }] };
+    let lane =
+        AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![AutoPoint { time: 0, value: -6.0, curve: 0.0 }] };
     d.execute(Command::SetAutomationLane { track: Some(track), target: AutomationTarget::Volume, lane: Some(lane) }, Origin::User).unwrap();
     let span = render_plan::ClipSpan { track, kind: TrackKind::Audio, clips: vec![], start: 0, end: PPQ };
     let p = d.project();
@@ -229,14 +282,26 @@ fn merge_midi_moves_notes_to_the_span_start_and_cuts_at_each_clip_end() {
     let m = render_plan::merge_midi(d.project(), &span).unwrap();
     assert_eq!((m.name.as_str(), m.start, m.length), ("riff merged", 4 * PPQ, 6 * PPQ));
     let got: Vec<(u8, Ticks, Ticks)> = m.notes.iter().map(|n| (n.pitch, n.start, n.length)).collect();
-    assert_eq!(got, vec![(60, 0, PPQ), (72, 2 * PPQ, PPQ), (64, 3 * PPQ, PPQ)], "the note past the clip end is dropped, the long one is cut at its clip's end");
+    assert_eq!(
+        got,
+        vec![(60, 0, PPQ), (72, 2 * PPQ, PPQ), (64, 3 * PPQ, PPQ)],
+        "the note past the clip end is dropped, the long one is cut at its clip's end"
+    );
     assert!(m.notes.iter().enumerate().all(|(i, n)| n.id == i as u32 + 1));
 }
 
 #[test]
 fn render_project_leaves_plugin_devices_off_the_other_tracks() {
     let (mut d, track) = overlap_doc();
-    let clap = PluginRef { format: PluginFormat::Clap, id: "test.plugin".into(), path: None, name: "Test".into(), vendor: String::new(), version: String::new(), kind: PluginKind::Effect };
+    let clap = PluginRef {
+        format: PluginFormat::Clap,
+        id: "test.plugin".into(),
+        path: None,
+        name: "Test".into(),
+        vendor: String::new(),
+        version: String::new(),
+        kind: PluginKind::Effect,
+    };
     let inst = d.project().tracks[1].id;
     d.execute(Command::AddDevice { track: inst, index: None, device: Device::new(clap) }, Origin::User).unwrap();
     let span = render_plan::consolidate_group(d.project(), ClipId(101)).unwrap();
@@ -275,24 +340,64 @@ fn consolidate_and_bounce_batches_are_one_undo_step() {
     let before = d.project().clone();
     let s = render_plan::consolidate_group(d.project(), ClipId(101)).unwrap();
     let p = d.project();
-    let asset = Asset { id: AssetId(500), relative_path: None, absolute_path: "/nonexistent/merged.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 * 3 };
+    let asset = Asset {
+        id: AssetId(500),
+        relative_path: None,
+        absolute_path: "/nonexistent/merged.wav".into(),
+        sample_rate: 48_000.0,
+        channels: 2,
+        frames: 48_000 * 3,
+    };
     let mut cmds = vec![Command::AddAsset { asset }];
     cmds.extend(s.clips.iter().map(|&clip| Command::RemoveClip { clip }));
-    cmds.push(Command::AddClip { track, clip: Clip { id: ClipId(501), name: render_plan::merged_name(&p.clip(s.clips[0]).unwrap().name), start: s.start, ..audio_clip(501, AssetId(500), 0, 3) } });
+    cmds.push(Command::AddClip {
+        track,
+        clip: Clip {
+            id: ClipId(501),
+            name: render_plan::merged_name(&p.clip(s.clips[0]).unwrap().name),
+            start: s.start,
+            ..audio_clip(501, AssetId(500), 0, 3)
+        },
+    });
     d.execute(Command::Batch { label: "Consolidate Clips".into(), commands: cmds }, Origin::User).unwrap();
     let ids: Vec<u64> = d.project().tracks[0].clips.iter().map(|c| c.id.0).collect();
     assert_eq!(ids, vec![501, 103, 104], "clips stay in start order");
     assert_eq!(d.project().clip(ClipId(501)).unwrap().name, "c101 merged");
     assert_eq!(d.undo_label(), Some("Consolidate Clips"));
     d.undo().unwrap();
-    assert!(d.project().tracks == before.tracks && d.project().assets == before.assets, "one undo restores clips and assets (ids are never recycled, so next_id stays)");
+    assert!(
+        d.project().tracks == before.tracks && d.project().assets == before.assets,
+        "one undo restores clips and assets (ids are never recycled, so next_id stays)"
+    );
 
     let mut bounce = Track::new(TrackId(600), TrackKind::Audio, "Audio (Bounce)", d.project().tracks[0].color);
     bounce.clips.push(audio_clip(601, AssetId(500), 4 * PPQ, 3));
-    d.execute(Command::Batch { label: "Bounce to New Track".into(), commands: vec![Command::AddAsset { asset: Asset { id: AssetId(500), relative_path: None, absolute_path: "/nonexistent/b.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 * 3 } }, Command::AddTrack { index: Some(1), track: bounce }, Command::SetClipEnabled { clip: ClipId(101), enabled: false }] }, Origin::User).unwrap();
+    d.execute(
+        Command::Batch {
+            label: "Bounce to New Track".into(),
+            commands: vec![
+                Command::AddAsset {
+                    asset: Asset {
+                        id: AssetId(500),
+                        relative_path: None,
+                        absolute_path: "/nonexistent/b.wav".into(),
+                        sample_rate: 48_000.0,
+                        channels: 2,
+                        frames: 48_000 * 3,
+                    },
+                },
+                Command::AddTrack { index: Some(1), track: bounce },
+                Command::SetClipEnabled { clip: ClipId(101), enabled: false },
+            ],
+        },
+        Origin::User,
+    )
+    .unwrap();
     assert_eq!(d.project().tracks[1].name, "Audio (Bounce)");
     assert!(d.project().clip(ClipId(101)).unwrap().disabled);
     d.undo().unwrap();
-    assert!(d.project().tracks == before.tracks && d.project().assets == before.assets, "one undo removes the track, the asset and the mute");
+    assert!(
+        d.project().tracks == before.tracks && d.project().assets == before.assets,
+        "one undo removes the track, the asset and the mute"
+    );
 }
-

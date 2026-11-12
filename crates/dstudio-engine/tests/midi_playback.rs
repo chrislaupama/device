@@ -68,9 +68,24 @@ fn midi_notes_play_through_builtin_synth_and_undo_silences_them() {
     // drift, modulation or effects, open filter, short release.
     let synth = doc.project().track(inst).unwrap().instrument_plugin.as_ref().unwrap().id;
     let plain: std::collections::BTreeMap<String, f32> = [
-        ("osc1_wave", 0.0), ("osc1_shape", 0.0), ("osc2_level", 0.0), ("sub_level", 0.0), ("unison_voices", 0.0),
-        ("drift", 0.0), ("cutoff", 20_000.0), ("resonance", 0.0), ("filter_drive", 0.0), ("filter_env", 0.0),
-        ("amp_release", 0.1), ("mod1_on", 0.0), ("mod2_on", 0.0), ("mod3_on", 0.0), ("fx1_on", 0.0), ("fx2_on", 0.0), ("fx3_on", 0.0), ("fx4_on", 0.0),
+        ("osc1_wave", 0.0),
+        ("osc1_shape", 0.0),
+        ("osc2_level", 0.0),
+        ("sub_level", 0.0),
+        ("unison_voices", 0.0),
+        ("drift", 0.0),
+        ("cutoff", 20_000.0),
+        ("resonance", 0.0),
+        ("filter_drive", 0.0),
+        ("filter_env", 0.0),
+        ("amp_release", 0.1),
+        ("mod1_on", 0.0),
+        ("mod2_on", 0.0),
+        ("mod3_on", 0.0),
+        ("fx1_on", 0.0),
+        ("fx2_on", 0.0),
+        ("fx3_on", 0.0),
+        ("fx4_on", 0.0),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -161,7 +176,8 @@ fn audio_tracks_ignore_notes_and_v2_keeps_audio_working() {
             input: None,
         }],
         master_gain: 1.0,
-        master_automation: vec![], device_assets: Default::default(),
+        master_automation: vec![],
+        device_assets: Default::default(),
     };
     engine.publish(&snap).unwrap();
     engine.play().unwrap();

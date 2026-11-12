@@ -36,10 +36,21 @@ pub struct AcDrag {
 pub enum AcDragKind {
     /// `slide` (Shift): the marker keeps its beat and the audio moves under it.
     /// `placed`: the press put it on a transient, so releasing in place keeps it.
-    Marker { source: u64, slide: bool, placed: bool },
-    Transient { from: u64, to: u64 },
-    Bpm { start: f64 },
-    Transpose { start: i32 },
+    Marker {
+        source: u64,
+        slide: bool,
+        placed: bool,
+    },
+    Transient {
+        from: u64,
+        to: u64,
+    },
+    Bpm {
+        start: f64,
+    },
+    Transpose {
+        start: i32,
+    },
 }
 
 /// Audio clip editor fields that take typed values (double-click).
@@ -197,7 +208,10 @@ impl Controller {
                 let result = engine.detect_onsets(ea).map_err(|e| e.to_string());
                 // Tempo from the same onsets (engine frames), here off the UI thread: ms per minute.
                 let tempo = result.as_ref().ok().and_then(|v| {
-                    let tr: Vec<Transient> = v.iter().map(|o| Transient { source: o.frame.max(0) as u64, strength: o.strength, percussive: o.percussive }).collect();
+                    let tr: Vec<Transient> = v
+                        .iter()
+                        .map(|o| Transient { source: o.frame.max(0) as u64, strength: o.strength, percussive: o.percussive })
+                        .collect();
                     dstudio_core::warp::estimate_bpm(&tr, rate)
                 });
                 let _ = tx.send(JobResult::Onsets { engine_asset: ea, result, tempo });
@@ -210,7 +224,10 @@ impl Controller {
         let Some(asset) = self.asset_map.iter().find(|(_, ea)| **ea == engine_asset).map(|(a, _)| *a) else { return };
         let k = self.asset_rate(asset) / self.rate;
         let list = match result {
-            Ok(v) => v.iter().map(|o| Transient { source: (o.frame as f64 * k).round().max(0.0) as u64, strength: o.strength, percussive: o.percussive }).collect(),
+            Ok(v) => v
+                .iter()
+                .map(|o| Transient { source: (o.frame as f64 * k).round().max(0.0) as u64, strength: o.strength, percussive: o.percussive })
+                .collect(),
             Err(e) => {
                 self.set_status(format!("Transient detection failed: {e}"), 4);
                 Vec::new()
@@ -302,12 +319,19 @@ impl Controller {
             0 if Self::ac_transpose_editable(&c) => {
                 self.doc.seal_coalescing();
                 let start = c.warp.transpose;
-                self.pr.ac_drag = Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Transpose { start }, moved: false });
+                self.pr.ac_drag = Some(AcDrag {
+                    view: self.pr_view(),
+                    clip: c.id,
+                    warp: c.warp.clone(),
+                    kind: AcDragKind::Transpose { start },
+                    moved: false,
+                });
             }
             1 => {
                 let Some(d) = self.pr.ac_drag.as_mut() else { return };
                 let AcDragKind::Transpose { start } = d.kind else { return };
-                let st = (start + ((dx - dy) * TRANSPOSE_PER_PT).round() as i32).clamp(-dstudio_core::warp::MAX_TRANSPOSE, dstudio_core::warp::MAX_TRANSPOSE);
+                let st = (start + ((dx - dy) * TRANSPOSE_PER_PT).round() as i32)
+                    .clamp(-dstudio_core::warp::MAX_TRANSPOSE, dstudio_core::warp::MAX_TRANSPOSE);
                 if st == d.warp.transpose {
                     return;
                 }
@@ -397,7 +421,8 @@ impl Controller {
             0 => {
                 self.doc.seal_coalescing();
                 let start = self.ac_original_bpm(&c).round();
-                self.pr.ac_drag = Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Bpm { start }, moved: false });
+                self.pr.ac_drag =
+                    Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Bpm { start }, moved: false });
             }
             1 => {
                 let Some(d) = self.pr.ac_drag.as_mut() else { return };
@@ -407,7 +432,8 @@ impl Controller {
                     return;
                 }
                 d.moved = true;
-                d.warp.original_bpm = (start + acc.round() as f64).clamp(dstudio_core::warp::MIN_ORIGINAL_BPM, dstudio_core::warp::MAX_ORIGINAL_BPM);
+                d.warp.original_bpm =
+                    (start + acc.round() as f64).clamp(dstudio_core::warp::MIN_ORIGINAL_BPM, dstudio_core::warp::MAX_ORIGINAL_BPM);
                 let (clip, w) = (d.clip, d.warp.clone());
                 self.set_clip_warp(clip, w, "Set original BPM");
             }
@@ -471,7 +497,8 @@ impl Controller {
                 // Each press is its own undo step; only its drag coalesces.
                 self.doc.seal_coalescing();
                 let now = Instant::now();
-                let double = self.pr.ac_last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
+                let double =
+                    self.pr.ac_last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
                 self.pr.ac_last_down = Some((now, x, y));
                 let view = self.pr_view();
                 if self.pr_loop_press(&view, x, y, (view.beat_at(x) * dstudio_core::PPQ as f64).round() as dstudio_core::Ticks) {
@@ -493,15 +520,33 @@ impl Controller {
                         let d = |s: u64| (view.x_of(m.clip_beat(s as f64)) - x).abs();
                         d(a.source).total_cmp(&d(b.source))
                     }) {
-                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Marker { source: k.source, slide: shift, placed: false }, moved: false });
+                        self.pr.ac_drag = Some(AcDrag {
+                            view,
+                            clip: c.id,
+                            warp: c.warp.clone(),
+                            kind: AcDragKind::Marker { source: k.source, slide: shift, placed: false },
+                            moved: false,
+                        });
                         return;
                     }
                     let tr: Vec<u64> = transients.iter().map(|t| t.source).collect();
-                    let hit = if alt { None } else { (0..tr.len()).filter(|&i| near(tr[i], TRANSIENT_SNAP)).min_by_key(|&i| (view.x_of(m.clip_beat(tr[i] as f64)) - x).abs() as i64) };
+                    let hit = if alt {
+                        None
+                    } else {
+                        (0..tr.len())
+                            .filter(|&i| near(tr[i], TRANSIENT_SNAP))
+                            .min_by_key(|&i| (view.x_of(m.clip_beat(tr[i] as f64)) - x).abs() as i64)
+                    };
                     if let Some(i) = hit {
                         let s = tr[i];
                         if shift {
-                            self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Transient { from: s, to: s }, moved: false });
+                            self.pr.ac_drag = Some(AcDrag {
+                                view,
+                                clip: c.id,
+                                warp: c.warp.clone(),
+                                kind: AcDragKind::Transient { from: s, to: s },
+                                moved: false,
+                            });
                             return;
                         }
                         // Pin it where it plays now (Cmd: with its neighbours) and drag it on: one undo step.
@@ -516,7 +561,13 @@ impl Controller {
                             return;
                         }
                         self.set_clip_warp(c.id, w.clone(), PLACE_LABEL);
-                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: w, kind: AcDragKind::Marker { source: s, slide: false, placed: true }, moved: false });
+                        self.pr.ac_drag = Some(AcDrag {
+                            view,
+                            clip: c.id,
+                            warp: w,
+                            kind: AcDragKind::Marker { source: s, slide: false, placed: true },
+                            moved: false,
+                        });
                         return;
                     }
                     let source = m.source(view.beat_at(x)).round().max(0.0) as u64;
@@ -532,7 +583,11 @@ impl Controller {
                 if y < GRID_Y {
                     return;
                 }
-                let hit = transients.iter().map(|t| t.source).filter(|&s| near(s, TRANSIENT_HIT)).min_by_key(|&s| (view.x_of(m.clip_beat(s as f64)) - x).abs() as i64);
+                let hit = transients
+                    .iter()
+                    .map(|t| t.source)
+                    .filter(|&s| near(s, TRANSIENT_HIT))
+                    .min_by_key(|&s| (view.x_of(m.clip_beat(s as f64)) - x).abs() as i64);
                 let mut w = c.warp.clone();
                 match (double, hit) {
                     (true, Some(s)) => {
@@ -547,7 +602,13 @@ impl Controller {
                         }
                     }
                     (false, Some(s)) => {
-                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Transient { from: s, to: s }, moved: false });
+                        self.pr.ac_drag = Some(AcDrag {
+                            view,
+                            clip: c.id,
+                            warp: c.warp.clone(),
+                            kind: AcDragKind::Transient { from: s, to: s },
+                            moved: false,
+                        });
                     }
                     (false, None) => {}
                 }
@@ -566,8 +627,19 @@ impl Controller {
                         // The audio moves at the local rate of the map, the marker stays put.
                         let b0 = m.clip_beat(source as f64);
                         let slope = (m.source(b0) - m.source(b0 - 1e-3)) / 1e-3;
-                        let lo = d.warp.markers.iter().rev().find(|k| k.source < source).map_or(c.source_offset as f64, |k| k.source as f64 + 1.0);
-                        let hi = d.warp.markers.iter().find(|k| k.source > source).map_or((c.source_offset + c.source_length) as f64, |k| k.source as f64 - 1.0);
+                        let lo = d
+                            .warp
+                            .markers
+                            .iter()
+                            .rev()
+                            .find(|k| k.source < source)
+                            .map_or(c.source_offset as f64, |k| k.source as f64 + 1.0);
+                        let hi = d
+                            .warp
+                            .markers
+                            .iter()
+                            .find(|k| k.source > source)
+                            .map_or((c.source_offset + c.source_length) as f64, |k| k.source as f64 - 1.0);
                         let to = (source as f64 + (beat - b0) * slope).clamp(lo, hi.max(lo)).round() as u64;
                         let Some(w) = slide(&c, &d.warp, source, to, rate) else { return };
                         d.moved = true;
@@ -584,7 +656,8 @@ impl Controller {
                         self.set_clip_warp(clip, w, if placed { PLACE_LABEL } else { "Move warp marker" });
                     }
                     AcDragKind::Transient { from, .. } => {
-                        let to = m.source(beat).round().clamp(c.source_offset as f64, (c.source_offset + c.source_length - 1) as f64) as u64;
+                        let to =
+                            m.source(beat).round().clamp(c.source_offset as f64, (c.source_offset + c.source_length - 1) as f64) as u64;
                         d.moved = d.moved || to != from;
                         d.kind = AcDragKind::Transient { from, to };
                     }
@@ -594,7 +667,10 @@ impl Controller {
             _ => {
                 if let Some(crate::pianoroll::PrDrag::Loop { orig, cur, .. }) = self.pr.drag.take() {
                     if let Some(l) = c.clip_loop.filter(|_| orig != cur) {
-                        self.execute(Command::SetClipLoop { clip: c.id, clip_loop: Some(dstudio_core::model::AudioLoop { start: cur.start, end: cur.end, ..l }) });
+                        self.execute(Command::SetClipLoop {
+                            clip: c.id,
+                            clip_loop: Some(dstudio_core::model::AudioLoop { start: cur.start, end: cur.end, ..l }),
+                        });
                     }
                     return;
                 }
@@ -652,7 +728,18 @@ mod tests {
         for &(s, b) in markers {
             assert!(warp.set_marker(s, b));
         }
-        dstudio_core::Clip { id: dstudio_core::ClipId(1), asset: dstudio_core::AssetId(1), name: String::new(), start: 0, source_offset: 0, source_length: 4 * 48_000, gain: 1.0, warp, disabled: false, clip_loop: None }
+        dstudio_core::Clip {
+            id: dstudio_core::ClipId(1),
+            asset: dstudio_core::AssetId(1),
+            name: String::new(),
+            start: 0,
+            source_offset: 0,
+            source_length: 4 * 48_000,
+            gain: 1.0,
+            warp,
+            disabled: false,
+            clip_loop: None,
+        }
     }
 
     #[test]

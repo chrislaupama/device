@@ -7,7 +7,7 @@ use dstudio_core::automation::AutomationTarget;
 use dstudio_core::builtin;
 use dstudio_core::snapshot::{ClipSnapshot, LaneSnapshot, NoteSnapshot, SessionSnapshot, TrackSnapshot};
 use dstudio_core::{AssetId, DeviceId, DeviceSample, Slice, TrackId};
-use dstudio_engine::{builtin_registry, builtin_state, builtin_state_v2, Config, Engine};
+use dstudio_engine::{Config, Engine, builtin_registry, builtin_state, builtin_state_v2};
 use std::path::Path;
 
 fn write_dc_wav(path: &Path, frames: u32, v: i16) {
@@ -93,7 +93,16 @@ impl Rig {
             mono: false,
             mute: false,
             solo: false,
-            clips: vec![ClipSnapshot { clip_id: 1, engine_asset: info.asset_id, timeline_start: 0, source_offset: 0, length: 96_000, gain: 1.0, warp: None, clip_loop: None }],
+            clips: vec![ClipSnapshot {
+                clip_id: 1,
+                engine_asset: info.asset_id,
+                timeline_start: 0,
+                source_offset: 0,
+                length: 96_000,
+                gain: 1.0,
+                warp: None,
+                clip_loop: None,
+            }],
             instrument: false,
             notes: vec![],
             automation: vec![],
@@ -186,7 +195,13 @@ fn chain_head_macro_sets_only_members_of_its_chain() {
     let mut head = builtin::find(dstudio_core::modulation::RACK_ID).unwrap().instantiate();
     head.id = DeviceId(DEV + 1);
     // Macro 1 pins the member's threshold at the top of its range (0 dB).
-    head.links.push(dstudio_core::ModLink { slot: 0, target: DeviceId(DEV), param: dstudio_core::ModParam::Builtin("threshold".into()), min: 1.0, max: 1.0 });
+    head.links.push(dstudio_core::ModLink {
+        slot: 0,
+        target: DeviceId(DEV),
+        param: dstudio_core::ModParam::Builtin("threshold".into()),
+        min: 1.0,
+        max: 1.0,
+    });
     let t = &mut rig.snap.tracks[0];
     t.devices[0].chain = Some(head.id);
     t.devices.insert(0, head);
@@ -289,7 +304,12 @@ fn drum_rig(notes: Vec<NoteSnapshot>) -> (Engine, SessionSnapshot, tempfile::Tem
         instrument_plugin: Some(dev),
         synth: None,
     };
-    let snap = SessionSnapshot { tracks: vec![track], master_gain: 1.0, master_automation: vec![], device_assets: [(AssetId(5), info.asset_id)].into() };
+    let snap = SessionSnapshot {
+        tracks: vec![track],
+        master_gain: 1.0,
+        master_automation: vec![],
+        device_assets: [(AssetId(5), info.asset_id)].into(),
+    };
     (engine, snap, dir)
 }
 
@@ -348,4 +368,3 @@ fn state_v2_blob_layout() {
     assert_eq!(f32::from_le_bytes(b[68..72].try_into().unwrap()), 0.5);
     assert_eq!(f32::from_le_bytes(b[72..76].try_into().unwrap()), -3.0);
 }
-

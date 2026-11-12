@@ -28,8 +28,8 @@ use crate::controller::{Controller, JobResult, load_and_analyse};
 use crate::dialogs::{TAIL_S, create_free_file, file_safe};
 use crate::peaks::Pyramid;
 use crate::wavgen;
-use dstudio_core::render_plan::{self, ClipSpan, RenderMode};
 use dstudio_core::automation::AutomationTarget;
+use dstudio_core::render_plan::{self, ClipSpan, RenderMode};
 use dstudio_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId, TrackKind};
 use dstudio_engine::offline::{self, OfflineError, OfflineRender, Session};
 use dstudio_engine::{AssetInfo, Engine};
@@ -155,7 +155,13 @@ pub fn reveal(path: &str) -> Result<(), String> {
 
 /// Writes `samples` (interleaved stereo) to the output and, for a new file, loads it into
 /// `engine`. A failure or a cancel leaves no file behind.
-fn write_render(engine: &Engine, samples: &[f32], rate: f64, out: &Output, cancel: &AtomicBool) -> Result<(PathBuf, Option<(AssetInfo, Pyramid)>), OfflineError> {
+fn write_render(
+    engine: &Engine,
+    samples: &[f32],
+    rate: f64,
+    out: &Output,
+    cancel: &AtomicBool,
+) -> Result<(PathBuf, Option<(AssetInfo, Pyramid)>), OfflineError> {
     let failed = |what: &Path, e: String| OfflineError::Failed(format!("{}: {e}", what.display()));
     let (path, target, bits) = match out {
         Output::New { dir, stem } => {
@@ -239,7 +245,11 @@ impl Controller {
         let body = (p.ticks_to_frames(span.end, rate) - start).max(1) as usize;
         let tail = if render_plan::rings_out(p, span.track, mode) { (TAIL_S * rate) as usize } else { 0 };
         let project = render_plan::render_project(p, span, mode);
-        let sources: Vec<Source> = span.clips.iter().filter_map(|&c| p.clip(c).cloned().map(Source::Audio).or_else(|| p.midi_clip(c).cloned().map(Source::Midi))).collect();
+        let sources: Vec<Source> = span
+            .clips
+            .iter()
+            .filter_map(|&c| p.clip(c).cloned().map(Source::Audio).or_else(|| p.midi_clip(c).cloned().map(Source::Midi)))
+            .collect();
         let job = OfflineRender { project, rate, transients: self.transients_by_asset(), start, frames: body + tail };
         let plugins = !job.plugin_devices().is_empty();
         let doc_epoch = self.doc_epoch;
@@ -412,7 +422,9 @@ impl Controller {
             return self.set_status("Still rendering. One moment.", 3);
         }
         let p = self.project();
-        let Some(span) = render_plan::consolidate_group(p, id) else { return self.set_status("Consolidate: the clip is disabled or gone", 4) };
+        let Some(span) = render_plan::consolidate_group(p, id) else {
+            return self.set_status("Consolidate: the clip is disabled or gone", 4);
+        };
         if let Some(why) = span.clips.iter().find_map(|&c| self.render_block(c, false)) {
             return self.set_status(format!("Consolidate: {why}"), 4);
         }
@@ -484,7 +496,13 @@ impl Controller {
         }
         let Some(span) = render_plan::clip_span(self.project(), id) else { return };
         let bits = if self.export.bits24 { 24 } else { 16 };
-        self.start_render(ClipOp::Export { reveal }, &span, RenderMode::Stem, Output::Export { path: path.to_path_buf(), bits }, "Exporting Audio");
+        self.start_render(
+            ClipOp::Export { reveal },
+            &span,
+            RenderMode::Stem,
+            Output::Export { path: path.to_path_buf(), bits },
+            "Exporting Audio",
+        );
     }
 
     // ---------------------------------------------------------------- landing
@@ -522,7 +540,9 @@ impl Controller {
         let rendered = match result {
             Ok(r) => r,
             Err(OfflineError::Cancelled) => return self.set_status("Render cancelled", 3),
-            Err(OfflineError::Failed(e)) => return self.set_status(format!("{} failed: {e}", if is_export { "Export" } else { "Render" }), 6),
+            Err(OfflineError::Failed(e)) => {
+                return self.set_status(format!("{} failed: {e}", if is_export { "Export" } else { "Render" }), 6);
+            }
         };
         self.clip_render.last_ms = rendered.render_ms;
         let Rendered { path, loaded, .. } = rendered;
@@ -568,7 +588,18 @@ impl Controller {
             frames: native_frames,
         };
         let clip_id = ClipId(alloc());
-        let new_clip = |name: String, start: dstudio_core::Ticks| Clip { id: clip_id, asset: asset_id, name, start: start.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None };
+        let new_clip = |name: String, start: dstudio_core::Ticks| Clip {
+            id: clip_id,
+            asset: asset_id,
+            name,
+            start: start.max(0),
+            source_offset: 0,
+            source_length: native_frames,
+            gain: 1.0,
+            warp: Default::default(),
+            disabled: false,
+            clip_loop: None,
+        };
         let mut cmds = vec![Command::AddAsset { asset }];
         let (label, track, status) = match &op {
             ClipOp::Consolidate { span } => {
@@ -579,12 +610,20 @@ impl Controller {
                 ("Consolidate Clips", span.track, format!("Consolidated {n} clip{}", if n == 1 { "" } else { "s" }))
             }
             ClipOp::Bounce { source, span } => {
-                let (Some(src), Some(index)) = (p.track(span.track), p.track_index(span.track)) else { return discard(self, "the track is gone while it rendered") };
-                let name = p.clip(*source).map(|c| c.name.clone()).or_else(|| p.midi_clip(*source).map(|c| c.name.clone())).unwrap_or_default();
+                let (Some(src), Some(index)) = (p.track(span.track), p.track_index(span.track)) else {
+                    return discard(self, "the track is gone while it rendered");
+                };
+                let name =
+                    p.clip(*source).map(|c| c.name.clone()).or_else(|| p.midi_clip(*source).map(|c| c.name.clone())).unwrap_or_default();
                 let id = TrackId(alloc());
                 let mut t = Track::new(id, TrackKind::Audio, &format!("{} (Bounce)", src.name.trim()), src.color);
                 (t.gain, t.pan) = (src.gain, src.pan);
-                t.automation = src.automation.iter().filter(|l| matches!(l.target, AutomationTarget::Volume | AutomationTarget::Pan)).cloned().collect();
+                t.automation = src
+                    .automation
+                    .iter()
+                    .filter(|l| matches!(l.target, AutomationTarget::Volume | AutomationTarget::Pan))
+                    .cloned()
+                    .collect();
                 t.clips.push(new_clip(name, span.start));
                 cmds.push(Command::AddTrack { index: Some(index + 1), track: t });
                 cmds.push(Command::SetClipEnabled { clip: *source, enabled: false });
