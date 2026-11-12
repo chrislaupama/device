@@ -1313,6 +1313,7 @@ impl Controller {
     /// Start over with `project` (no undo history). Used by `--state` setups.
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
+        self.route_menu_close(); // its items name tracks of the old project
         self.onsets.clear();
         self.tempos.clear();
         self.doc_epoch += 1;
@@ -1357,6 +1358,7 @@ impl Controller {
         };
         self.stop_return();
         self.close_all_editors();
+        self.route_menu_close(); // its items name tracks of the old project
         for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }

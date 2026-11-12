@@ -3741,6 +3741,7 @@ fn automation_steps() -> Vec<Step> {
             c.mixer_open = false;
             c.assistant_open = false;
             c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            c.open_add_track_menu(0.0, 0.0); // a new project must close it
             let mut p = dstudio_core::Project::default();
             if c.engine.device_running() {
                 p.master_gain = db_to_gain(-40.0); // the write pass plays through the device
@@ -3752,8 +3753,8 @@ fn automation_steps() -> Vec<Step> {
             c.select_track(t);
             c.import_files(vec![wav.clone()], crate::controller::ImportTarget::Selected, Some(0));
         })),
-        Check("automation: clip imported, lanes hidden, timeline at full width", Box::new(|c, a| {
-            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (win().0 - geo().timeline_x - 5.0 - 191.0)).abs() < 1.0;
+        Check("automation: clip imported, lanes hidden, timeline at full width, the add-track menu closed with the old project", Box::new(|c, a| {
+            let ok = c.routing.menu.is_none() && c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (win().0 - geo().timeline_x - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
         Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, geo().timeline_x + geo().timeline_w - 296.9, geo().timeline_y + 14.0))),
