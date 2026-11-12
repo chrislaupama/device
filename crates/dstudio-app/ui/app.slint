@@ -870,12 +870,32 @@ component Inspector inherits Rectangle {
 
     if root.tab == 0: Rectangle {
         x: 0; y: 0; width: root.width; height: root.height;
-        // Trim / Width: PLACEHOLDERS (no per-track trim/width in the model). Pan: real.
-        Knob { x: 28px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; tick-color: #ffffff; arc-color: root.value-color; }
-        Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        // Trim (dB, bipolar around 0), width (0..200 %, 100 % at the top) and mono: spec 004.
+        // A knob drag is one undo step; double-click resets.
+        Knob {
+            x: 28px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; tick-color: #ffffff; arc-color: root.value-color;
+            min-value: -24; max-value: 24; value: Studio.sel-trim; value-angle: Studio.sel-trim / 24 * 135;
+            value-changed(v) => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, v); } }
+            released => { Studio.strip-gesture-end(); }
+            reset => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, 0); Studio.strip-gesture-end(); } }
+            accessible-role: slider; accessible-label: "Trim"; accessible-value: Studio.sel-trim-text;
+            accessible-action-increment => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, min(24, Studio.sel-trim + 0.5)); Studio.strip-gesture-end(); } }
+            accessible-action-decrement => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, max(-24, Studio.sel-trim - 0.5)); Studio.strip-gesture-end(); } }
+        }
+        Text { x: 10px; y: 158px; width: 74px; height: 13px; text: Studio.sel-trim-text; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         Text { x: 10px; y: 173px; width: 74px; height: 14px; text: "Trim"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-        Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #ffffff; arc-color: root.value-color; }
-        Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Knob {
+            x: 104px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; show-arc: true; arc-from: -135; tick-color: #ffffff; arc-color: root.value-color;
+            opacity: Studio.sel-mono ? 0.45 : 1;   // mono overrides the width
+            min-value: 0; max-value: 2; value: Studio.sel-width; value-angle: -135 + Studio.sel-width / 2 * 270;
+            value-changed(v) => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, v); } }
+            released => { Studio.strip-gesture-end(); }
+            reset => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, 1); Studio.strip-gesture-end(); } }
+            accessible-role: slider; accessible-label: "Width"; accessible-value: Studio.sel-width-text;
+            accessible-action-increment => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, min(2, Studio.sel-width + 0.05)); Studio.strip-gesture-end(); } }
+            accessible-action-decrement => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, max(0, Studio.sel-width - 0.05)); Studio.strip-gesture-end(); } }
+        }
+        Text { x: 86px; y: 158px; width: 74px; height: 13px; text: Studio.sel-width-text; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         Knob {
             x: 28px; y: 191px; width: 38px; height: 38px; body: 20.5px; groove: true; arc-color: root.value-color;
@@ -886,9 +906,13 @@ component Inspector inherits Rectangle {
         }
         Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         Text { x: 10px; y: 243px; width: 74px; height: 13px; text: "Pan"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-        // Mono fold: PLACEHOLDER
-        Switch { x: 112.5px; y: 205px; on: false; }
-        Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Switch {
+            x: 112.5px; y: 205px; on: Studio.sel-mono;
+            toggled => { if (Studio.has-selection) { Studio.track-mono(Studio.sel-id); } }
+            accessible-role: checkbox; accessible-label: "Mono"; accessible-checked: Studio.sel-mono;
+            accessible-action-default => { if (Studio.has-selection) { Studio.track-mono(Studio.sel-id); } }
+        }
+        Text { x: 86px; y: 228px; width: 74px; height: 13px; text: Studio.sel-mono ? "On" : "Off"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         Text { x: 86px; y: 243px; width: 74px; height: 13px; text: "Mono"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     }
 

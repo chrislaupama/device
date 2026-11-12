@@ -283,10 +283,10 @@ impl StepPattern {
                     return Err(format!("cell {}:{} {} {v} outside {}..={}", c.key, c.step, s.label, s.min, s.max));
                 }
             }
-            if let Some(p) = i.checked_sub(1).map(|j| &self.cells[j]) {
-                if (p.key, p.step) >= (c.key, c.step) {
-                    return Err(format!("cells not sorted or duplicated at {}:{}", c.key, c.step));
-                }
+            if let Some(p) = i.checked_sub(1).map(|j| &self.cells[j])
+                && (p.key, p.step) >= (c.key, c.step)
+            {
+                return Err(format!("cells not sorted or duplicated at {}:{}", c.key, c.step));
             }
         }
         Ok(())
@@ -830,10 +830,12 @@ mod tests {
         };
         let (mut rows, mut bad) = (0, 0);
         for _ in 0..5000 {
-            let mut p = StepPattern::default();
-            p.rate = StepRate::ALL[rnd(9) as usize];
-            p.steps = STEP_COUNTS[rnd(8) as usize];
-            p.swing = rnd(5) as f32 / 4.0;
+            let mut p = StepPattern {
+                rate: StepRate::ALL[rnd(9) as usize],
+                steps: STEP_COUNTS[rnd(8) as usize],
+                swing: rnd(5) as f32 / 4.0,
+                ..Default::default()
+            };
             for _ in 0..rnd(40) {
                 let (k, st) = (pad(rnd(16) as u8), rnd(p.steps as u32) as u16);
                 if p.cell(k, st).is_some() {

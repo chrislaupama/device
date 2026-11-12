@@ -469,6 +469,20 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - The project website is https://devicedaw.github.io/. Repository ownership and documentation links changed;
   application code and CI behavior are unchanged.
 
+### 2026-11-12: channel strip trim, width and mono (spec 005)
+
+- The channel strip's Trim, Width and Mono controls work (they were placeholders). Trim is ±24 dB in 0.1 dB steps,
+  width 0-200 % (100 % unchanged), and Mono folds the track to mono whatever the width. Double-click resets a knob; a
+  held knob drag is one undo step ("Trim Change", "Width Change"; the switch is "Mono Change"). Return tracks have
+  them too. Saved per track as `trim` (dB), `width` and `mono`, left out of the file when neutral.
+- Core: `Track::trim_db` / `width` / `mono`, `Command::SetTrackTrim` / `SetTrackWidth` / `SetTrackMono`.
+  Bounce-in-place and material renders are taken before them (the track keeps its settings); stems keep them.
+- Engine: `se_session_publish_v10` adds `se_track_strip` entries (only for tracks that are not neutral). Trim, width
+  and mono fold into one 2x2 matrix per track at publish time, applied in place after the insert chain and before
+  pre-fader sends, the fader and pan (`kernel_strip`). A neutral track is untouched, bit for bit.
+- Tests: `engine/tests/test_strip.cpp`, `crates/dstudio-core/tests/strip.rs`, self-test section `strip_steps`.
+  Bench: `dstudio_engine_bench` "Channel strip" table. Review state `review-strip-trim`.
+
 ### 2026-11-12: custom plugin folders
 
 - Settings › Plugins › Add folder works (it was a placeholder): it opens a folder picker, keeps the folder in the
@@ -493,6 +507,18 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Existing `.dsproj` format, preferences/cache/project/scratch paths, executable, crate names,
   platform identities and installer AppId remain stable; see `docs/building.md` › Compatibility names.
 - Historical entries retain the name used at the time. See spec 004 for requirements and verification.
+
+### 2026-11-12: return tracks and sends in the Live set export (spec 006)
+
+- Export › Project now writes return tracks and sends into the Live set (they were dropped). Each return is a Live
+  return track with its volume, pan and on/off state; every track has one send per return at its level. A track whose
+  Out is a return is "Sends Only" with a full send. Tracks are still rendered dry.
+- A return with devices that a playing track feeds is also rendered (wet) onto "<return> (rendered)", and its Live
+  return is written turned off so nothing sounds twice. `stem_snapshot` given a return solos it for that pass.
+- Approximations, each listed per track in the notes file: sends above 0 dB are set to 0 dB (Live's maximum), and a
+  pre-fader send on a rendered track becomes post-fader with its level divided by the track volume.
+- `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
+  list. Not yet opened in Live itself (spec 006, T5).
 
 ### 2026-11-12: making MIDI clips from the timeline
 

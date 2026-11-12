@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(t.midi_clips.len(), before + 1);
         let c = t.midi_clips.iter().find(|c| c.notes.len() == 1 && c.notes[0].start == PPQ).unwrap();
         assert_eq!(c.length, 8 * PPQ);
-        assert_eq!(doc.undo_label().as_deref(), Some("Record"));
+        assert_eq!(doc.undo_label(), Some("Record"));
         assert!(doc.undo().unwrap());
         assert_eq!(doc.project().track(inst).unwrap().midi_clips.len(), before);
     }

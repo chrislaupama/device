@@ -583,6 +583,26 @@ pub struct se_session_desc_v9 {
     pub sends: *const se_send_desc,
 }
 
+// ---- channel strip: trim, width and mono (se_session_publish_v10)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_track_strip {
+    pub track_id: u64,
+    pub trim: f32,
+    pub width: f32,
+    pub mono: u8,
+    pub _pad: [u8; 7],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v10 {
+    pub v9: se_session_desc_v9,
+    pub strips: *const se_track_strip,
+    pub strip_count: u32,
+    pub _pad: u32,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct se_onset {
@@ -916,6 +936,7 @@ unsafe extern "C" {
     pub fn se_session_publish_v7(engine: *mut se_engine, session: *const se_session_desc_v7) -> i32;
     pub fn se_session_publish_v8(engine: *mut se_engine, session: *const se_session_desc_v8) -> i32;
     pub fn se_session_publish_v9(engine: *mut se_engine, session: *const se_session_desc_v9) -> i32;
+    pub fn se_session_publish_v10(engine: *mut se_engine, session: *const se_session_desc_v10) -> i32;
     pub fn se_warp_renders_pending(engine: *const se_engine, out_count: *mut usize) -> i32;
     pub fn se_asset_detect_onsets(engine: *mut se_engine, asset_id: u64, out: *mut se_onset, capacity: usize, out_count: *mut usize)
     -> i32;
@@ -1369,6 +1390,10 @@ mod abi_layout {
             ],
             [64, 72, 76, 80]
         );
+        assert_eq!((size_of::<se_track_strip>(), align_of::<se_track_strip>()), (24, 8));
+        assert_eq!([offset_of!(se_track_strip, trim), offset_of!(se_track_strip, width), offset_of!(se_track_strip, mono)], [8, 12, 16]);
+        assert_eq!((size_of::<se_session_desc_v10>(), align_of::<se_session_desc_v10>()), (104, 8));
+        assert_eq!([offset_of!(se_session_desc_v10, strips), offset_of!(se_session_desc_v10, strip_count)], [88, 96]);
         assert_eq!([offset_of!(se_onset, strength), offset_of!(se_onset, percussive)], [8, 12]);
         assert_eq!((size_of::<se_plugin_param_info>(), align_of::<se_plugin_param_info>()), (272, 4));
         assert_eq!(

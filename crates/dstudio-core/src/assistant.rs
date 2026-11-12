@@ -30,6 +30,7 @@ pub enum Mode {
 /// One action proposed by the model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant, reason = "a handful per assistant turn; `Edit` holds a `Command`, see its note")]
 pub enum AssistantAction {
     /// Any validated edit command (see `Command`).
     Edit { command: Command },
@@ -288,6 +289,11 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
                 format!("{:.0}% {}", pan.abs() * 100.0, if *pan < 0.0 { "left" } else { "right" })
             };
             format!("Panned {} {}.", track_name(after, *track), side)
+        }
+        Command::SetTrackTrim { track, trim_db } => format!("Set {} trim to {trim_db:+.1} dB.", track_name(after, *track)),
+        Command::SetTrackWidth { track, width } => format!("Set {} width to {:.0}%.", track_name(after, *track), width * 100.0),
+        Command::SetTrackMono { track, mono } => {
+            format!("Turned mono {} on {}.", if *mono { "on" } else { "off" }, track_name(after, *track))
         }
         Command::SetTrackMute { track, mute } => format!("{} {}.", if *mute { "Muted" } else { "Unmuted" }, track_name(after, *track)),
         Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),

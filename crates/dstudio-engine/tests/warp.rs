@@ -50,7 +50,7 @@ impl Rig {
         let engine = Engine::new(Config { sample_rate: RATE, max_block_size: 512 }).unwrap();
         let mut doc = Document::new(Project::default());
         let info = engine.load_file(path).unwrap();
-        let frames = info.frames as u64;
+        let frames = info.frames;
         doc.execute(
             Command::AddAsset {
                 asset: Asset {

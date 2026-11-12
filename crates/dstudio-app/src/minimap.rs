@@ -116,7 +116,7 @@ pub fn bars(tracks: &[TrackInfo], clips: &[ClipVis], map_end: f64) -> Vec<Bar> {
         return Vec::new();
     }
     let row = (HEIGHT - 2.0 * PAD) / tracks.len() as f32;
-    let h = (row * BAND_FILL).min(BAND_MAX).max(1.0);
+    let h = (row * BAND_FILL).clamp(1.0, BAND_MAX);
     clips
         .iter()
         .filter_map(|c| {

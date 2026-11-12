@@ -248,6 +248,7 @@ fn span(c: roxmltree::Node) -> Result<Span, String> {
         loop_end: number(c, "Loop/LoopEnd")?,
         start_relative: number(c, "Loop/StartRelative").unwrap_or(0.0),
     };
+    #[allow(clippy::neg_cmp_op_on_partial_ord, reason = "NaN bounds must be rejected too")]
     if !(s.end > s.start) || !(s.loop_end > s.loop_start || !s.loop_on) {
         return Err(format!("clip {} has an empty span", c.attribute("Id").unwrap_or("?")));
     }
@@ -887,6 +888,7 @@ mod tests {
             loop_on: true,
             loop_start: 8.0,
             loop_length: 16.0,
+            returns: Vec::new(),
             tracks: vec![
                 SetTrack {
                     name: "Break".into(),
@@ -894,6 +896,8 @@ mod tests {
                     on: true,
                     volume: 0.5,
                     pan: 0.25,
+                    sends: Vec::new(),
+                    sends_only: false,
                     content: SetContent::Audio(vec![SetAudioClip {
                         name: "break".into(),
                         start: 4.0,
@@ -912,6 +916,8 @@ mod tests {
                     on: false,
                     volume: 1.0,
                     pan: 0.0,
+                    sends: Vec::new(),
+                    sends_only: false,
                     content: SetContent::Midi(vec![SetMidiClip {
                         name: "chords".into(),
                         start: 2.0,

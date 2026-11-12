@@ -53,7 +53,8 @@ wgpu.
   compensation is measured with an acoustic loopback test, not guessed.
 - **MIDI input.** Plug in a MIDI keyboard, arm (R) or monitor (I) instrument tracks to play them, and record
   what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
-- **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Return
+- **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Each
+  track's channel strip adds a trim (±24 dB), a stereo width knob (0 to 200 %) and a mono switch. Return
   tracks share one effect between many tracks: send any track to them pre- or post-fader, or route its output into
   one, and delay compensation keeps the direct and the returned signal aligned.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
@@ -69,7 +70,7 @@ wgpu.
   record your moves with touch-write.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
   (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
-  seamlessly), or export the project as an Ableton Live set.
+  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It uses your own Anthropic API key.

@@ -361,6 +361,10 @@ Semantics:
 * **Pan**: constant power, `θ = (pan + 1)·π/4`, `L = cos θ`, `R = sin θ`
   (centre = −3.01 dB each side, `L² + R² = 1`, hard pans are exact 1/0).
   For stereo material it acts as a balance control (L gain on the L channel).
+* **Trim, width, mono** (`se_session_publish_v10`, spec 005): after the insert chain, before pre-fader sends and
+  the fader, a listed track's signal is scaled by `trim` and its side signal `(L − R)/2` by `width` around the mid
+  `(L + R)/2` (`mono` = width 0). Folded at publish time into `L' = aL + bR`, `R' = bL + aR`
+  (`a = trim·(1 + w)/2`, `b = trim·(1 − w)/2`); an unlisted or neutral track is not touched.
 * **Mute/solo**: if any track is soloed, only soloed tracks are audible.
   Mute always wins (a soloed and muted track is silent).
 * **Master**: sum of tracks (and return tracks, see
@@ -1379,11 +1383,11 @@ there it runs like any track: insert chain, fader, pan, meters, automation.
 
 ```
 ordinary track:
-  source ─ chain ─ [main line] ─┬─ pre-fader sends ─[edge line]─▶ return bus
-                                └─ fader/pan ─┬─ post-fader sends ─[edge line]─▶ return bus
-                                              └─ output ─[edge line]─▶ master or a return bus
+  source ─ chain ─ [main line] ─ strip ─┬─ pre-fader sends ─[edge line]─▶ return bus
+                                        └─ fader/pan ─┬─ post-fader sends ─[edge line]─▶ return bus
+                                                      └─ output ─[edge line]─▶ master or a return bus
 return track:
-  bus ─ chain ─ [main line] ─ fader/pan ─▶ master
+  bus ─ chain ─ [main line] ─ strip ─ fader/pan ─▶ master
 ```
 
 **Order.** Processing order is a topological sort over routing edges (track → return) and sidechain edges.

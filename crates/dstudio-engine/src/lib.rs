@@ -237,7 +237,7 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v9`: return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
+    /// (`se_session_publish_v10`: channel-strip trim, width and mono (spec 005); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -435,15 +435,23 @@ impl Engine {
             loop_count: loop_descs.len() as u32,
             _pad: 0,
         };
-        let desc = ffi::se_session_desc_v9 {
+        let v9 = ffi::se_session_desc_v9 {
             v8,
             routes: routes.as_ptr(),
             route_count: routes.len() as u32,
             send_count: sends.len() as u32,
             sends: sends.as_ptr(),
         };
+        // Channel strip (spec 005): only tracks whose trim, width or mono change the signal.
+        let strips: Vec<ffi::se_track_strip> = s
+            .tracks
+            .iter()
+            .filter(|t| t.trim != 1.0 || t.width != 1.0 || t.mono)
+            .map(|t| ffi::se_track_strip { track_id: t.track_id, trim: t.trim, width: t.width, mono: t.mono as u8, _pad: [0; 7] })
+            .collect();
+        let desc = ffi::se_session_desc_v10 { v9, strips: strips.as_ptr(), strip_count: strips.len() as u32, _pad: 0 };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v9(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v10(self.raw, &desc) })
     }
 
     fn device_store(
@@ -922,8 +930,8 @@ pub struct DeviceStatus {
     pub buffer_size: u32,
     pub input_channels: u32,
     pub output_channels: u32,
-    /// Input-side latency in engine frames (device + safety offset + stream
-    /// + one buffer). Recorded takes are compensated by
+    /// Input-side latency in engine frames (device, safety offset, stream
+    /// and one buffer). Recorded takes are compensated by
     /// `input_latency_frames + output_latency_frames`.
     pub input_latency_frames: u32,
     pub output_latency_frames: u32,
@@ -1040,7 +1048,7 @@ impl Engine {
     /// .input_name` is `None`, [`Engine::input_error`] says why, and a
     /// running restart returns `SE_ERR_DEVICE` with that message.
     pub fn configure_device(&self, cfg: &DeviceConfig) -> Result<(), EngineError> {
-        let out = cfg.output.as_deref().map(|s| CString::new(s)).transpose().map_err(|_| nul_error())?;
+        let out = cfg.output.as_deref().map(CString::new).transpose().map_err(|_| nul_error())?;
         let input_enabled = cfg.input.is_some();
         let inp = cfg.input.as_deref().filter(|s| !s.is_empty()).map(CString::new).transpose().map_err(|_| nul_error())?;
         let c = ffi::se_device_config {
@@ -1901,6 +1909,9 @@ mod tests {
                     sends: Vec::new(),
                     gain: 1.0,
                     pan: 0.0,
+                    trim: 1.0,
+                    width: 1.0,
+                    mono: false,
                     mute: false,
                     solo: false,
                     clips: vec![],
@@ -1931,6 +1942,9 @@ mod tests {
                 sends: Vec::new(),
                 gain: 1.0,
                 pan: 0.0,
+                trim: 1.0,
+                width: 1.0,
+                mono: false,
                 mute: false,
                 solo: false,
                 clips: vec![],

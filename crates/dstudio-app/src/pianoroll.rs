@@ -443,7 +443,7 @@ const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
 /// beat is not a multiple of twice the step) until its lines are 16 px (at 100% zoom) apart. `None`
 /// when that reaches a beat, then only beat and bar lines remain.
 pub fn sub_step(grid_beats: f64, beat_len: f64, ppb_ref: f64) -> Option<f64> {
-    if !(grid_beats > 0.0) {
+    if grid_beats.is_nan() || grid_beats <= 0.0 {
         return None;
     }
     let mut r = grid_beats;
@@ -800,10 +800,9 @@ fn paint_velocity(notes: &mut [Note], ids: &BTreeSet<u32>, v: &PrView, a: f32, b
 
 /// Renumber `extra` notes so their ids don't collide with `existing`.
 fn renumber(existing: &[Note], extra: &mut [Note]) {
-    let mut next = existing.iter().map(|n| n.id + 1).max().unwrap_or(1);
-    for n in extra {
-        n.id = next;
-        next += 1;
+    let first = existing.iter().map(|n| n.id + 1).max().unwrap_or(1);
+    for (n, id) in extra.iter_mut().zip(first..) {
+        n.id = id;
     }
 }
 

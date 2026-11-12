@@ -15,7 +15,7 @@ One change per pull request, on a branch from the latest `main`. Spec-driven wor
 ## 2. The local gate
 
 ```sh
-cargo fmt --all --check && cargo clippy --workspace
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd engine && cmake --preset default && cmake --build --preset default && ctest --preset default
 cargo run --release -p dstudio-app -- --self-test --no-audio

@@ -121,7 +121,7 @@ fn cdiv(a: f64, b: f64, c: f64, d: f64) -> (f64, f64) {
 pub fn butterworth_qs(order: u32) -> (Vec<f64>, bool) {
     let n = order.max(1);
     // Pole angles from the negative real axis: (2i - 1) pi / 2n (even), i pi / n (odd).
-    let angle = |i: u32| if n % 2 == 0 { (2 * i - 1) as f64 * PI / (2 * n) as f64 } else { i as f64 * PI / n as f64 };
+    let angle = |i: u32| if n.is_multiple_of(2) { (2 * i - 1) as f64 * PI / (2 * n) as f64 } else { i as f64 * PI / n as f64 };
     let mut qs: Vec<f64> = (1..=n / 2).map(|i| 1.0 / (2.0 * angle(i).cos())).collect();
     qs.sort_by(|a, b| b.total_cmp(a));
     (qs, n % 2 == 1)
@@ -504,7 +504,7 @@ impl EqView {
             .unwrap_or(12.0);
         let mut gain_db = value(d.gain);
         if with_dyn && d.dyn_on.is_some_and(|p| value(p) >= 0.5) {
-            gain_db += d.dyn_range.map_or(0.0, |p| value(p));
+            gain_db += d.dyn_range.map_or(0.0, value);
         }
         let b = Band {
             shape,
@@ -514,7 +514,7 @@ impl EqView {
             slope_db,
             prop_q: d.prop_q.is_some_and(|p| value(p) >= 0.5),
             overshoot: d.overshoot.map_or(0.0, |p| value(p) / 100.0),
-            low_atten_db: d.low_atten.map_or(0.0, |p| value(p)),
+            low_atten_db: d.low_atten.map_or(0.0, value),
         };
         match self.bank {
             Some(p) => bank(value(p)).voice(b),
@@ -541,6 +541,7 @@ pub fn choice_number(name: &str) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::FRAC_1_SQRT_2;
 
     const FS: f64 = 48_000.0;
 
@@ -560,19 +561,19 @@ mod tests {
     #[test]
     fn shelves_reach_their_gain_and_split_by_slope() {
         for slope in [6.0, 12.0, 18.0, 24.0] {
-            let mut ls = Band::new(Shape::LowShelf, 200.0, 9.0, 0.7071);
+            let mut ls = Band::new(Shape::LowShelf, 200.0, 9.0, FRAC_1_SQRT_2);
             ls.slope_db = slope;
             assert!((band_db(&ls, 20.0, FS) - 9.0).abs() < 0.6, "low shelf {slope}: {}", band_db(&ls, 20.0, FS));
             assert!(band_db(&ls, 15_000.0, FS).abs() < 0.1);
-            let mut hs = Band::new(Shape::HighShelf, 2000.0, -6.0, 0.7071);
+            let mut hs = Band::new(Shape::HighShelf, 2000.0, -6.0, FRAC_1_SQRT_2);
             hs.slope_db = slope;
             assert!((band_db(&hs, 20_000.0, FS) + 6.0).abs() < 0.6, "high shelf {slope}: {}", band_db(&hs, 20_000.0, FS));
             assert!(band_db(&hs, 20.0, FS).abs() < 0.05);
             assert!((band_db(&ls, 200.0, FS) - 4.5).abs() < 0.6, "low shelf {slope} corner {}", band_db(&ls, 200.0, FS));
         }
-        let mut steep = Band::new(Shape::LowShelf, 200.0, 9.0, 0.7071);
+        let mut steep = Band::new(Shape::LowShelf, 200.0, 9.0, FRAC_1_SQRT_2);
         steep.slope_db = 24.0;
-        let gentle = Band::new(Shape::LowShelf, 200.0, 9.0, 0.7071);
+        let gentle = Band::new(Shape::LowShelf, 200.0, 9.0, FRAC_1_SQRT_2);
         assert!(band_db(&steep, 100.0, FS) > band_db(&gentle, 100.0, FS), "steeper shelves reach full gain sooner");
     }
 
@@ -599,7 +600,7 @@ mod tests {
         let n = Band::new(Shape::Notch, 1000.0, 0.0, 2.0);
         assert!(band_db(&n, 1000.0, FS) < -100.0);
         assert!(band_db(&n, 100.0, FS).abs() < 0.1);
-        let mut d = Band::new(Shape::DualLow, 60.0, 8.0, 0.7071);
+        let mut d = Band::new(Shape::DualLow, 60.0, 8.0, FRAC_1_SQRT_2);
         d.low_atten_db = 6.0;
         let deep = band_db(&d, 20.0, FS);
         assert!(deep < 8.0 && deep > 0.0, "boost minus cut at the bottom ({deep})");
@@ -612,9 +613,9 @@ mod tests {
         let wide = band_db(&b, 1500.0, FS);
         b.prop_q = true;
         assert!(band_db(&b, 1500.0, FS) < wide, "proportional Q narrows a strong bell");
-        let mut s = Band::new(Shape::LowShelf, 100.0, 6.0, 0.7071);
+        let mut s = Band::new(Shape::LowShelf, 100.0, 6.0, FRAC_1_SQRT_2);
         s.overshoot = 1.0;
-        assert!(band_db(&s, 160.0, FS) < band_db(&Band::new(Shape::LowShelf, 100.0, 6.0, 0.7071), 160.0, FS));
+        assert!(band_db(&s, 160.0, FS) < band_db(&Band::new(Shape::LowShelf, 100.0, 6.0, FRAC_1_SQRT_2), 160.0, FS));
         assert_eq!(sections(&s, FS).len(), 2);
     }
 
@@ -623,12 +624,12 @@ mod tests {
     /// if these change, the panel and the engine drift apart.
     #[test]
     fn engine_contract_points() {
-        let mut a = Band::new(Shape::LowShelf, 200.0, 9.0, 0.7071);
+        let mut a = Band::new(Shape::LowShelf, 200.0, 9.0, FRAC_1_SQRT_2);
         a.slope_db = 18.0;
         a.overshoot = 0.5;
         let mut b = Band::new(Shape::HighPass, 1000.0, 0.0, 2.0);
         b.slope_db = 36.0;
-        let mut c = Band::new(Shape::DualLow, 60.0, 8.0, 0.7071);
+        let mut c = Band::new(Shape::DualLow, 60.0, 8.0, FRAC_1_SQRT_2);
         c.low_atten_db = 6.0;
         let mut d = Band::new(Shape::Bell, 2500.0, -7.5, 1.3);
         d.prop_q = true;
@@ -658,7 +659,7 @@ mod tests {
 
     #[test]
     fn auto_gain_cancels_the_average() {
-        let s = sections(&Band::new(Shape::HighShelf, 1000.0, 12.0, 0.7071), FS);
+        let s = sections(&Band::new(Shape::HighShelf, 1000.0, 12.0, FRAC_1_SQRT_2), FS);
         let g = auto_gain_db(&s, FS);
         assert!(g < -3.0 && g > -12.0, "{g}");
         assert_eq!(auto_gain_db(&[], FS), 0.0);

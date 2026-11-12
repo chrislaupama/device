@@ -530,7 +530,7 @@ fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, strip: Strip, w: f32, wh: f32)
     // Curves through every 3 pt or so (the newest point always kept): denser cubic traces cost
     // render time without a visible difference.
     let step = ((3.0 * Z) / (w / (HISTORY - 1) as f32)).ceil().max(1.0) as usize;
-    let kept = |i: usize| (n - 1 - i) % step == 0 || i == 0;
+    let kept = |i: usize| (n - 1 - i).is_multiple_of(step) || i == 0;
     let input: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.0))).collect();
     let output: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.1))).collect();
     let audible = |v: &[(f32, f32)]| v.iter().any(|p| p.1 < wh - 0.5);
@@ -1060,7 +1060,6 @@ impl Controller {
             second_label: s(q.map_or("", |q| q.label)),
             second_value: s(q.map(|q| q.format(second)).unwrap_or_default()),
             second_rate: q.map_or(0.0, |q| span / wh / (q.max - q.min)),
-            ..Default::default()
         }
     }
 
@@ -1680,11 +1679,9 @@ impl Controller {
                 let _ = self.engine.builtin_set_param(device.0, i as u32, p.max);
                 self.ui_dirty = true;
             }
-            2 => {
-                if self.devices.panel.held.take().is_some() {
-                    let _ = self.engine.builtin_set_param(device.0, i as u32, p.min);
-                    self.ui_dirty = true;
-                }
+            2 if self.devices.panel.held.take().is_some() => {
+                let _ = self.engine.builtin_set_param(device.0, i as u32, p.min);
+                self.ui_dirty = true;
             }
             _ => {}
         }
@@ -1820,6 +1817,46 @@ impl Controller {
             commands.push(Command::SetDeviceParam { device, param: p.id.into(), value: if source.is_some() { 1.0 } else { 0.0 } });
         }
         self.execute(Command::Batch { label: "Sidechain Change".into(), commands });
+    }
+}
+
+impl Controller {
+    /// A parameter menu row: Bank re-snaps the EQ bands; a type menu that
+    /// shares a mode switch also leaves the mode (Auto Filter: DJ -> Filter).
+    pub(crate) fn panel_pick_param(&mut self, device: DeviceId, param: usize, value: f32) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let Some(p) = def.params.get(param) else { return };
+        if let Some(View::Eq(v)) = def.layout.view
+            && v.bank == Some(p.id)
+        {
+            return self.panel_pick_bank(device, param, value);
+        }
+        let mode = def.layout.picker.iter().find_map(|c| match c {
+            Control::ModeDropdown { param: q, mode } if *q == p.id => def.param(mode),
+            _ => None,
+        });
+        let mut commands = vec![Command::SetDeviceParam { device, param: p.id.into(), value }];
+        if let Some(m) = mode.filter(|m| def.value(d, m) >= 0.5) {
+            commands.push(Command::SetDeviceParam { device, param: m.id.into(), value: 0.0 });
+        } else if def.value(d, p) == value {
+            return;
+        }
+        self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
+    }
+
+    /// The mode entry of a type menu: switches the mode on. Entering Auto
+    /// Filter's DJ mode with no resonance gives it a little, so the sweep is audible.
+    pub(crate) fn panel_pick_mode(&mut self, device: DeviceId, mode: usize) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let Some(m) = def.params.get(mode) else { return };
+        if def.value(d, m) >= 0.5 {
+            return;
+        }
+        let mut commands = vec![Command::SetDeviceParam { device, param: m.id.into(), value: 1.0 }];
+        if let Some(r) = def.param("resonance").filter(|r| def.value(d, r) <= 0.0) {
+            commands.push(Command::SetDeviceParam { device, param: r.id.into(), value: DJ_RESONANCE });
+        }
+        self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
     }
 }
 
@@ -1992,45 +2029,5 @@ mod tests {
         assert_eq!(dashes(0.0, 10.0, 5.0, 6.0, 5.0), "M0.00 5.00 L6.00 5.00 ");
         assert_eq!(fmt_db(-0.02), "0.0 dB");
         assert_eq!(fmt_db(-3.26), "\u{2212}3.3 dB");
-    }
-}
-
-impl Controller {
-    /// A parameter menu row: Bank re-snaps the EQ bands; a type menu that
-    /// shares a mode switch also leaves the mode (Auto Filter: DJ -> Filter).
-    pub(crate) fn panel_pick_param(&mut self, device: DeviceId, param: usize, value: f32) {
-        let Some((d, def)) = self.panel_def(device) else { return };
-        let Some(p) = def.params.get(param) else { return };
-        if let Some(View::Eq(v)) = def.layout.view
-            && v.bank == Some(p.id)
-        {
-            return self.panel_pick_bank(device, param, value);
-        }
-        let mode = def.layout.picker.iter().find_map(|c| match c {
-            Control::ModeDropdown { param: q, mode } if *q == p.id => def.param(mode),
-            _ => None,
-        });
-        let mut commands = vec![Command::SetDeviceParam { device, param: p.id.into(), value }];
-        if let Some(m) = mode.filter(|m| def.value(d, m) >= 0.5) {
-            commands.push(Command::SetDeviceParam { device, param: m.id.into(), value: 0.0 });
-        } else if def.value(d, p) == value {
-            return;
-        }
-        self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
-    }
-
-    /// The mode entry of a type menu: switches the mode on. Entering Auto
-    /// Filter's DJ mode with no resonance gives it a little, so the sweep is audible.
-    pub(crate) fn panel_pick_mode(&mut self, device: DeviceId, mode: usize) {
-        let Some((d, def)) = self.panel_def(device) else { return };
-        let Some(m) = def.params.get(mode) else { return };
-        if def.value(d, m) >= 0.5 {
-            return;
-        }
-        let mut commands = vec![Command::SetDeviceParam { device, param: m.id.into(), value: 1.0 }];
-        if let Some(r) = def.param("resonance").filter(|r| def.value(d, r) <= 0.0) {
-            commands.push(Command::SetDeviceParam { device, param: r.id.into(), value: DJ_RESONANCE });
-        }
-        self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
     }
 }

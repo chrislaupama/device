@@ -20,6 +20,11 @@
 //!              [--card-accent <RRGGBB>  (device cards in that colour, e.g. white as on the Master track)]
 //! ```
 
+// Drawing and layout code passes geometry, colours and state as plain arguments and keeps
+// per-widget closures and tuples inline; splitting those into structs and type aliases
+// would add names without making the code clearer.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// With `review-clip-bounce-menu`: the audio clip menu opens with its Bounce submenu showing.
 static CLIP_MENU_BOUNCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -189,6 +194,9 @@ struct Args {
     /// and B pre-fader, Instrument to A), the mixer open with the Sends sections expanded.
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
     returns_review: u8,
+    /// review-strip-trim: the default project, Audio selected, its channel strip at -6.0 dB trim,
+    /// 150 % width, mono on (spec 005).
+    strip_review: bool,
     /// review-transport-sig / review-transport-key: tempo 97.5, 6/8 and A minor set, with the
     /// transport bar's Sig menu (1) or key picker (2) open.
     transport_review: u8,
@@ -507,6 +515,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.returns_review = 2;
                 }
+                "review-strip-trim" => {
+                    a.reference_default = true;
+                    a.strip_review = true;
+                }
                 "review-track-rename" => {
                     a.reference_default = true;
                     a.track_rename_review = true;
@@ -561,7 +573,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1957,6 +1969,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    if args.strip_review {
+        let mut c = ctl.borrow_mut();
+        let audio = c.project().tracks[0].id;
+        c.set_track_trim(audio, -6.0);
+        c.strip_gesture_end();
+        c.set_track_width(audio, 1.5);
+        c.strip_gesture_end();
+        c.toggle_track_mono(audio);
+        c.select_track(audio);
+    }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,
         // recording from bar 2 with 3 s of a decaying 220 Hz tone rendered so far.
@@ -2217,10 +2239,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Typing in a name field only records the draft: no model push per keystroke.
         let ctl2 = ctl.clone();
         studio.on_track_rename_draft(move |id, t, epoch| {
-            if let Ok(mut c) = ctl2.try_borrow_mut() {
-                if epoch == c.doc_epoch as i32 {
-                    c.rename_draft = Some((TrackId(id as u64), t.to_string()));
-                }
+            if let Ok(mut c) = ctl2.try_borrow_mut()
+                && epoch == c.doc_epoch as i32
+            {
+                c.rename_draft = Some((TrackId(id as u64), t.to_string()));
             }
         });
         let ctl2 = ctl.clone();
@@ -2235,6 +2257,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.set_track_pan(TrackId(id as u64), p);
         }
     });
+    on!(on_track_trim, |c, id: i32, db: f32| {
+        c.set_track_trim(TrackId(id as u64), db);
+    });
+    on!(on_track_width, |c, id: i32, w: f32| {
+        c.set_track_width(TrackId(id as u64), w);
+    });
+    on!(on_track_mono, |c, id: i32| {
+        c.toggle_track_mono(TrackId(id as u64));
+    });
+    on!(on_strip_gesture_end, |c| c.strip_gesture_end());
     on!(on_master_volume, |c, p: f32| c.set_master_gain(gain_from_slider(p)));
     on!(on_sel_fader_moved, |c, f: f32| {
         if let Some(t) = c.selected_track {
@@ -3339,7 +3371,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
-            let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
+            let median = if n.is_multiple_of(2) { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
             println!(
                 "{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3},\"update_ui_mean_ms\":{:.3}}}",
                 ms[(n * 95 / 100).min(n - 1)],

@@ -476,6 +476,9 @@ impl Controller {
                 sends: Vec::new(),
                 gain: 1.0,
                 pan: 0.0,
+                trim: 1.0,
+                width: 1.0,
+                mono: false,
                 mute: false,
                 solo: false,
                 clips: vec![ClipSnapshot {

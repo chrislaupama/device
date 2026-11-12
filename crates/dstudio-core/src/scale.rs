@@ -133,8 +133,8 @@ impl ClipScale {
 /// pitches of any notes outside the scale.
 pub fn fold_rows(key: ScaleKey, note_pitches: impl IntoIterator<Item = u8>) -> Vec<u8> {
     let mut show = [false; 128];
-    for p in 0..128 {
-        show[p] = key.contains(p as i32);
+    for (p, shown) in show.iter_mut().enumerate() {
+        *shown = key.contains(p as i32);
     }
     for p in note_pitches {
         show[p as usize & 127] = true;
