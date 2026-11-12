@@ -290,9 +290,10 @@ export struct MixerStrip {
     send-count: int,
 }
 export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 (silent)
-// One send (src/routing.rs): sender track id, its row among the sender's sends, the return
-// (id, letter, name, colour), level as a volume-slider position 0..1 with readouts, pre-fader.
-export struct SendRow { track: int, row: int, target: int, letter: string, name: string, color: color, pos: float, db-text: string, short-text: string, pre: bool }
+// One send slot (src/routing.rs): sender track id, the return's row among the returns, the return
+// (id, letter, name, colour), level as a volume-slider position 0..1 with readouts, pre-fader;
+// stored: a send is stored for the slot (else it is silent); live: it is stored and above −∞.
+export struct SendRow { track: int, row: int, target: int, letter: string, name: string, color: color, pos: float, db-text: string, short-text: string, pre: bool, stored: bool, live: bool }
 
 // ---- assistant panel ----
 // kind: 0 user, 1 assistant reply, 2 error, 3 pending
@@ -825,14 +826,15 @@ export global Studio {
     in property <bool> returns-shown;             // Timeline Returns pill lit (return rows show)
     in property <length> pinned-h;                 // height of the pinned return rows
     in property <bool> sends-open;                 // mixer Sends sections expanded
-    in property <[SendRow]> strip-sends;           // every strip's sends (rows name their sender)
-    in property <int> strip-sends-max;             // most sends on one track (expanded section rows)
+    in property <[SendRow]> strip-sends;           // every strip's send slots (rows name their sender)
+    in property <int> strip-sends-max;             // send slots per track: the number of returns
     in property <bool> sel-return;                 // the selected track is a return track
     in property <string> sel-letter;
     in property <string> sel-out-text: "Master";
-    in property <[SendRow]> sel-sends;             // channel strip Sends tab
+    in property <[SendRow]> sel-sends;             // channel strip Sends tab: one slot per return
     in property <bool> sel-can-send;
-    in property <bool> route-menu-open;            // add send / Out / Add track menu
+    in property <bool> can-add-return: true;       // fewer than the most return tracks
+    in property <bool> route-menu-open;            // send options / Out / Add track menu
     in property <[ChoiceItem]> route-menu-items;
     in property <length> route-menu-x;
     in property <length> route-menu-y;
@@ -840,7 +842,9 @@ export global Studio {
     in property <length> route-menu-h: 48px;
     callback toggle-returns();
     callback toggle-sends-open();
-    callback open-send-menu(int, length, length);  // track id, anchor x, y (window)
+    callback sends-add-return(int);                // "+" beside Sends: a new return track (track id stays selected)
+    callback send-new-return(int);                 // "Return A" placeholder: a return and a 0 dB send to it
+    callback open-send-options(int, int, length, length);  // track, return, anchor x, y (window)
     callback open-out-menu(length, length);
     callback open-add-track-menu(length, length);
     callback route-menu-pick(int);
@@ -848,7 +852,6 @@ export global Studio {
     callback send-pos(int, int, float);            // track, return, slider position 0..1
     callback send-reset(int, int);                 // level back to 0 dB
     callback send-toggle-pre(int, int);
-    callback send-remove(int, int);
     callback send-gesture-end();
     in property <bool> input-menu-open;
     in property <[ChoiceItem]> input-menu-items;

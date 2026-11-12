@@ -11,8 +11,10 @@ import { Panel, Icon, Icons, IconButton, Knob } from "widgets.slint";
 import { Studio, MixerStrip, StripMeter, SendRow } from "studio.slint";
 import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_strip.slint";
 
-// One send in an expanded Sends section: the return's colour tag with its letter, a horizontal
-// level slider (volume-slider taper, 0 dB at 0.8; double-click resets) and the dB value.
+// One send slot in an expanded Sends section: the return's colour tag with its letter (click:
+// the send's options, Post-fader / Pre-fader / Reset to 0 dB / Remove send), a horizontal level
+// slider (volume-slider taper, 0 dB at 0.8; double-click resets) and the dB value. A silent slot
+// (nothing sent to that return yet) is dim; dragging its slider sends.
 component SendLine inherits Rectangle {
     in property <SendRow> r;
     property <length> u: StripMetrics.u;
@@ -21,17 +23,23 @@ component SendLine inherits Rectangle {
     height: 20 * root.u;
     Rectangle {
         x: 2 * root.u; y: 3 * root.u; width: 14 * root.u; height: 14 * root.u; border-radius: 3 * root.u;
-        background: root.r.color;
+        background: root.r.live ? root.r.color : root.r.color.with-alpha(opt-ta.has-hover ? 0.6 : 0.35);
         Text { text: root.r.letter; color: root.r.color.darker(4.5); font-size: 9 * root.u; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        opt-ta := TouchArea {
+            clicked => { Studio.open-send-options(root.r.track, root.r.target, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + parent.height + 2px); }
+            accessible-role: button; accessible-label: "Send to " + root.r.name + " options";
+        }
     }
+    // Pre-fader sends: a small dot after the tag.
+    if root.r.pre: Rectangle { x: 17.5 * root.u; y: 8.5 * root.u; width: 3 * root.u; height: 3 * root.u; border-radius: 1.5 * root.u; background: #ffffffb3; }
     Rectangle { x: root.track-x; y: 9 * root.u; width: root.track-w; height: 2 * root.u; border-radius: 1 * root.u; background: #2f3036; }
     Rectangle { x: root.track-x; y: 9 * root.u; width: root.track-w * root.r.pos; height: 2 * root.u; border-radius: 1 * root.u; background: root.r.color; }
     Rectangle {
         x: root.track-x + root.track-w * root.r.pos - 4 * root.u; y: 6 * root.u; width: 8 * root.u; height: 8 * root.u; border-radius: 4 * root.u;
-        background: level-ta.pressed || level-ta.has-hover ? #ffffff : #d9d9dc;
+        background: level-ta.pressed || level-ta.has-hover ? #ffffff : root.r.live ? #d9d9dc : #6b6c70;
     }
     Text {
-        x: root.width - 28 * root.u; width: 28 * root.u; text: root.r.short-text; color: #ffffff99;
+        x: root.width - 28 * root.u; width: 28 * root.u; text: root.r.short-text; color: root.r.live ? #ffffff99 : #ffffff40;
         font-size: 9 * root.u; font-weight: 600; horizontal-alignment: right; vertical-alignment: center;
     }
     level-ta := TouchArea {
@@ -86,7 +94,7 @@ component Strip inherits Rectangle {
     }
     Rectangle { x: 8 * root.u; y: root.master ? root.gain-y : root.sends-y; width: 92 * root.u; height: 1 * root.u; background: #ffffff14; }
     // Sends: title + chevron (expands / collapses the Sends section of every strip) and "+"
-    // (add a send: existing returns, then "New return track"). Return strips have no sends.
+    // (a new return track, silent on every strip). Return strips have no sends.
     if !root.master && !root.s.is-return: Rectangle {
         x: 8 * root.u; y: root.sends-y; width: 92 * root.u; height: 22 * root.u;
         Text { x: 2 * root.u; y: 5 * root.u; height: 14 * root.u; text: "Sends"; color: sends-ta.has-hover ? #ffffffb3 : #ffffff66; font-size: 10 * root.u; font-weight: 600; letter-spacing: -0.2 * root.u; vertical-alignment: center; }
@@ -95,18 +103,18 @@ component Strip inherits Rectangle {
             x: 0; width: 50 * root.u; clicked => { Studio.toggle-sends-open(); }
             accessible-role: button; accessible-label: Studio.sends-open ? "Collapse sends" : "Expand sends";
         }
-        Rectangle {
+        if Studio.can-add-return: Rectangle {
             x: parent.width - 16 * root.u; y: 5 * root.u; width: 16 * root.u; height: 14 * root.u;
             Icon { x: 3 * root.u; y: 2 * root.u; width: 10 * root.u; height: 10 * root.u; d: Icons.plus; ink: add-ta.has-hover ? #ffffff : #ffffffcc; stroke-width: 1.6px; }
             add-ta := TouchArea {
-                clicked => { Studio.open-send-menu(root.s.id, parent.absolute-position.x, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 2px); }
-                accessible-role: button; accessible-label: "Add send";
+                clicked => { Studio.sends-add-return(root.s.id); }
+                accessible-role: button; accessible-label: "Add return track";
             }
         }
         Rectangle { y: parent.height - 1 * root.u; height: 1 * root.u; background: #ffffff14; }
     }
-    // Expanded Sends section: one row per send, stacked upward from the Sends row (every strip
-    // reserves room for the track with the most sends, so the rows line up across strips). It
+    // Expanded Sends section: one row per return track, stacked upward from the Sends row (the
+    // same rows on every strip, so they line up across strips). It
     // takes at most the room under the insert pill; more rows scroll with the wheel.
     if Studio.sends-open && !root.master && !root.s.is-return: sends-box := Rectangle {
         property <length> content-h: (Studio.strip-sends-max * 20 + 4) * root.u;

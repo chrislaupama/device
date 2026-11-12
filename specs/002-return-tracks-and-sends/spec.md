@@ -22,11 +22,14 @@ pan automation. Return tracks are lettered in order (A, B, C ...); a new one is 
 "Return A", "Return B" and so on, and can be renamed.
 
 - **Adding one.** Add track (timeline and mixer) opens a menu: Audio track, Instrument track,
-  Return track (the shortcut still adds an audio track). The Sends "+" menus (mixer and
-  channel strip) list the existing returns the track does not send to yet, then "New return
-  track", which creates a return and the send in one step.
+  Return track (the shortcut still adds an audio track). The "+" beside Sends (mixer strips and
+  the channel strip's Sends tab) adds the next lettered return; every track gets a silent send
+  slot for it and the track being edited stays selected. With no return tracks, the Returns
+  pill adds Return A, and the Sends tab shows a dim "Return A" placeholder that creates the
+  return and a 0 dB send to it in one step.
 - **Where they show.** Return tracks sit after the ordinary tracks, always in their own group.
-  - Timeline: the Returns pill in the Timeline header shows or hides the return rows. They are
+  - Timeline: the Returns pill in the Timeline header shows or hides the return rows (with no
+    return tracks yet it adds Return A). They are
     pinned at the bottom of the track list, above the master row, like the master. Their lanes take
     no clips (dropping or recording onto a return does nothing). The pill is lit while the rows
     show. Hiding them does not mute them. The pill state is view state, saved with the window
@@ -35,18 +38,24 @@ pan automation. Return tracks are lettered in order (A, B, C ...); a new one is 
     with a divider before the first one. They have no R/I buttons and no Sends section.
   - Bottom panel: selecting a return track shows its channel strip (In is replaced by a "Return"
     label, Out is fixed to Master) and its Devices chain.
+- **Names.** A return track is the shared effect track ("Return A"); a send is how much of one
+  track goes into it. The Sends tab and the mixer's Sends rows name each send after its return
+  ("Return A", or the letter A), so the two always read as one pair.
 - **Removing one.** Removing a return track also removes every send to it and resets every track
   whose Out pointed at it to Master, in the same undo step.
 
 **Sends.** A send copies a track's signal, at its own level, into a return track. A track has at
-most one send per return.
+most one send per return, and every ordinary track has a send slot for every return: a slot with
+nothing sent is silent (−∞) and shown dim, and moving its control sends.
 
 - Mixer strip: the Sends row shows "Sends" and a chevron; clicking it expands the Sends section of
-  every strip (one row per send: the return's colour tag and letter, a horizontal level slider
-  with its dB value), clicking again collapses it. "+" opens the add menu above.
-- Channel strip, Sends tab: one row per send with the return's colour and name, a level knob with
-  its dB readout, a Pre switch (off = post-fader) and a remove button. "+" opens the add menu.
-- Level: −∞ to +6 dB, 0 dB for a new send. Double-click resets to 0 dB. A drag is one undo step.
+  every strip (one row per return: the return's colour tag and letter, a horizontal level slider
+  with its dB value), clicking again collapses it. The tag opens the send's options: Post-fader,
+  Pre-fader, Reset to 0 dB, Remove send. "+" adds a return track.
+- Channel strip, Sends tab: one knob per return, two to a row like the Input tab: a Post / Pre
+  chip above a stored send (click to switch), the level knob, its dB value and the return's
+  name. "+" beside the tab adds a return track.
+- Level: −∞ to +6 dB. Double-click sets 0 dB (also on a silent slot). A drag is one undo step.
 - Post-fader (the default): the send taps the track after its volume and pan, so pulling the fader
   down pulls the send down with it. Pre-fader: the send taps after the insert chain, before volume
   and pan.
@@ -56,16 +65,18 @@ most one send per return.
   ordinary tracks are soloed too).
 - A return track has no sends of its own.
 
-**Out.** The channel strip's Out selector lists Master and every return track. Routing a track's
-Out to a return sends its whole output (after volume and pan) there instead of to the master, for
-example to feed a bus that compresses a group of tracks. Return tracks always go to the master.
+**Out.** The channel strip's Out selector lists Master: to share an effect, a track sends to a return
+track instead. (A project saved when Out could pick a return keeps that routing, and the selector
+then lists that return too, so the track can be moved back to Master. Groups, when they come, will
+be listed here.) Return tracks always go to the master.
 
 **Timing.** Delay compensation keeps everything aligned: a track heard directly and through a
 return lines up, also when the return has plugins with latency. Meters, the master and exports
 include the returns. Exports and the live mix sound the same.
 
-**Undo labels.** Add Return Track, Remove Track, Add Send, Remove Send, Send Level Change (a drag
-coalesces), Send Pre-Fader / Send Post-Fader, Output Change.
+**Undo labels.** Add Return Track, Remove Track, Add Send (the placeholder's return and send),
+Remove Send, Send Level Change (a drag coalesces; the first move of a silent slot stores the send),
+Send Pre-Fader / Send Post-Fader, Output Change.
 
 **Saving.** Return tracks, sends and outputs are saved with the project. Projects saved before
 this load with no returns, no sends and every Out on Master.
@@ -119,8 +130,9 @@ this load with no returns, no sends and every Out on Master.
   PDC golden hashes still match for sessions without returns.
 - A7 (R8): Rust end-to-end test through `dstudio-engine`: a send reaches the master through a
   return.
-- A8 (R12): self-test steps (add a return from the Sends "+", set a send level, route Out, toggle
-  the Returns pill) and review-state screenshots of the timeline with returns, the mixer with the
+- A8 (R12): self-test steps (Return A from the Sends placeholder, set a send level, Pre, Return B
+  from "+" and a drag that turns its silent slot on, Out listing Master, the Returns pill, the
+  mixer's send options) and review-state screenshots of the timeline with returns, the mixer with the
   Sends section open, and the channel strip Sends tab, before and after.
 - A9 (R13): `bench_render` table "Returns": 32 tracks with 2 sends each into 2 returns, against
   32 tracks without sends; numbers in the pull request.

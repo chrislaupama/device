@@ -2167,18 +2167,15 @@ impl Controller {
         s.set_mixer_open(self.mixer_open);
         let first_return = p.ordinary_track_count();
         // Each strip's range in the strip-sends model (push_routing: ordinary tracks in order,
-        // one row per send to an existing return).
+        // one send slot per return track).
+        let slots = p.returns().count() as i32;
         let mut send_first = 0;
         let strips: Vec<MixerStrip> = p
             .tracks
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let n = if t.is_return() {
-                    0
-                } else {
-                    t.sends.iter().filter(|x| p.track(x.target).is_some_and(|r| r.is_return())).count() as i32
-                };
+                let n = if t.is_return() { 0 } else { slots };
                 send_first += n;
                 (i, t, send_first - n, n)
             })
