@@ -66,3 +66,18 @@ body { font-family: "Inter", system-ui, sans-serif; color: var(--text); -webkit-
 .feature h3 { margin: 0; font-size: 46px; line-height: 1.1; font-weight: 700; letter-spacing: -0.028em; }
 .feature p { margin: 0; max-width: 920px; font-size: 22px; line-height: 1.45; color: var(--text-2); }
 .feature .crop { position: absolute; left: 64px; right: 64px; top: 266px; height: 392px; }
+
+/* Fine Signal: a shared raster material for public artwork. App views stay untouched. */
+.art { isolation: isolate; }
+.art::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: url("textures/fine-signal.png") right center / cover no-repeat;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.art.feature::before,
+.art.arch::before { opacity: 0.45; }
+.bars { opacity: 0.12; }
