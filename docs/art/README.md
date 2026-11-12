@@ -40,3 +40,13 @@ magick /tmp/automation.png -gravity north -chop 0x88 docs/art/shots/automation.p
 `--zoom 85` makes the interface scale exactly 2, so the layout matches a 1440×820 window. For the other shots, swap the
 `--state` and file names from the table. When a view changes visibly, render its shot again, crop it into
 `docs/art/shots/` the same way and re-run `render.mjs`.
+
+## Fine Signal material
+
+Public artwork uses `textures/fine-signal.png`, the approved fine blue dot treatment, behind
+its headings and frames. `art.css` applies it more quietly to the information-heavy feature and
+architecture panels. This is a marketing texture: the app screenshots in `shots/` are not edited,
+and no desktop interface styles are changed. The original waveform mark is also unchanged.
+
+The texture is a project-specific generated bitmap. Its exact generation prompt is in
+`textures/fine-signal-prompt.txt`. Website AVIF/WebP variants are derived from this same source.

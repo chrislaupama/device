@@ -583,3 +583,11 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   so switching keeps delay compensation) and `SE_AUTO_TRIM/WIDTH/MONO` (per sample, replace the strip settings).
   Tests: four engine tests in `test_automation.cpp`, core `switch_lanes_*`, app `automation::tests` (units, picker,
   right-click menus, switches and strip controls following lanes).
+
+### 2026-11-13: Fine Signal public artwork
+
+Applied the selected fine blue dot material to the public README, feature and sharing artwork.
+The source texture and exact generation prompt live in `docs/art/textures/`; the HTML renderer
+uses it at lower strength behind feature and architecture cards. App source, screenshots,
+installation identities and settings are unchanged. The website uses compressed versions of
+the same material in its own repository.
