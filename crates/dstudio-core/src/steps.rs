@@ -697,7 +697,10 @@ pub fn tile(notes: &[Note], period: Ticks, clip_length: Ticks) -> Vec<Note> {
     if period <= 0 {
         return notes.to_vec();
     }
-    let mut out = Vec::new();
+    // Sized up front: a long clip repeats its pattern thousands of times.
+    let per_period = notes.iter().filter(|n| n.start < period).count();
+    let repeats = usize::try_from((clip_length.max(0) + period - 1) / period).unwrap_or(0);
+    let mut out = Vec::with_capacity(per_period.saturating_mul(repeats));
     let mut at = 0;
     while at < clip_length {
         for n in notes.iter().filter(|n| n.start < period) {
