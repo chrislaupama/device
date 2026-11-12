@@ -13,11 +13,12 @@ definition.
 
 ## Changes by layer
 
-- **Core:** `AutomationTarget::Mute` and `DeviceOn { device, name }`; `AutomationTarget::stepped()` (switches and
+- **Core:** `AutomationTarget::Mute`, `Trim`, `Width`, `Mono` and `DeviceOn { device, name }`; `AutomationTarget::stepped()` (switches and
   built-in choice parameters); `value_at` holds values on stepped lanes; `SetAutomationLane` checks the device is on
-  the track; import remaps the device id; bounce keeps mute lanes.
+  the track; import remaps the device id; bounce to new track carries the channel lanes and the strip settings.
 - **Engine:** `AutoLane::step`, `SE_AUTO_MUTE` (per-sample gain before the fader), `SE_AUTO_DEVICE_ON` (per block,
-  replaces `enabled` for an insert or the instrument plugin), PDC bypass delay line for slots with an on/off lane.
+  replaces `enabled` for an insert or the instrument plugin), PDC bypass delay line for slots with an on/off lane,
+  `SE_AUTO_TRIM/WIDTH/MONO` (a per-sample strip matrix when any of them is active).
 - **C ABI:** `se_auto_lane_desc._pad` becomes `flags` (same layout, 0 keeps the old meaning); new enums.
 - **App:** right-press wiring in `device_panel.slint`, `synth.slint`, the strip widgets; `mod_menu` power entry,
   `synth_pill_menu`, `strip_menu`; picker entries; unit labels; point readout; M and power follow active lanes.

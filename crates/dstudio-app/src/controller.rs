@@ -1208,6 +1208,9 @@ impl Controller {
     pub fn set_track_trim(&mut self, id: TrackId, db: f32) -> bool {
         let (lo, hi) = dstudio_core::Track::TRIM_RANGE_DB;
         let db = (db.clamp(lo, hi) * 10.0).round() / 10.0;
+        if self.auto_intercept(Some(id), dstudio_core::AutomationTarget::Trim, db) {
+            return false;
+        }
         if self.project().track(id).is_none_or(|t| t.trim_db == db) {
             return false;
         }
@@ -1222,6 +1225,9 @@ impl Controller {
     pub fn set_track_width(&mut self, id: TrackId, width: f32) -> bool {
         let (lo, hi) = dstudio_core::Track::WIDTH_RANGE;
         let width = (width.clamp(lo, hi) * 100.0).round() / 100.0;
+        if self.auto_intercept(Some(id), dstudio_core::AutomationTarget::Width, width) {
+            return false;
+        }
         if self.project().track(id).is_none_or(|t| t.width == width) {
             return false;
         }
@@ -1233,12 +1239,16 @@ impl Controller {
     }
 
     pub fn toggle_track_mono(&mut self, id: TrackId) -> bool {
-        let Some(mono) = self.project().track(id).map(|t| !t.mono) else { return false };
-        self.execute(Command::SetTrackMono { track: id, mono })
+        let Some(old) = self.project().track(id).map(|t| t.mono) else { return false };
+        if self.auto_switch(Some(id), dstudio_core::AutomationTarget::Mono, old) {
+            return false;
+        }
+        self.execute(Command::SetTrackMono { track: id, mono: !old })
     }
 
     /// A trim or width knob was released: the next drag is a new undo step.
     pub fn strip_gesture_end(&mut self) {
+        self.auto_write_end(|w| matches!(w.target, dstudio_core::AutomationTarget::Trim | dstudio_core::AutomationTarget::Width));
         self.doc.seal_coalescing();
     }
 
@@ -2158,11 +2168,12 @@ impl Controller {
             s.set_sel_solo(t.solo);
             s.set_sel_pan(t.pan);
             s.set_sel_pan_text(fmt_pan(t.pan).into());
-            s.set_sel_trim(t.trim_db);
-            s.set_sel_trim_text(fmt_trim(t.trim_db).into());
-            s.set_sel_width(t.width);
-            s.set_sel_width_text(fmt_width(t.width).into());
-            s.set_sel_mono(t.mono);
+            let (trim, width, mono) = self.strip_now(t.id);
+            s.set_sel_trim(trim);
+            s.set_sel_trim_text(fmt_trim(trim).into());
+            s.set_sel_width(width);
+            s.set_sel_width_text(fmt_width(width).into());
+            s.set_sel_mono(mono);
             let db = gain_to_db(t.gain);
             s.set_sel_fader(fader_from_db(db));
             s.set_sel_db_text(fmt_db(db).into());

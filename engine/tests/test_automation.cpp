@@ -292,7 +292,7 @@ TEST_CASE(automation_publish_validation) {
     ASession s;
     s.audio(1, {clip(1, a, 0, 0, 1000)}, {lane(SE_AUTO_VOLUME, {{10, 0.0f, 0.0f}, {5, 0.0f, 0.0f}})});
     CHECK(s.publish(e) == SE_ERR_INVALID_ARG);
-    s.tracks[0].lanes = {lane(9, {{0, 0.0f, 0.0f}})};
+    s.tracks[0].lanes = {lane(SE_AUTO_MONO + 1, {{0, 0.0f, 0.0f}})};
     CHECK(s.publish(e) == SE_ERR_INVALID_ARG);
     s.tracks[0].lanes = {lane(SE_AUTO_SYNTH, {{0, 0.5f, 0.0f}}, 0, 0, SE_SYNTH_P_COUNT)};
     CHECK(s.publish(e) == SE_ERR_INVALID_ARG);
@@ -789,7 +789,7 @@ TEST_CASE(automation_stepped_lanes_hold_each_value) {
     l.d.flags = 2; // unknown flag
     CHECK(se_automation_eval(&l.d, frames, 1, out) == SE_ERR_INVALID_ARG);
     l.d.flags = 0;
-    l.d.target = SE_AUTO_DEVICE_ON + 1;
+    l.d.target = SE_AUTO_MONO + 1;
     CHECK(se_automation_eval(&l.d, frames, 1, out) == SE_ERR_INVALID_ARG);
 }
 
@@ -829,4 +829,33 @@ TEST_CASE(automation_device_on_lane_switches_an_insert_per_block) {
     CHECK_NEAR(l[1024], 1.0, 1e-6);  // off from the block that starts on the point: bypassed
     CHECK_NEAR(l[2303], 1.0, 1e-6);  // the switch back waits for the next block boundary (2304)
     CHECK_NEAR(l[2304], 0.25, 1e-6);
+}
+
+TEST_CASE(automation_strip_lanes_set_trim_width_and_mono) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {constant(4000, 1.0f), constant(4000, 0.0f)}); // left only
+    ASession s;
+    s.audio(1, {clip(1, a, 0, 0, 4000)}, {}, {}, 0.0f); // centred: equal gains on both sides
+    REQUIRE(s.publish(e) == SE_OK);
+    const float k = chan(play(e, 300, 0), 0)[200]; // the fader's own gain
+    REQUIRE(k > 0.1f);
+    Lane mono = lane(SE_AUTO_MONO, {{0, 0.0f, 0.0f}, {1000, 1.0f, 0.0f}});
+    mono.d.flags = SE_AUTO_FLAG_STEPPED;
+    s.tracks[0].lanes = {lane(SE_AUTO_TRIM, {{0, 6.0f, 0.0f}}), lane(SE_AUTO_WIDTH, {{0, 2.0f, 0.0f}}), mono};
+    REQUIRE(s.publish(e) == SE_OK);
+    const std::vector<float> out = play(e, 2000, 0, 256);
+    const std::vector<float> l = chan(out, 0);
+    const std::vector<float> r = chan(out, 1);
+    const double g = std::pow(10.0, 6.0 / 20.0);
+    // Width 2 doubles the side: L' = 1.5 L, R' = -0.5 L (times the trim).
+    CHECK_NEAR(l[500], 1.5 * g * k, 1e-4);
+    CHECK_NEAR(r[500], -0.5 * g * k, 1e-4);
+    // Mono from its point (mid-block), whatever the width says.
+    CHECK_NEAR(l[999], 1.5 * g * k, 1e-4);
+    CHECK_NEAR(l[1000], 0.5 * g * k, 1e-4);
+    CHECK_NEAR(r[1000], 0.5 * g * k, 1e-4);
+    // Out-of-range trims are clamped to the strip's range.
+    s.tracks[0].lanes = {lane(SE_AUTO_TRIM, {{0, 40.0f, 0.0f}})};
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_NEAR(chan(play(e, 300, 0), 0)[200], std::pow(10.0, 24.0 / 20.0) * k, 1e-3);
 }

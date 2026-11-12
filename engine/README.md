@@ -1436,7 +1436,7 @@ snapshot sends enabled, non-empty lanes with points converted to frames
 from v5) + `lanes` / `lane_count`; `se_session_desc_v6` adds `master_lanes` /
 `master_lane_count` (only `SE_AUTO_VOLUME` is used there). A lane
 (`se_auto_lane_desc`, 32 bytes) has `target` (`SE_AUTO_VOLUME/PAN/SYNTH/
-PLUGIN/BUILTIN/MUTE/DEVICE_ON`), `logarithmic`, `synth_param` (`SE_SYNTH_P_*`
+PLUGIN/BUILTIN/MUTE/DEVICE_ON/TRIM/WIDTH/MONO`), `logarithmic`, `synth_param` (`SE_SYNTH_P_*`
 = index in `SynthParam::ALL`), `device_id` + `param_id` (plugin), `flags`
 (`SE_AUTO_FLAG_STEPPED`; the field was padding, so 0 keeps the old meaning)
 and `points` (`se_auto_point {int64 frame, float value, float curve}`, 16
@@ -1510,6 +1510,11 @@ the lane (a republish) restores the static value.
   `enabled` once per block, read at the block's first frame (delay
   compensated like the slot's other lanes). An insert with an on/off lane
   always gets its bypass delay line, so switching it keeps the track aligned.
+* **Channel strip:** `SE_AUTO_TRIM` (dB, clamped to ±24), `SE_AUTO_WIDTH`
+  (0..2) and `SE_AUTO_MONO` (stepped, 1 = mono) replace the track's strip
+  settings; while any of them is active the strip runs per sample
+  (`kernel_strip_varying`: the strip matrix from per-sample trim and width,
+  mono folding the width to 0), at the fader's timeline frame.
 * **Stopped / paused:** lanes hold the value at the playhead (tails and
   insert chains still run).
 * **Export** uses the same `render_block`, so lanes are rendered (linear

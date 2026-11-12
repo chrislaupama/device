@@ -112,6 +112,9 @@ impl Hue {
             AutomationTarget::Volume => Hue::key("Channel", "Volume"),
             AutomationTarget::Pan => Hue::key("Channel", "Pan"),
             AutomationTarget::Mute => Hue::key("Channel", "Mute"),
+            AutomationTarget::Trim => Hue::key("Channel", "Trim"),
+            AutomationTarget::Width => Hue::key("Channel", "Width"),
+            AutomationTarget::Mono => Hue::key("Channel", "Mono"),
             AutomationTarget::DeviceOn { name, .. } => Hue::key(name, "On"),
             AutomationTarget::Synth { param } => Hue::key("Synth", param.name()),
             AutomationTarget::Plugin { name, .. } => Hue::key(device, name),
@@ -245,7 +248,11 @@ pub fn norm_of(t: &AutomationTarget, v: f32) -> f32 {
             }
         }
         AutomationTarget::Pan => (v + 1.0) / 2.0,
-        AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } => v,
+        AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } | AutomationTarget::Mono => v,
+        AutomationTarget::Trim | AutomationTarget::Width => {
+            let (lo, hi) = t.range();
+            (v - lo) / (hi - lo)
+        }
         AutomationTarget::Synth { param } => {
             let (lo, hi) = param.range();
             if param.logarithmic() { (v.max(lo) / lo).ln() / (hi / lo).ln() } else { (v - lo) / (hi - lo) }
@@ -265,7 +272,9 @@ pub fn value_of(t: &AutomationTarget, n: f32) -> f32 {
             if a <= db_to_gain(VOLUME_MIN_DB) { VOLUME_MIN_DB } else { (gain_to_db(a) * 100.0).round() / 100.0 }
         }
         AutomationTarget::Pan => ((n * 2.0 - 1.0) * 1000.0).round() / 1000.0,
-        AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } => n.round(),
+        AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } | AutomationTarget::Mono => n.round(),
+        AutomationTarget::Trim => ((n * 48.0 - 24.0) * 10.0).round() / 10.0,
+        AutomationTarget::Width => (n * 200.0).round() / 100.0,
         AutomationTarget::Synth { param } => {
             let (lo, hi) = param.range();
             if param.logarithmic() { lo * (hi / lo).powf(n) } else { lo + (hi - lo) * n }
@@ -478,6 +487,9 @@ impl Controller {
             AutomationTarget::Volume => clamp_db(t.gain),
             AutomationTarget::Pan => t.pan,
             AutomationTarget::Mute => f32::from(u8::from(t.mute)),
+            AutomationTarget::Trim => t.trim_db,
+            AutomationTarget::Width => t.width,
+            AutomationTarget::Mono => f32::from(u8::from(t.mono)),
             AutomationTarget::DeviceOn { device, .. } => {
                 f32::from(u8::from(t.devices.iter().chain(t.instrument_plugin.iter()).find(|d| d.id == *device).is_none_or(|d| d.enabled)))
             }
@@ -543,6 +555,9 @@ impl Controller {
             AutomationTarget::Volume => volume_label(v),
             AutomationTarget::Pan => fmt_pan(v),
             AutomationTarget::Mute => (if v >= 0.5 { "Muted" } else { "Unmuted" }).into(),
+            AutomationTarget::Trim => crate::controller::fmt_trim(v),
+            AutomationTarget::Width => crate::controller::fmt_width(v),
+            AutomationTarget::Mono => (if v >= 0.5 { "On" } else { "Off" }).into(),
             AutomationTarget::DeviceOn { .. } => (if v >= 0.5 { "On" } else { "Off" }).into(),
             AutomationTarget::Synth { param } => synth_label(*param, v),
             AutomationTarget::Plugin { device, param, .. } => {
@@ -863,7 +878,14 @@ impl Controller {
         let mut cats = vec![("Track".to_string(), vec![e("Volume", AutomationTarget::Volume)])];
         let Some(t) = key.and_then(|k| self.project().track(k)) else { return cats };
         cats[0].1.push(e("Pan", AutomationTarget::Pan));
-        cats[0].1.push(e("Mute", AutomationTarget::Mute));
+        for (label, target) in [
+            ("Mute", AutomationTarget::Mute),
+            ("Trim", AutomationTarget::Trim),
+            ("Width", AutomationTarget::Width),
+            ("Mono", AutomationTarget::Mono),
+        ] {
+            cats[0].1.push(e(label, target));
+        }
         let on = |d: &dstudio_core::Device| {
             let target = self.device_on_target(d.id).map(|(_, x)| x);
             e("On", target.unwrap_or_else(|| AutomationTarget::DeviceOn { device: d.id, name: d.display_name().to_string() }))
@@ -1445,6 +1467,16 @@ impl Controller {
         Some((t.id, target))
     }
 
+    /// Channel strip (trim dB, width, mono) as heard now: active lanes, else the static settings.
+    pub fn strip_now(&self, id: TrackId) -> (f32, f32, bool) {
+        let Some(t) = self.project().track(id) else { return (0.0, 1.0, false) };
+        (
+            self.auto_value_now(Some(id), &AutomationTarget::Trim).unwrap_or(t.trim_db),
+            self.auto_value_now(Some(id), &AutomationTarget::Width).unwrap_or(t.width),
+            self.switch_now(Some(id), &AutomationTarget::Mono, t.mono),
+        )
+    }
+
     /// Whether a device is on now (its power lane, else its switch).
     pub fn device_on_now(&self, d: &dstudio_core::Device) -> bool {
         self.device_on_target(d.id).map_or(d.enabled, |(t, target)| self.switch_now(Some(t), &target, d.enabled))
@@ -1490,6 +1522,14 @@ impl Controller {
             s.set_sel_pan_auto(pa);
             if let Some(t) = self.project().track(id) {
                 s.set_sel_mute(self.switch_now(Some(id), &AutomationTarget::Mute, t.mute));
+            }
+            let (trim, width, mono) = self.strip_now(id);
+            if (s.get_sel_trim() - trim).abs() > 1e-6 || (s.get_sel_width() - width).abs() > 1e-6 || s.get_sel_mono() != mono {
+                s.set_sel_trim(trim);
+                s.set_sel_trim_text(crate::controller::fmt_trim(trim).into());
+                s.set_sel_width(width);
+                s.set_sel_width_text(crate::controller::fmt_width(width).into());
+                s.set_sel_mono(mono);
             }
         }
         let mv = self.auto_value_now(None, &AutomationTarget::Volume);
@@ -1799,6 +1839,11 @@ mod tests {
         assert_eq!((c.auto_label(Some(t), &on, 1.0), c.auto_label(Some(t), &on, 0.0)), ("On".into(), "Off".into()));
         assert_eq!((value_of(&on, 0.3), value_of(&on, 0.7)), (0.0, 1.0), "switch lanes snap to off / on");
         assert_eq!(c.static_value(Some(t), &on), 1.0);
+        assert_eq!(c.auto_label(Some(t), &AutomationTarget::Trim, -3.5), "−3.5 dB");
+        assert_eq!(c.auto_label(Some(t), &AutomationTarget::Width, 1.5), "150%");
+        assert_eq!(c.auto_label(Some(t), &AutomationTarget::Mono, 1.0), "On");
+        assert_eq!(value_of(&AutomationTarget::Trim, norm_of(&AutomationTarget::Trim, 6.0)), 6.0);
+        assert_eq!(value_of(&AutomationTarget::Width, 0.75), 1.5);
     }
 
     #[test]
@@ -1806,7 +1851,7 @@ mod tests {
         let (c, t, d) = with_compressor();
         let cats = c.pick_categories(Some(t));
         let labels = |i: usize| cats[i].1.iter().map(|e| e.label.as_str()).collect::<Vec<_>>();
-        assert_eq!(labels(0), ["Volume", "Pan", "Mute"]);
+        assert_eq!(labels(0), ["Volume", "Pan", "Mute", "Trim", "Width", "Mono"]);
         let comp = cats.iter().position(|(name, _)| name == "Compressor").expect("device category");
         let last = cats[comp].1.last().unwrap();
         assert_eq!(last.label, "On");
@@ -1832,6 +1877,9 @@ mod tests {
             (0, "Automate Volume", AutomationTarget::Volume),
             (1, "Automate Pan", AutomationTarget::Pan),
             (2, "Automate Mute", AutomationTarget::Mute),
+            (3, "Automate Trim", AutomationTarget::Trim),
+            (4, "Automate Width", AutomationTarget::Width),
+            (5, "Automate Mono", AutomationTarget::Mono),
         ] {
             c.strip_menu(t.0 as i32, kind, 10.0, 10.0);
             assert_eq!(first(&c).as_deref(), Some(label));
@@ -1861,6 +1909,19 @@ mod tests {
         assert!(c.execute(Command::SetAutomationLane { track: Some(t), target: on, lane: Some(lane) }));
         let dev = c.project().device(d).unwrap().clone();
         assert!(dev.enabled && !c.device_on_now(&dev), "the power lane switches the device off");
+        // Strip lanes drive the inspector's trim, width and mono; moving the knob explains.
+        let mut trim = AutomationLane::new(AutomationTarget::Trim);
+        trim.points = vec![AutoPoint { time: 0, value: -6.0, curve: 0.0 }];
+        let mut mono = AutomationLane::new(AutomationTarget::Mono);
+        mono.points = vec![AutoPoint { time: 0, value: 1.0, curve: 0.0 }];
+        for lane in [trim, mono] {
+            let target = lane.target.clone();
+            assert!(c.execute(Command::SetAutomationLane { track: Some(t), target, lane: Some(lane) }));
+        }
+        assert_eq!(c.strip_now(t), (-6.0, 1.0, true));
+        let rev = c.doc.revision();
+        assert!(!c.set_track_trim(t, 3.0) && !c.toggle_track_mono(t));
+        assert_eq!(c.doc.revision(), rev);
         // A renamed device keeps finding its lane.
         assert!(c.execute(Command::SetDeviceLabel { device: d, label: Some("Glue".into()) }));
         assert!(matches!(c.device_on_target(d), Some((_, AutomationTarget::DeviceOn { name, .. })) if name == "Compressor"));

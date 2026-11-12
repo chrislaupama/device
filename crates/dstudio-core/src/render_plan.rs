@@ -4,7 +4,6 @@
 //! The render itself is the engine's offline render of a [`crate::snapshot`] built from
 //! [`render_project`]; nothing here touches the engine.
 
-use crate::automation::AutomationTarget;
 use crate::builtin;
 use crate::midi::{self, MidiClip};
 use crate::{ClipId, Project, Ticks, TrackId, TrackKind};
@@ -121,7 +120,7 @@ pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project
                 (t.trim_db, t.width, t.mono) = (0.0, 1.0, false);
             }
             RenderMode::Bounce => {
-                t.automation.retain(|l| !matches!(l.target, AutomationTarget::Volume | AutomationTarget::Pan | AutomationTarget::Mute));
+                t.automation.retain(|l| !l.target.is_channel());
                 t.gain = CENTRE_UNITY_GAIN;
                 t.pan = 0.0;
                 // The track keeps its trim, width and mono, so the bounce is taken before them.

@@ -48,6 +48,19 @@ void kernel_strip(float* __restrict l, float* __restrict r, float a, float b, ui
     }
 }
 
+void kernel_strip_varying(float* __restrict l, float* __restrict r, const float* __restrict trim,
+                          const float* __restrict width, uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) {
+        // strip_matrix per sample.
+        const float a = trim[i] * 0.5f * (1.0f + width[i]);
+        const float b = trim[i] * 0.5f * (1.0f - width[i]);
+        const float x = l[i];
+        const float y = r[i];
+        l[i] = a * x + b * y;
+        r[i] = b * x + a * y;
+    }
+}
+
 void kernel_scale(float* __restrict buf, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) buf[i] *= gain;
 }
@@ -756,7 +769,36 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             if (!plain) router.discard_edges(track, t);
             continue;
         }
-        if (track.strip_on) kernel_strip(tl, tr, track.strip_a, track.strip_b, frames);
+        if (track.trim_lane >= 0 || track.width_lane >= 0 || track.mono_lane >= 0) {
+            // Automated strip: per-sample trim gain and width (the gain
+            // buffers are free here; the fader fills them afresh below).
+            const uint32_t d = lines != nullptr ? track.auto_delay : 0;
+            float* const trim = ctx.gain_l();
+            float* const width = ctx.gain_r();
+            if (track.trim_lane >= 0) {
+                fill_lane(graph->lanes[static_cast<uint32_t>(track.trim_lane)], d,
+                          [](float db) { return std::pow(10.0f, std::clamp(db, -24.0f, 24.0f) / 20.0f); }, trim);
+            } else {
+                std::fill(trim, trim + frames, track.strip_trim);
+            }
+            if (track.width_lane >= 0) {
+                fill_lane(graph->lanes[static_cast<uint32_t>(track.width_lane)], d,
+                          [](float w) { return std::clamp(w, 0.0f, 2.0f); }, width);
+            } else {
+                std::fill(width, width + frames, track.strip_width);
+            }
+            if (track.mono_lane >= 0) {
+                float* const keep = ctx.auto_a();
+                fill_lane(graph->lanes[static_cast<uint32_t>(track.mono_lane)], d,
+                          [](float v) { return v >= 0.5f ? 0.0f : 1.0f; }, keep);
+                kernel_mul(width, keep, frames);
+            } else if (track.strip_mono) {
+                std::fill(width, width + frames, 0.0f);
+            }
+            kernel_strip_varying(tl, tr, trim, width, frames);
+        } else if (track.strip_on) {
+            kernel_strip(tl, tr, track.strip_a, track.strip_b, frames);
+        }
         // Mute lane (SE_AUTO_MUTE): silences the track's signal before the
         // fader, its sends and its meter, like the static mute.
         if (track.mute_lane >= 0) {

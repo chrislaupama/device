@@ -790,6 +790,9 @@ fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_la
         }
         AutomationTarget::Mute => (ffi::SE_AUTO_MUTE, 0, 0, 0),
         AutomationTarget::DeviceOn { device, .. } => (ffi::SE_AUTO_DEVICE_ON, 0, device.0, 0),
+        AutomationTarget::Trim => (ffi::SE_AUTO_TRIM, 0, 0, 0),
+        AutomationTarget::Width => (ffi::SE_AUTO_WIDTH, 0, 0, 0),
+        AutomationTarget::Mono => (ffi::SE_AUTO_MONO, 0, 0, 0),
     };
     ffi::se_auto_lane_desc {
         target,

@@ -349,6 +349,9 @@ pub const SE_AUTO_PLUGIN: u8 = 3;
 pub const SE_AUTO_BUILTIN: u8 = 4;
 pub const SE_AUTO_MUTE: u8 = 5;
 pub const SE_AUTO_DEVICE_ON: u8 = 6;
+pub const SE_AUTO_TRIM: u8 = 7;
+pub const SE_AUTO_WIDTH: u8 = 8;
+pub const SE_AUTO_MONO: u8 = 9;
 pub const SE_AUTO_FLAG_STEPPED: u32 = 1;
 
 // ---- built-in devices (state blob, registry)

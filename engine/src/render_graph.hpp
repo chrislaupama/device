@@ -145,6 +145,9 @@ struct TrackNode {
     int32_t vol_lane = -1;
     int32_t pan_lane = -1;
     int32_t mute_lane = -1;     // SE_AUTO_MUTE (replaces the static mute)
+    int32_t trim_lane = -1;     // SE_AUTO_TRIM / WIDTH / MONO (replace the strip settings)
+    int32_t width_lane = -1;
+    int32_t mono_lane = -1;
     int32_t iplug_on_lane = -1; // SE_AUTO_DEVICE_ON of the instrument plugin
     uint32_t synth_lane_begin = 0;
     uint32_t synth_lane_count = 0;
@@ -199,6 +202,11 @@ struct TrackNode {
     bool strip_on = false;
     float strip_a = 1.0f;
     float strip_b = 0.0f;
+    // The static settings (linear trim, width, mono), for strip lanes that
+    // replace some of them.
+    float strip_trim = 1.0f;
+    float strip_width = 1.0f;
+    bool strip_mono = false;
     // Delay compensation: extra delay on the output edge (after the fader)
     // when its destination receives later than the track's earliest one.
     uint32_t out_delay = 0;

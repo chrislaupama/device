@@ -377,6 +377,8 @@ export component Knob inherits Rectangle {
 export component Switch inherits Rectangle {
     in property <bool> on;
     callback toggled;
+    // Right press: the control menu (absolute window position; callers subtract the menu bar).
+    callback context(length, length);
     width: 20px; height: 11px;
     border-radius: self.height / 2;
     background: on ? Tokens.value-blue : #3a3b40;
@@ -385,7 +387,10 @@ export component Switch inherits Rectangle {
         width: 9px; height: 9px; border-radius: 4.5px;
         background: #ffffff;
     }
-    TouchArea { clicked => { root.toggled(); } }
+    TouchArea {
+        clicked => { root.toggled(); }
+        pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); } }
+    }
 }
 
 // A text label positioned at an AX rect (x, y, height) with vertical centring.

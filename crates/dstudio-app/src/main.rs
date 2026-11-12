@@ -164,9 +164,10 @@ struct Args {
     /// reference-live (100 % zoom): the default project
     /// with the assistant panel open and the automation lanes shown.
     live_state: bool,
-    /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
-    /// an expanded extra lane, master) for review; the second also opens the picker with the
-    /// Synth submenu.
+    /// review-automation / review-automation-picker / review-automation-menu: lanes with points
+    /// (active, disabled, curved, an expanded extra lane, master) for review; the second also
+    /// opens the picker with the Synth submenu; the third shows the Synth's Cutoff lane with a
+    /// hovered point's readout and opens the Cutoff knob's right-click menu.
     automation_review: u8,
     /// review-track-heights / review-bottom-collapsed: the demo tracks at 0.25x, 0.5x and 2x
     /// height; the second instead collapses the bottom panel to its tab row.
@@ -493,6 +494,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-automation-picker" => {
                     a.reference_default = true;
                     a.automation_review = 2;
+                }
+                "review-automation-menu" => {
+                    a.reference_default = true;
+                    a.automation_review = 3;
                 }
                 "reference-devices-effects" => {
                     a.reference_default = true;
@@ -1718,6 +1723,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let y = 78.0 + 66.5 + c.view.track_offset(1) + 48.5 + 17.0;
             c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
             c.auto_picker_pick(1);
+        }
+        if args.automation_review == 3
+            && let Some(dev) = c.synth_device()
+        {
+            let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
+            let target = AutomationTarget::Builtin { device: dev, device_type: def.id.into(), param: "cutoff".into() };
+            let points = vec![pt(0, 300.0, 0.0), pt(12, 4000.0, 0.0), pt(20, 900.0, 0.0)];
+            c.auto_commit(Some(inst), AutomationLane { target: target.clone(), enabled: true, points });
+            c.auto.targets.insert(Some(inst), target.clone());
+            c.auto.hover = Some((Some(inst), target, 1));
+            if let Some(i) = def.index_of("cutoff") {
+                c.synth_knob_menu(i, 560.0, 640.0);
+            }
         }
     }
     // The dropdown opens once its editor is on screen (the audio clip state imports first).

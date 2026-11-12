@@ -790,7 +790,7 @@ export global Studio {
     callback synth-pill(int, int, length, length, length); // menu action, argument, window x, y, width
     callback synth-remove(int, int);             // 0 route / 1 mapping, slot
     callback synth-knob-menu(int, length, length); // right click: param index, window x, y
-    callback strip-menu(int, int, length, length);        // right press on a channel control: track (-1 master), 0 volume / 1 pan / 2 mute
+    callback strip-menu(int, int, length, length);        // right press on a channel control: track (-1 master), 0 volume / 1 pan / 2 mute / 3 trim / 4 width / 5 mono
     callback synth-pill-menu(int, int, length, length);   // right press on a pill: the menu of its parameter
     callback synth-rail(int, int, length, length); // source, phase (0 down 1 move 2 up), card x, y
     callback synth-scope-drag(int, int, length, length); // picture slot, phase, local x, y

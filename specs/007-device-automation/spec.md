@@ -16,14 +16,14 @@ the way the knob does.
   switches, the mod matrix) opens a menu that starts with "Automate <parameter>". The Synth's other rows (reset,
   modulation) stay below it.
 - Right-clicking a device's power switch opens "Automate On".
-- Right-clicking the channel volume, pan or M (track header, inspector, mixer strip) opens "Automate Volume",
-  "Automate Pan" or "Automate Mute". The master's fader offers "Automate Volume".
+- Right-clicking the channel volume, pan or M (track header, inspector, mixer strip), or the inspector's trim, width
+  or mono, opens "Automate <name>". The master's fader offers "Automate Volume".
 - Choosing an Automate row shows the automation lanes (if hidden) and switches the track's lane to that parameter.
-- The lane picker lists Track › Volume, Pan, Mute, and under each device its automatable parameters followed by
-  "On".
+- The lane picker lists Track › Volume, Pan, Mute, Trim, Width, Mono, and under each device its automatable
+  parameters followed by "On".
 - Lane labels and a hovered or dragged point's readout use the parameter's own text: Hz/kHz, dB, ms, ct, %, choice
   names, Muted/Unmuted, On/Off.
-- Mute, On and choice lanes are steps: a point's value holds until the next point. Points dragged on them snap to the
+- Mute, Mono, On and choice lanes are steps: a point's value holds until the next point. Points dragged on them snap to the
   allowed values.
 - While a Mute or On lane is active, the M button and the power switch show the lane's state at the playhead.
   Clicking them explains that the parameter is automated; with Automation Arm on during playback the click writes one
@@ -35,15 +35,16 @@ the way the knob does.
 - R2. A track's mute and each device's on/off state must be automatable, with step (hold) evaluation that matches
   bit for bit between core and engine.
 - R3. Lane labels must show the parameter's own unit and text.
-- R4. The channel strip's volume, pan and mute must offer Automate on right-click.
+- R4. The channel strip's volume, pan, mute, trim, width and mono must be automatable and offer Automate on
+  right-click.
 - R5. The audio path must not get measurably slower for sessions without the new lanes.
 
 ## Acceptance checks
 
 - A1 (R1, R4): app test `right_click_menus_open_the_parameters_lane` (device knob, power switch, strip volume, pan
   and mute, master).
-- A2 (R2): engine tests `automation_stepped_lanes_hold_each_value`, `automation_mute_lane_replaces_the_static_mute`,
-  `automation_device_on_lane_switches_an_insert_per_block`; core `switch_lanes_hold_each_value`,
+- A2 (R2, R4): engine tests `automation_stepped_lanes_hold_each_value`, `automation_mute_lane_replaces_the_static_mute`,
+  `automation_device_on_lane_switches_an_insert_per_block`, `automation_strip_lanes_set_trim_width_and_mono`; core `switch_lanes_hold_each_value`,
   `switch_targets_round_trip_through_json`, `switch_lanes_validate_their_device_and_reach_the_snapshot`; app
   `switches_follow_an_active_lane`.
 - A3 (R3): app tests `synth_lanes_read_in_the_parameters_own_units`, `device_lanes_read_like_their_controls`;
@@ -52,7 +53,6 @@ the way the knob does.
 
 ## Out of scope
 
-- Trim, Width and Mono lanes (the strip controls landed separately; a follow-up adds their lanes).
 - Modulation and macro rows on channel strip controls.
 - A track header context menu ("Show automation"); the lanes button already does this.
 

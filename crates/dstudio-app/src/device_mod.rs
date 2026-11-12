@@ -897,7 +897,7 @@ impl Controller {
     }
 
     /// Right press on a channel control (track header, inspector, mixer strip): `kind` 0
-    /// volume, 1 pan, 2 mute; `track` < 0 is the master (volume only).
+    /// volume, 1 pan, 2 mute, 3 trim, 4 width, 5 mono; `track` < 0 is the master (volume only).
     pub fn strip_menu(&mut self, track: i32, kind: i32, x: f32, y: f32) {
         use dstudio_core::AutomationTarget as T;
         let key = if track < 0 { None } else { Some(TrackId(track as u64)) };
@@ -910,6 +910,9 @@ impl Controller {
             (_, 0) => ("Automate Volume", T::Volume),
             (Some(_), 1) => ("Automate Pan", T::Pan),
             (Some(_), 2) => ("Automate Mute", T::Mute),
+            (Some(_), 3) => ("Automate Trim", T::Trim),
+            (Some(_), 4) => ("Automate Width", T::Width),
+            (Some(_), 5) => ("Automate Mono", T::Mono),
             _ => return,
         };
         let rows: MenuRows = vec![(label.to_string(), String::new(), Some(MenuPick::AutomateTrack(key, target)), false)];

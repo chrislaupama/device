@@ -190,7 +190,7 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
 }
 
 const char* validate_lane(const se_auto_lane_desc& d) noexcept {
-    if (d.target > SE_AUTO_DEVICE_ON) return "invalid automation target";
+    if (d.target > SE_AUTO_MONO) return "invalid automation target";
     if ((d.flags & ~static_cast<uint32_t>(SE_AUTO_FLAG_STEPPED)) != 0) return "unknown automation lane flags";
     if (d.target == SE_AUTO_SYNTH && d.synth_param >= SE_SYNTH_P_COUNT) return "invalid synth parameter";
     if (d.point_count > 0 && d.points == nullptr) return "point_count > 0 but points == NULL";
@@ -384,6 +384,9 @@ int32_t apply_strips(RenderGraph& g, const se_session_desc_v10& desc, std::strin
         }
         TrackNode& node = g.tracks[it->second];
         strip_matrix(st.trim, st.width, st.mono != 0, node.strip_a, node.strip_b);
+        node.strip_trim = st.trim;
+        node.strip_width = st.width;
+        node.strip_mono = st.mono != 0;
         node.strip_on = node.strip_a != 1.0f || node.strip_b != 0.0f;
     }
     return SE_OK;
@@ -823,6 +826,12 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
                 node.pan_lane = static_cast<int32_t>(add_lane(*g, *d));
             if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_MUTE; }))
                 node.mute_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_TRIM; }))
+                node.trim_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_WIDTH; }))
+                node.width_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_MONO; }))
+                node.mono_lane = static_cast<int32_t>(add_lane(*g, *d));
             // Power switch lanes (SE_AUTO_DEVICE_ON), one per device.
             const auto on_lane = [&](uint64_t device_id) -> int32_t {
                 const auto* d = last_of([device_id](const se_auto_lane_desc& l) {

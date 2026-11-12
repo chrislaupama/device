@@ -26,14 +26,16 @@ playing". A Draw mode (B) pencil exists.
   editor changes via `take_plugin_param_changes`) are recorded into the lane in "touch" style. Points are
   thinned and committed as one undo step when the gesture ends.
 - **Plugin parameters** are listed via `plugin_params`; a removed device's lanes stay but are inactive.
-- **Switches (2026-11-12):** `Mute` (track, 1 = muted) and `DeviceOn {device, name}` (1 = on) targets, and every
+- **Channel strip (2026-11-12):** `Trim` (dB −24..24), `Width` (0..2) and `Mono` targets replace the strip settings
+  per sample (engine `SE_AUTO_TRIM/WIDTH/MONO`).
+- **Switches (2026-11-12):** `Mute` (track, 1 = muted), `Mono` and `DeviceOn {device, name}` (1 = on) targets, and every
   built-in choice parameter, are *stepped*: a point's value holds until the next point. The flag travels in
   `se_auto_lane_desc.flags` (`SE_AUTO_FLAG_STEPPED`), so the engine and `value_at` agree. An active Mute lane replaces
   the M button, an active On lane replaces the device's power switch; clicking either while the lane is active
   explains why nothing changed, and while armed and playing writes one step at the playhead.
 - **Where lanes come from (app):** every device control's right-click menu starts with "Automate <parameter>" (one
   shared menu for built-in devices, plugins and the Synth); a device's power switch offers "Automate On"; the
-  channel strip's volume, pan and M offer "Automate Volume/Pan/Mute". Choosing one shows the lanes and switches the
+  channel strip's volume, pan, M, trim, width and mono offer "Automate <name>". Choosing one shows the lanes and switches the
   track's lane to that parameter. Lane labels use the parameter's own text (Hz, dB, ms, choice names, On/Off).
 
 ## Implementation notes (engine)

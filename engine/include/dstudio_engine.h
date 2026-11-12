@@ -832,8 +832,8 @@ int32_t se_transport_audible_position(const se_engine* engine, int64_t* out_fram
  * playhead. se_export_wav renders automation.
  * Several lanes with the same target on one track: the last one wins. Master
  * lanes: only SE_AUTO_VOLUME is used (others are ignored).
- * Validation (else SE_ERR_INVALID_ARG): target <= SE_AUTO_DEVICE_ON (see
- * below for SE_AUTO_BUILTIN, SE_AUTO_MUTE and SE_AUTO_DEVICE_ON), flags
+ * Validation (else SE_ERR_INVALID_ARG): target <= SE_AUTO_MONO (see below
+ * for SE_AUTO_BUILTIN and the switch and channel-strip targets), flags
  * only SE_AUTO_FLAG_*, synth_param < SE_SYNTH_P_COUNT, points non-NULL when point_count > 0,
  * frames non-decreasing, values and curves finite, curve in -1..1, synth
  * values inside the parameter's se_synth_params range. Lanes without points
@@ -1161,8 +1161,14 @@ enum { SE_AUTO_BUILTIN = 4 };
  * SE_AUTO_FLAG_STEPPED (se_auto_lane_desc::flags): the lane holds each
  *   point's value until the next point (no interpolation, no curve):
  *   a.frame <= t < b.frame -> a.value. Set for switches and for discrete
- *   built-in parameters (choices). Other flag bits must be 0. */
-enum { SE_AUTO_MUTE = 5, SE_AUTO_DEVICE_ON = 6 };
+ *   built-in parameters (choices). Other flag bits must be 0.
+ * Channel strip (se_session_publish_v10), evaluated per sample like volume
+ * at the track fader's timeline frame; each replaces the track's static
+ * strip setting (a track needs no `strips` entry to be automated):
+ * SE_AUTO_TRIM:  dB, clamped to -24..24, gain = 10^(dB/20).
+ * SE_AUTO_WIDTH: 0..2 (clamped), 1 = unchanged.
+ * SE_AUTO_MONO:  1 = folded to mono (value >= 0.5; stepped). */
+enum { SE_AUTO_MUTE = 5, SE_AUTO_DEVICE_ON = 6, SE_AUTO_TRIM = 7, SE_AUTO_WIDTH = 8, SE_AUTO_MONO = 9 };
 enum { SE_AUTO_FLAG_STEPPED = 1 };
 #define SE_BUILTIN_STATE_MAGIC 0x31494253u /* "SBI1" as a little-endian uint32 */
 #define SE_BUILTIN_MAX_SIDECHAINS 8
