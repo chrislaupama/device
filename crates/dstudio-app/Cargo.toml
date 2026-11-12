@@ -1,6 +1,6 @@
 [package]
 name = "dstudio-app"
-description = "Device Studio desktop application (Slint shell + custom wgpu timeline)"
+description = "Device desktop application (Slint shell + custom wgpu timeline)"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

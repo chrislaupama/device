@@ -210,7 +210,7 @@ export component UpdatesModal inherits Rectangle {
     }
     Text {
         x: 17px; y: 40.8px; width: root.width - 34px; height: 30.6px; wrap: word-wrap;
-        text: "You're running Device Studio v\{Studio.app-version}. There's no update server yet, so new versions arrive as new builds.";
+        text: "You're running Device v\{Studio.app-version}. There's no update server yet, so new versions arrive as new builds.";
         color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
     }
     PillButton { x: root.width - 17px - 40.8px; y: root.height - 17px - 27.2px; width: 40.8px; height: 27.2px; text: "OK"; primary: true; clicked => { Studio.updates-close(); } }

@@ -1,6 +1,6 @@
 ---
 name: dstudio-bench
-description: Measure Device Studio's performance before and after a change - which engine, core or app benchmark covers what, how to run a fair comparison, when to add a benchmark, and how to report the numbers in a pull request. Use for any change that could affect CPU, memory, latency, frame time or load time.
+description: Measure Device's performance before and after a change - which engine, core or app benchmark covers what, how to run a fair comparison, when to add a benchmark, and how to report the numbers in a pull request. Use for any change that could affect CPU, memory, latency, frame time or load time.
 ---
 
 # Benchmarks

@@ -1,4 +1,4 @@
-//! Device Studio desktop application (milestone 1).
+//! Device desktop application (milestone 1).
 //!
 //! Slint shell (FemtoVG on wgpu 30) + our own wgpu timeline renderer
 //! (`gpu/`), wired to the real `dstudio_core::Document` and the C++ engine.

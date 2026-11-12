@@ -596,7 +596,7 @@ private:
             std::to_string(requested_quantum()) + "/" + std::to_string(static_cast<long>(config_.sample_rate));
         pw_properties* props = pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY,
                                                  playback ? "Playback" : "Capture", PW_KEY_MEDIA_ROLE, "Production",
-                                                 PW_KEY_APP_NAME, "Device Studio", PW_KEY_NODE_LATENCY, latency.c_str(),
+                                                 PW_KEY_APP_NAME, "Device", PW_KEY_NODE_LATENCY, latency.c_str(),
                                                  nullptr);
         if (!target.empty()) pw_properties_set(props, PW_KEY_TARGET_OBJECT, target.c_str());
         // One group for both streams: PipeWire runs them from the same driver
@@ -606,7 +606,7 @@ private:
         if (config_.device_rate > 0.0)
             pw_properties_set(props, PW_KEY_NODE_RATE,
                               ("1/" + std::to_string(static_cast<long>(std::lround(config_.device_rate)))).c_str());
-        s.stream = pw_stream_new(core_, playback ? "Device Studio output" : "Device Studio input", props);
+        s.stream = pw_stream_new(core_, playback ? "Device output" : "Device input", props);
         if (s.stream == nullptr) {
             err = std::string("pw_stream_new failed: ") + std::strerror(errno);
             return s;

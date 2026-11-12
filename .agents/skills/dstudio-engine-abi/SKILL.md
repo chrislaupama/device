@@ -1,6 +1,6 @@
 ---
 name: dstudio-engine-abi
-description: Change the boundary between Device Studio's Rust code and its C++ engine (engine/include/dstudio_engine.h, crates/dstudio-engine) or anything that runs on the audio thread - real-time rules, how data crosses threads, layout tests, allocation guards. Use for any engine feature, new se_* function or struct, or audio-callback change.
+description: Change the boundary between Device's Rust code and its C++ engine (engine/include/dstudio_engine.h, crates/dstudio-engine) or anything that runs on the audio thread - real-time rules, how data crosses threads, layout tests, allocation guards. Use for any engine feature, new se_* function or struct, or audio-callback change.
 ---
 
 # The C ABI and the audio thread

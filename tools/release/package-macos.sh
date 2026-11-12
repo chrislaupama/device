@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Builds the universal (Apple silicon + Intel) "Device Studio.app" for macOS, unsigned apart
+# Builds the universal (Apple silicon + Intel) "Device.app" for macOS, unsigned apart
 # from the linker's ad hoc signature. tools/release/make-dmg.sh signs it and wraps it in a .dmg.
 #
-# Usage: tools/release/package-macos.sh <out dir>   (writes "<out dir>/Device Studio.app")
+# Usage: tools/release/package-macos.sh <out dir>   (writes "<out dir>/Device.app")
 #   Expects release builds of dstudio-app for both architectures:
 #     cargo build --release --locked -p dstudio-app --target aarch64-apple-darwin
 #     cargo build --release --locked -p dstudio-app --target x86_64-apple-darwin
@@ -44,6 +44,6 @@ lipo -create -output "$work/dstudio_plugin_scanner" "$arm_scanner" "$x86_scanner
 chmod +x "$work/device-studio" "$work/dstudio_plugin_scanner"
 lipo -info "$work/device-studio" "$work/dstudio_plugin_scanner"
 
-rm -rf "$out/Device Studio.app"
+rm -rf "$out/Device.app"
 DSTUDIO_APP_EXE="$work/device-studio" DSTUDIO_SCANNER_EXE="$work/dstudio_plugin_scanner" \
   bash "$root/tools/macos-bundle.sh" "$out"

@@ -1,6 +1,6 @@
 ---
 name: dstudio-builtin-device
-description: Add or rework one of Device Studio's built-in effects or instruments - the DeviceDef in dstudio-core, the BuiltinProcessor kernel in engine/src/devices, the card or custom view in the app, presets, tests, benchmark row and review state. Use for any work on a built-in device, its parameters, DSP or panel.
+description: Add or rework one of Device's built-in effects or instruments - the DeviceDef in dstudio-core, the BuiltinProcessor kernel in engine/src/devices, the card or custom view in the app, presets, tests, benchmark row and review state. Use for any work on a built-in device, its parameters, DSP or panel.
 ---
 
 # Built-in devices

@@ -5,7 +5,7 @@
 // JACK bridge into it), it parses the byte stream into events, and several
 // applications can read the same port at once.
 //
-// One sequencer client ("Device Studio") with one input port. Opening a
+// One sequencer client ("Device") with one input port. Opening a
 // source subscribes that port to the source; closing unsubscribes. One
 // reader thread waits on the sequencer's poll descriptors plus a wake pipe
 // and turns events into channel messages for the source's receiver, so the
@@ -105,7 +105,7 @@ public:
             return;
         }
         if (a_->snd_seq_open(&query_, "default", SND_SEQ_OPEN_OUTPUT, 0) < 0) query_ = nullptr;
-        a_->snd_seq_set_client_name(seq_, "Device Studio");
+        a_->snd_seq_set_client_name(seq_, "Device");
         port_ = a_->snd_seq_create_simple_port(seq_, "MIDI in", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
                                                SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
         if (query_ == nullptr || port_ < 0 || pipe(wake_) != 0) {
@@ -114,7 +114,7 @@ public:
             seq_ = query_ = nullptr;
             return;
         }
-        a_->snd_seq_set_client_name(query_, "Device Studio (ports)");
+        a_->snd_seq_set_client_name(query_, "Device (ports)");
         self_ = a_->snd_seq_client_id(seq_);
         query_self_ = a_->snd_seq_client_id(query_);
         thread_ = std::thread([this] { run(); });

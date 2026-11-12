@@ -1,6 +1,6 @@
 ---
 name: spec-plan
-description: Turn an agreed Device Studio spec into plan.md (design layer by layer, principles check, tests and evidence, risks) and an ordered tasks.md. Use after spec-write, once spec.md is Agreed.
+description: Turn an agreed Device spec into plan.md (design layer by layer, principles check, tests and evidence, risks) and an ordered tasks.md. Use after spec-write, once spec.md is Agreed.
 ---
 
 # Plan a spec

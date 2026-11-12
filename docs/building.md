@@ -309,9 +309,9 @@ installable packages:
 
 | System | Package |
 |---|---|
-| macOS 13+ | `DeviceStudio-<version>-macos-universal.dmg` (Apple silicon + Intel) |
-| Windows x64 | `DeviceStudio-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
-| Linux x86_64, aarch64 | `DeviceStudio-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
+| macOS 13+ | `Device-<version>-macos-universal.dmg` (Apple silicon + Intel) |
+| Windows x64 | `Device-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
+| Linux x86_64, aarch64 | `Device-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
 
 The macOS app's two architectures build side by side on separate runners and
 are joined with `lipo` in a third job. Each package carries the plugin scanner next to the app, where the app looks
@@ -338,3 +338,15 @@ Every other build is signed ad hoc, and macOS asks the user to allow it on
 first launch. The Windows packages are not signed yet,
 so SmartScreen warns on first run. The packaging scripts are in
 [`tools/release/`](../tools/release/).
+
+### Compatibility names
+
+The public app name is **Device**. The command-line executable remains `device-studio` and
+internal crates, namespaces and options keep the `dstudio` prefix. Existing `.dsproj` files keep
+the `device-studio-project` format identifier and schema.
+
+Preferences and plugin caches keep their existing locations (`Device Studio` on macOS/Windows,
+`device-studio` on Linux), as does the default `~/Documents/Device Studio` project folder. Temporary
+recording/render folders and configured project locations are unchanged. This preserves existing
+settings, media references, scripts and OS permission associations while the visible app name changes.
+The macOS bundle identifier and Windows installer AppId also remain stable.

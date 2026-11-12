@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Signs "Device Studio.app" and wraps it in a .dmg with an Applications link; notarises and
+# Signs "Device.app" and wraps it in a .dmg with an Applications link; notarises and
 # staples the .dmg when credentials are given.
 #
 # Usage: tools/release/make-dmg.sh <app> <version> <out dir>
@@ -43,9 +43,9 @@ fi
 codesign --verify --strict --verbose=2 "$app"
 
 ln -s /Applications "$work/dmg/Applications"
-dmg="$out/DeviceStudio-$version-macos-universal.dmg"
+dmg="$out/Device-$version-macos-universal.dmg"
 rm -f "$dmg"
-hdiutil create -volname "Device Studio $version" -srcfolder "$work/dmg" -fs HFS+ -format UDZO -ov "$dmg"
+hdiutil create -volname "Device $version" -srcfolder "$work/dmg" -fs HFS+ -format UDZO -ov "$dmg"
 
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$dmg"

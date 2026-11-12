@@ -43,7 +43,7 @@ struct Connection {
 class CoreMidi final : public MidiBackend {
 public:
     CoreMidi() {
-        if (MIDIClientCreate(CFSTR("Device Studio"), nullptr, nullptr, &client_) != noErr) {
+        if (MIDIClientCreate(CFSTR("Device"), nullptr, nullptr, &client_) != noErr) {
             client_ = 0;
             return;
         }
