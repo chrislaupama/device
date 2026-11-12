@@ -18,6 +18,11 @@ use std::rc::Rc;
 
 type Ctl = Rc<RefCell<Controller>>;
 
+thread_local! {
+    /// Undo depth before the Project export section added its returns.
+    static EXPORT_UNDO_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// This run's scratch folder: every file the self-test writes (exports, saved projects, WAVs,
 /// recordings, clip renders, its plugin cache) lives under it, so runs that overlap on one
 /// machine never share a path. Created on first use; removed when every check passes.
@@ -1577,6 +1582,40 @@ fn steps() -> Vec<Step> {
         })),
         Do("⇧⌘E for the Project export", Box::new(|a| key(a, "E", true, true))),
         Check("export dialog open for Project", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        DoC("two returns for the Project export: Return A (sent to at -6 dB from a playing track, and the Out of another track with clips), Return B (with a device, sent to pre-fader from the playing track)", Box::new(|_a, ctl| {
+            let mut c = ctl.borrow_mut();
+            EXPORT_UNDO_DEPTH.with(|d| d.set(c.doc.undo_depth()));
+            // The sends come from a track that plays (a muted track feeds no return); the Out
+            // change goes on another track with clips.
+            let mut with_clips: Vec<(bool, dstudio_core::TrackId)> = c.project().tracks.iter().filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty()).map(|t| (t.mute, t.id)).collect();
+            with_clips.sort_by_key(|(mute, _)| *mute);
+            let with_clips: Vec<dstudio_core::TrackId> = with_clips.into_iter().map(|(_, id)| id).collect();
+            let selected = c.selected_track;
+            let (Some(ra), Some(rb)) = (c.add_return_track(), c.add_return_track()) else { return };
+            let plugin = dstudio_core::PluginRef {
+                format: dstudio_core::PluginFormat::Clap,
+                id: "studio.dstudio.test.gain".into(),
+                path: Some(dstudio_engine::test_plugin_dir().join("DStudioTestGain.clap").to_string_lossy().into_owned()),
+                name: "DStudio Test Gain".into(),
+                vendor: "DStudio".into(),
+                version: "1.0.0".into(),
+                kind: dstudio_core::PluginKind::Effect,
+            };
+            c.execute(dstudio_core::Command::AddDevice { track: rb, index: None, device: dstudio_core::Device::new(plugin) });
+            if let Some(&t0) = with_clips.first() {
+                c.add_send(t0, ra);
+                c.set_send_level(t0, ra, 0.5);
+                c.send_gesture_end();
+                c.add_send(t0, rb);
+                c.toggle_send_pre(t0, rb);
+            }
+            if let Some(&t1) = with_clips.get(1) {
+                c.set_track_output(t1, Some(ra));
+            }
+            if let Some(t) = selected {
+                c.select_track(t);
+            }
+        })),
         DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
             click(a, (win().0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (win().1 - 340.4) / 2.0 + 44.2 + 22.0);
             let mut c = ctl.borrow_mut();
@@ -1597,12 +1636,29 @@ fn steps() -> Vec<Step> {
             let p = c.project();
             let with_clips = p.tracks.iter().filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty()).count();
             let midi: usize = p.tracks.iter().map(|t| t.midi_clips.len()).sum();
-            let notes = folder.join("DStudio Export Notes.txt").is_file();
+            let notes = std::fs::read_to_string(folder.join("DStudio Export Notes.txt")).unwrap_or_default();
+            // Return B has a device and is fed, so it is rendered as one more audio clip.
+            let wet = std::fs::read_dir(folder.join("Samples/Processed/DStudio")).map_or(0, |d| d.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains("Return B")).count());
+            let sends = if with_clips > 1 { 3 } else { 2 };
             let _ = std::fs::remove_dir_all(&c.export.dir);
-            (sum.audio_clips == with_clips && sum.midi_clips == midi && notes && !a.global::<Studio>().get_export_open())
+            (sum.audio_clips == with_clips + 1 && sum.midi_clips == midi && sum.return_tracks == 2 && sum.sends == sends && wet == 1 && !a.global::<Studio>().get_export_open())
                 .then_some(())
-                .ok_or(format!("{sum:?} vs {with_clips} rendered, {midi} MIDI clips; notes {notes}"))
+                .ok_or(format!(
+                    "{sum:?} vs {with_clips} rendered, {midi} MIDI clips, {sends} sends; Return B renders {wet}; tracks {:?}",
+                    p.tracks.iter().map(|t| (t.name.as_str(), t.mute, t.devices.len(), t.sends.len())).collect::<Vec<_>>()
+                ))?;
+            ["Return A, Return B", "Returns with devices (Return B)", "Pre-fader sends", if with_clips > 1 { "Sends Only" } else { "" }]
+                .iter()
+                .try_for_each(|w| notes.contains(w).then_some(()).ok_or(format!("the notes do not mention '{w}': {notes}")))
         })),
+        DoC("undo the returns and sends", Box::new(|_a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let depth = EXPORT_UNDO_DEPTH.with(|d| d.get());
+            while c.doc.undo_depth() > depth {
+                c.undo();
+            }
+        })),
+        Check("the project has no return tracks again", Box::new(|c, _| (c.project().returns().count() == 0).then_some(()).ok_or("returns left".into()))),
         Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
         Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
             let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
@@ -8879,6 +8935,7 @@ fn live_import_steps() -> Vec<Step> {
                 loop_on: false,
                 loop_start: 0.0,
                 loop_length: 16.0,
+                returns: Vec::new(),
                 tracks: vec![
                     SetTrack {
                         name: "Loop".into(),
@@ -8886,6 +8943,8 @@ fn live_import_steps() -> Vec<Step> {
                         on: true,
                         volume: 0.5,
                         pan: 0.0,
+                        sends: Vec::new(),
+                        sends_only: false,
                         content: SetContent::Audio(vec![SetAudioClip {
                             name: "loop".into(),
                             start: 4.0,
@@ -8904,6 +8963,8 @@ fn live_import_steps() -> Vec<Step> {
                         on: true,
                         volume: 1.0,
                         pan: 0.0,
+                        sends: Vec::new(),
+                        sends_only: false,
                         content: SetContent::Midi(vec![SetMidiClip { name: "keys".into(), start: 0.0, length: 4.0, notes: vec![SetNote { pitch: 60, time: 0.0, duration: 1.0, velocity: 100 }] }]),
                     },
                 ],

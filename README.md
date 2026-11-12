@@ -67,7 +67,7 @@ wgpu.
   record your moves with touch-write.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
   (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
-  seamlessly), or export the project as an Ableton Live set.
+  seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It uses your own Anthropic API key.

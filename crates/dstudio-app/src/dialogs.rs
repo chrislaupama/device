@@ -181,8 +181,17 @@ pub fn stem_tracks(p: &Project, pick: StemsPick, selected: Option<TrackId>) -> V
 /// The mix with only track `id` sounding, dry: every other track muted and no track routed
 /// through a return (no sends, every output on the master), so a stem whose output goes to a
 /// return, which is muted here, still plays.
+/// For a return track: that return alone (soloed, even when muted in the mix), fed by the sends
+/// and outputs of every unmuted track as in the mix.
 pub(crate) fn stem_snapshot(mix: &dstudio_core::snapshot::SessionSnapshot, id: TrackId) -> dstudio_core::snapshot::SessionSnapshot {
     let mut snap = mix.clone();
+    if snap.tracks.iter().any(|t| t.track_id == id.0 && t.is_return) {
+        for t in &mut snap.tracks {
+            t.solo = t.track_id == id.0;
+            t.mute = if t.is_return { !t.solo } else { t.mute };
+        }
+        return snap;
+    }
     for t in &mut snap.tracks {
         t.solo = false;
         t.mute = t.track_id != id.0;
@@ -495,11 +504,14 @@ impl Controller {
         use crate::live_set::{self, LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack};
         const RENDERS: &str = "Samples/Processed/DStudio";
         let has_clips = |t: &dstudio_core::Track| !t.clips.is_empty() || !t.midi_clips.is_empty();
+        // A return with devices is rendered too (its wet sound, since Live can't load the
+        // devices), when a track that plays feeds it.
+        let fed = |p: &Project, r: TrackId| p.tracks.iter().any(|t| has_clips(t) && !t.mute && (t.output == Some(r) || t.sends.iter().any(|s| s.target == r && s.level > 0.0)));
         let rendered: Vec<(TrackId, String)> = self
             .project()
             .tracks
             .iter()
-            .filter(|t| has_clips(t))
+            .filter(|t| if t.is_return() { !t.devices.is_empty() && fed(self.project(), t.id) } else { has_clips(t) })
             .enumerate()
             .map(|(i, t)| (t.id, stem_file_name(i, &t.name)))
             .collect();
@@ -519,6 +531,38 @@ impl Controller {
         let mut tracks = Vec::new();
         let mut notes = String::new();
         let mut off = Vec::new();
+        let returns: Vec<&dstudio_core::Track> = p.returns().collect();
+        let (mut clamped, mut pre_sends, mut to_return) = (Vec::new(), Vec::new(), Vec::new());
+        // Sends as Live levels, one per return. A rendered track already carries its volume, so
+        // a post-fader send keeps its level and a pre-fader one is divided by the volume.
+        // A track whose Out is a return plays through that return alone: "Sends Only" plus a
+        // full send to it.
+        let mut sends_of = |t: &dstudio_core::Track, baked: bool| -> (Vec<f32>, bool) {
+            let levels = returns
+                .iter()
+                .map(|r| {
+                    let mut level = 0.0f32;
+                    for s in t.sends.iter().filter(|s| s.target == r.id) {
+                        level += if s.pre_fader && baked {
+                            pre_sends.push(format!("{} to {}", t.name, r.name));
+                            if t.gain > 0.0 { s.level / t.gain } else { 0.0 }
+                        } else {
+                            s.level
+                        };
+                    }
+                    if t.output == Some(r.id) {
+                        to_return.push(format!("{} to {}", t.name, r.name));
+                        level += 1.0;
+                    }
+                    if level > live_set::SEND_RANGE.1 as f32 + 1e-4 {
+                        clamped.push(format!("{} to {}", t.name, r.name));
+                    }
+                    level.min(live_set::SEND_RANGE.1 as f32)
+                })
+                .collect();
+            (levels, t.output.is_some_and(|o| returns.iter().any(|r| r.id == o)))
+        };
+        let mut rendered_returns = Vec::new();
         for t in &p.tracks {
             let color = t.color.0 as u32 % 70;
             let render = rendered.iter().find(|(id, _)| *id == t.id).map(|(_, f)| f);
@@ -539,15 +583,22 @@ impl Controller {
                 }
                 (None, dstudio_core::TrackKind::Audio) => SetContent::Audio(Vec::new()),
                 (None, dstudio_core::TrackKind::Instrument) => SetContent::Midi(Vec::new()),
-                // Return tracks have no material of their own (track renders are dry).
+                // A return without a render is a Live return track only (below).
                 (None, dstudio_core::TrackKind::Return) => continue,
             };
+            if t.is_return() {
+                // The return's wet sound as audio, next to the (turned off) Live return.
+                rendered_returns.push(t.name.clone());
+                tracks.push(SetTrack { name: format!("{} (rendered)", t.name), color, on: !t.mute, volume: 1.0, pan: 0.0, sends: Vec::new(), sends_only: false, content });
+                continue;
+            }
             if t.mute {
                 off.push(t.name.clone());
             }
             // A rendered track already carries its volume and pan.
             let (volume, pan) = if render.is_some() { (1.0, 0.0) } else { (t.gain, t.pan) };
-            tracks.push(SetTrack { name: t.name.clone(), color, on: !t.mute, volume, pan, content });
+            let (sends, sends_only) = sends_of(t, render.is_some());
+            tracks.push(SetTrack { name: t.name.clone(), color, on: !t.mute, volume, pan, sends, sends_only, content });
             if render.is_some() && !t.midi_clips.is_empty() {
                 for (k, lane) in midi_lanes(&t.midi_clips).iter().enumerate() {
                 let clips = lane
@@ -564,7 +615,7 @@ impl Controller {
                     })
                     .collect();
                 let label = if k == 0 { format!("{} (MIDI)", t.name) } else { format!("{} (MIDI {})", t.name, k + 1) };
-                tracks.push(SetTrack { name: label, color, on: false, volume: t.gain, pan: t.pan, content: SetContent::Midi(clips) });
+                tracks.push(SetTrack { name: label, color, on: false, volume: t.gain, pan: t.pan, sends: Vec::new(), sends_only: false, content: SetContent::Midi(clips) });
                 }
             }
         }
@@ -577,6 +628,18 @@ impl Controller {
             loop_start: beats(tr.loop_start),
             loop_length: beats(tr.loop_end - tr.loop_start),
             tracks,
+            // A rendered return's Live return is turned off, or its sends would sound twice.
+            returns: returns
+                .iter()
+                .map(|r| live_set::SetReturn {
+                    name: r.name.clone(),
+                    color: r.color.0 as u32 % 70,
+                    on: !r.mute && !rendered_returns.contains(&r.name),
+                    volume: r.gain,
+                    pan: r.pan,
+                    pre: false,
+                })
+                .collect(),
         };
         let xml = live_set::to_xml(&set);
         live_set::validate(&xml, Some(folder)).map_err(|e| format!("the Live set failed its structure check: {e}"))?;
@@ -600,9 +663,25 @@ impl Controller {
             let _ = writeln!(notes, "\nMuted in DStudio, so turned off in the set: {}.", off.join(", "));
         }
         let _ = writeln!(notes, "\nNot carried over: automation and device settings. Track colours are not matched to Live's palette.");
-        let returns: Vec<&str> = p.returns().map(|r| r.name.as_str()).collect();
         if !returns.is_empty() {
-            let _ = writeln!(notes, "Return tracks ({}) and sends are not carried over either: every track is rendered dry, without its sends and as if its Out went to the master.", returns.join(", "));
+            let names: Vec<&str> = returns.iter().map(|r| r.name.as_str()).collect();
+            let _ = writeln!(notes, "\nReturn tracks ({}) are Live return tracks with their volume and pan, and every track keeps its sends. Tracks are rendered dry, so the returns are fed inside Live.", names.join(", "));
+            if !rendered_returns.is_empty() {
+                let _ = writeln!(
+                    notes,
+                    "Returns with devices ({}) were also rendered as audio, on a track named \"<return> (rendered)\", and their Live return track is turned off so nothing sounds twice. To use your own effect instead, put it on the return, turn the return on and delete the rendered track.",
+                    rendered_returns.join(", ")
+                );
+            }
+            if !to_return.is_empty() {
+                let _ = writeln!(notes, "Out set to a return, so set to Sends Only with a full send in Live: {}.", to_return.join(", "));
+            }
+            if !pre_sends.is_empty() {
+                let _ = writeln!(notes, "Pre-fader sends became post-fader sends with the level raised or lowered by the track's volume (the render already carries it), and follow the track's pan: {}.", pre_sends.join(", "));
+            }
+            if !clamped.is_empty() {
+                let _ = writeln!(notes, "Sends above 0 dB were set to 0 dB, Live's maximum: {}.", clamped.join(", "));
+            }
         }
         std::fs::write(folder.join("DStudio Export Notes.txt"), notes).map_err(|e| e.to_string())?;
         Ok((vec![als], restart))
@@ -882,6 +961,30 @@ mod tests {
         let s = stem_snapshot(&mix, TrackId(1));
         assert!(s.tracks.iter().all(|t| t.output.is_none() && t.sends.is_empty() && !t.solo));
         assert!(!s.tracks[0].mute && s.tracks[1].mute);
+    }
+
+    #[test]
+    fn a_return_stem_is_that_return_alone_fed_by_the_mix() {
+        use dstudio_core::{Track, TrackKind, TrackSend};
+        let mut p = Project::default();
+        let ra = Track::new(TrackId(2), TrackKind::Return, "Return A", dstudio_core::ColorIndex(0));
+        let mut rb = Track::new(TrackId(3), TrackKind::Return, "Return B", dstudio_core::ColorIndex(0));
+        rb.mute = true;
+        let mut a = Track::new(TrackId(1), TrackKind::Audio, "Audio", dstudio_core::ColorIndex(0));
+        a.solo = true;
+        a.output = Some(ra.id);
+        a.sends.push(TrackSend::new(rb.id));
+        let mut quiet = Track::new(TrackId(4), TrackKind::Audio, "Muted", dstudio_core::ColorIndex(0));
+        quiet.mute = true;
+        p.tracks = vec![a, quiet, ra, rb];
+        let (mix, _) = dstudio_core::snapshot::build(&p, 48000.0, &Default::default());
+        // Return B is muted in the mix: its stem still plays it, and only it.
+        let s = stem_snapshot(&mix, TrackId(3));
+        let by_id = |id: u64| s.tracks.iter().find(|t| t.track_id == id).unwrap();
+        assert!(by_id(3).solo && !by_id(3).mute, "the return is soloed and plays");
+        assert!(by_id(2).mute && !by_id(2).solo, "the other return is silent");
+        assert!(!by_id(1).solo && !by_id(1).mute && by_id(4).mute, "tracks keep their mutes, solos are cleared");
+        assert_eq!((by_id(1).output, by_id(1).sends.len()), (Some(2), 1), "sends and outputs stay as in the mix");
     }
 
     #[test]
