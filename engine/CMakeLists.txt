@@ -38,9 +38,17 @@ endif()
 # for the test plugins are used; nothing is added via add_subdirectory.
 # Set FETCHCONTENT_BASE_DIR to share one download between build trees, or
 # FETCHCONTENT_SOURCE_DIR_<NAME> to use a local checkout (offline builds).
+#
+# Each tag is recorded with the commit it pointed at when it was pinned
+# (DSTUDIO_<NAME>_TAG_COMMIT). The configure step fails if a fetched tag is at
+# a different commit, so a tag moved upstream cannot change what we build.
+# tools/ci/engine_pins.py (weekly "Engine pins" workflow) reports pins that
+# are behind upstream or whose tag moved; docs/building.md says how to update.
 include(FetchContent)
 set(DSTUDIO_CLAP_TAG 1.2.10)
+set(DSTUDIO_CLAP_TAG_COMMIT 195b42a004144fab0b3cf95e9c067187d15365b7)
 set(DSTUDIO_VST3SDK_TAG v3.8.1_build_84)
+set(DSTUDIO_VST3SDK_TAG_COMMIT 3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96)
 FetchContent_Declare(dstudio_clap
   GIT_REPOSITORY https://github.com/free-audio/clap.git
   GIT_TAG ${DSTUDIO_CLAP_TAG}
@@ -55,7 +63,9 @@ FetchContent_Declare(dstudio_vst3sdk
 # Time stretching for warped audio clips (src/warp.cpp): signalsmith-stretch
 # and the FFT / STFT library it is built on. Header-only.
 set(DSTUDIO_STRETCH_TAG 1.4.0)
+set(DSTUDIO_STRETCH_TAG_COMMIT a670068d9aeb64913331d5cc29337b19a457a7df)
 set(DSTUDIO_LINEAR_TAG 0.6.4)
+set(DSTUDIO_LINEAR_TAG_COMMIT de55e6a50ffcf6f8f43f649692d94691c7025151)
 FetchContent_Declare(dstudio_signalsmith_stretch
   GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
   GIT_TAG ${DSTUDIO_STRETCH_TAG}
@@ -81,6 +91,32 @@ FetchContent_Declare(dstudio_stb
   GIT_TAG ${DSTUDIO_STB_COMMIT}
   SOURCE_SUBDIR _dstudio_headers_only)
 FetchContent_MakeAvailable(dstudio_clap dstudio_vst3sdk dstudio_signalsmith_stretch dstudio_signalsmith_linear dstudio_dr_libs dstudio_stb)
+# Check every fetched checkout is at its pinned commit. Skipped for a local
+# checkout given with FETCHCONTENT_SOURCE_DIR_<NAME> and for a source tree
+# without git metadata (an unpacked archive).
+function(dstudio_verify_pin name expected)
+  string(TOUPPER "${name}" upper)
+  if(FETCHCONTENT_SOURCE_DIR_${upper} OR NOT EXISTS "${${name}_SOURCE_DIR}/.git")
+    return()
+  endif()
+  find_package(Git QUIET)
+  if(NOT Git_FOUND)
+    return()
+  endif()
+  execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+    WORKING_DIRECTORY "${${name}_SOURCE_DIR}"
+    OUTPUT_VARIABLE actual OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  if(actual AND NOT actual STREQUAL expected)
+    message(FATAL_ERROR "${name}: fetched commit ${actual} is not the pinned ${expected}. "
+      "The upstream tag may have moved; see docs/building.md (Engine dependencies).")
+  endif()
+endfunction()
+dstudio_verify_pin(dstudio_clap ${DSTUDIO_CLAP_TAG_COMMIT})
+dstudio_verify_pin(dstudio_vst3sdk ${DSTUDIO_VST3SDK_TAG_COMMIT})
+dstudio_verify_pin(dstudio_signalsmith_stretch ${DSTUDIO_STRETCH_TAG_COMMIT})
+dstudio_verify_pin(dstudio_signalsmith_linear ${DSTUDIO_LINEAR_TAG_COMMIT})
+dstudio_verify_pin(dstudio_dr_libs ${DSTUDIO_DR_LIBS_COMMIT})
+dstudio_verify_pin(dstudio_stb ${DSTUDIO_STB_COMMIT})
 set(DSTUDIO_DECODER_INCLUDE "${dstudio_dr_libs_SOURCE_DIR}" "${dstudio_stb_SOURCE_DIR}")
 set(DSTUDIO_STRETCH_INCLUDE "${dstudio_signalsmith_stretch_SOURCE_DIR}" "${dstudio_signalsmith_linear_SOURCE_DIR}/include")
 set(DSTUDIO_CLAP_INCLUDE "${dstudio_clap_SOURCE_DIR}/include")
