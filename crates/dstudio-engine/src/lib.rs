@@ -219,7 +219,7 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v9`: return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
+    /// (`se_session_publish_v10`: channel-strip trim, width and mono (spec 004); return tracks, sends and outputs (spec 002); audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -365,9 +365,17 @@ impl Engine {
             loop_count: loop_descs.len() as u32,
             _pad: 0,
         };
-        let desc = ffi::se_session_desc_v9 { v8, routes: routes.as_ptr(), route_count: routes.len() as u32, send_count: sends.len() as u32, sends: sends.as_ptr() };
+        let v9 = ffi::se_session_desc_v9 { v8, routes: routes.as_ptr(), route_count: routes.len() as u32, send_count: sends.len() as u32, sends: sends.as_ptr() };
+        // Channel strip (spec 004): only tracks whose trim, width or mono change the signal.
+        let strips: Vec<ffi::se_track_strip> = s
+            .tracks
+            .iter()
+            .filter(|t| t.trim != 1.0 || t.width != 1.0 || t.mono)
+            .map(|t| ffi::se_track_strip { track_id: t.track_id, trim: t.trim, width: t.width, mono: t.mono as u8, _pad: [0; 7] })
+            .collect();
+        let desc = ffi::se_session_desc_v10 { v9, strips: strips.as_ptr(), strip_count: strips.len() as u32, _pad: 0 };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v9(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v10(self.raw, &desc) })
     }
 
     fn device_store(
@@ -1758,6 +1766,9 @@ mod tests {
                     sends: Vec::new(),
                     gain: 1.0,
                     pan: 0.0,
+                    trim: 1.0,
+                    width: 1.0,
+                    mono: false,
                     mute: false,
                     solo: false,
                     clips: vec![],
@@ -1787,6 +1798,9 @@ mod tests {
                 sends: Vec::new(),
                 gain: 1.0,
                 pan: 0.0,
+                trim: 1.0,
+                width: 1.0,
+                mono: false,
                 mute: false,
                 solo: false,
                 clips: vec![],

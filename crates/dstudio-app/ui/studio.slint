@@ -426,6 +426,12 @@ export global Studio {
     in property <bool> sel-solo;
     in property <float> sel-pan;
     in property <string> sel-pan-text: "C";
+    // Channel strip trim (dB, -24..24), width (0..2, 1 = 100 %) and mono fold (spec 004).
+    in property <float> sel-trim;
+    in property <string> sel-trim-text: "0.0 dB";
+    in property <float> sel-width: 1;
+    in property <string> sel-width-text: "100%";
+    in property <bool> sel-mono;
     in property <float> sel-fader;      // 0 (top, +6 dB) .. 1 (bottom, -inf)
     in property <string> sel-db-text: "0.00";
     in property <float> sel-meter-l: 1; // 0 (top) .. 1 (bottom = silent)
@@ -508,6 +514,10 @@ export global Studio {
     callback track-volume(int, float);
     callback track-pan(int, float);
     callback track-pan-text(int, string);       // inline pan entry in the track header
+    callback track-trim(int, float);            // dB; one held knob drag is one undo step
+    callback track-width(int, float);           // 0..2
+    callback track-mono(int);                   // toggles
+    callback strip-gesture-end();               // trim / width knob released
     // Track id, typed name, and the doc-epoch the field opened in (double-click a track name).
     callback track-rename(int, string, int);
     callback track-rename-draft(int, string, int); // the open field's text, so it survives the field's removal

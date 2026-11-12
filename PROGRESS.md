@@ -468,3 +468,17 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   pull request media guidance to the organization URL. The old repository URL redirects to the new location.
 - The project website is https://devicedaw.github.io/. Repository ownership and documentation links changed;
   application code and CI behavior are unchanged.
+
+### 2026-11-12: channel strip trim, width and mono (spec 004)
+
+- The channel strip's Trim, Width and Mono controls work (they were placeholders). Trim is ±24 dB in 0.1 dB steps,
+  width 0-200 % (100 % unchanged), and Mono folds the track to mono whatever the width. Double-click resets a knob; a
+  held knob drag is one undo step ("Trim Change", "Width Change"; the switch is "Mono Change"). Return tracks have
+  them too. Saved per track as `trim` (dB), `width` and `mono`, left out of the file when neutral.
+- Core: `Track::trim_db` / `width` / `mono`, `Command::SetTrackTrim` / `SetTrackWidth` / `SetTrackMono`.
+  Bounce-in-place and material renders are taken before them (the track keeps its settings); stems keep them.
+- Engine: `se_session_publish_v10` adds `se_track_strip` entries (only for tracks that are not neutral). Trim, width
+  and mono fold into one 2x2 matrix per track at publish time, applied in place after the insert chain and before
+  pre-fader sends, the fader and pan (`kernel_strip`). A neutral track is untouched, bit for bit.
+- Tests: `engine/tests/test_strip.cpp`, `crates/dstudio-core/tests/strip.rs`, self-test section `strip_steps`.
+  Bench: `dstudio_engine_bench` "Channel strip" table. Review state `review-strip-trim`.

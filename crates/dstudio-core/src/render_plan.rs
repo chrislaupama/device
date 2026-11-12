@@ -118,11 +118,14 @@ pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project
                 t.automation.clear();
                 t.gain = CENTRE_UNITY_GAIN;
                 t.pan = 0.0;
+                (t.trim_db, t.width, t.mono) = (0.0, 1.0, false);
             }
             RenderMode::Bounce => {
                 t.automation.retain(|l| !matches!(l.target, AutomationTarget::Volume | AutomationTarget::Pan));
                 t.gain = CENTRE_UNITY_GAIN;
                 t.pan = 0.0;
+                // The track keeps its trim, width and mono, so the bounce is taken before them.
+                (t.trim_db, t.width, t.mono) = (0.0, 1.0, false);
             }
             RenderMode::Stem => {}
         }

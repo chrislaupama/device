@@ -86,6 +86,12 @@ pub enum Command {
     MoveSection { section: SectionId, index: usize },
     SetTrackGain { track: TrackId, gain: f32 },
     SetTrackPan { track: TrackId, pan: f32 },
+    /// Channel-strip trim in dB ([Track::TRIM_RANGE_DB]).
+    SetTrackTrim { track: TrackId, trim_db: f32 },
+    /// Stereo width ([Track::WIDTH_RANGE], 1 = unchanged).
+    SetTrackWidth { track: TrackId, width: f32 },
+    /// Fold the track to mono.
+    SetTrackMono { track: TrackId, mono: bool },
     SetTrackMute { track: TrackId, mute: bool },
     SetTrackSolo { track: TrackId, solo: bool },
     SetMasterGain { gain: f32 },
@@ -217,6 +223,9 @@ impl Command {
             Command::MoveSection { .. } => "Move Section".into(),
             Command::SetTrackGain { .. } => "Track Volume Change".into(),
             Command::SetTrackPan { .. } => "Track Pan Change".into(),
+            Command::SetTrackTrim { .. } => "Trim Change".into(),
+            Command::SetTrackWidth { .. } => "Width Change".into(),
+            Command::SetTrackMono { .. } => "Mono Change".into(),
             Command::SetTrackMute { .. } => "Mute Change".into(),
             Command::SetTrackSolo { .. } => "Solo Change".into(),
             Command::SetMasterGain { .. } => "Master Volume Change".into(),
@@ -289,6 +298,8 @@ impl Command {
         match self {
             Command::SetTrackGain { track, .. } => Some(format!("gain:{}", track.0)),
             Command::SetTrackPan { track, .. } => Some(format!("pan:{}", track.0)),
+            Command::SetTrackTrim { track, .. } => Some(format!("trim:{}", track.0)),
+            Command::SetTrackWidth { track, .. } => Some(format!("width:{}", track.0)),
             Command::SetSends { track, .. } => Some(format!("sends:{}", track.0)),
             Command::SetMasterGain { .. } => Some("master_gain".into()),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
@@ -311,6 +322,8 @@ impl Command {
                 }
                 validate_gain("gain", track.gain)?;
                 validate_pan(track.pan)?;
+                validate_trim(track.trim_db)?;
+                validate_width(track.width)?;
                 for c in &track.clips {
                     validate_clip(p, c)?;
                 }
@@ -443,6 +456,23 @@ impl Command {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
                 let old = std::mem::replace(&mut t.pan, pan);
                 Ok(Command::SetTrackPan { track, pan: old })
+            }
+            Command::SetTrackTrim { track, trim_db } => {
+                validate_trim(trim_db)?;
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                let old = std::mem::replace(&mut t.trim_db, trim_db);
+                Ok(Command::SetTrackTrim { track, trim_db: old })
+            }
+            Command::SetTrackWidth { track, width } => {
+                validate_width(width)?;
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                let old = std::mem::replace(&mut t.width, width);
+                Ok(Command::SetTrackWidth { track, width: old })
+            }
+            Command::SetTrackMono { track, mono } => {
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                let old = std::mem::replace(&mut t.mono, mono);
+                Ok(Command::SetTrackMono { track, mono: old })
             }
             Command::SetTrackMute { track, mute } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
@@ -1238,6 +1268,22 @@ fn validate_routing(p: &Project, id: TrackId, kind: TrackKind, sends: &[TrackSen
 fn validate_gain(field: &'static str, g: f32) -> Result<(), EditError> {
     if !g.is_finite() || !(0.0..=MAX_GAIN).contains(&g) {
         return Err(invalid(field, format!("{g} outside 0..={MAX_GAIN} (linear)")));
+    }
+    Ok(())
+}
+
+fn validate_trim(db: f32) -> Result<(), EditError> {
+    let (lo, hi) = Track::TRIM_RANGE_DB;
+    if !db.is_finite() || !(lo..=hi).contains(&db) {
+        return Err(invalid("trim", format!("{db} outside {lo}..={hi} dB")));
+    }
+    Ok(())
+}
+
+fn validate_width(w: f32) -> Result<(), EditError> {
+    let (lo, hi) = Track::WIDTH_RANGE;
+    if !w.is_finite() || !(lo..=hi).contains(&w) {
+        return Err(invalid("width", format!("{w} outside {lo}..={hi}")));
     }
     Ok(())
 }

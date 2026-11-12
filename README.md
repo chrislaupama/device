@@ -52,7 +52,8 @@ wgpu.
   compensation is measured with an acoustic loopback test, not guessed.
 - **MIDI input.** Plug in a MIDI keyboard, arm (R) or monitor (I) instrument tracks to play them, and record
   what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
-- **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Return
+- **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Each
+  track's channel strip adds a trim (±24 dB), a stereo width knob (0 to 200 %) and a mono switch. Return
   tracks share one effect between many tracks: send any track to them pre- or post-fader, or route its output into
   one, and delay compensation keeps the direct and the returned signal aligned.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.

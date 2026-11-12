@@ -275,6 +275,9 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
             let side = if pan.abs() < 0.005 { "centre".to_string() } else { format!("{:.0}% {}", pan.abs() * 100.0, if *pan < 0.0 { "left" } else { "right" }) };
             format!("Panned {} {}.", track_name(after, *track), side)
         }
+        Command::SetTrackTrim { track, trim_db } => format!("Set {} trim to {trim_db:+.1} dB.", track_name(after, *track)),
+        Command::SetTrackWidth { track, width } => format!("Set {} width to {:.0}%.", track_name(after, *track), width * 100.0),
+        Command::SetTrackMono { track, mono } => format!("Turned mono {} on {}.", if *mono { "on" } else { "off" }, track_name(after, *track)),
         Command::SetTrackMute { track, mute } => format!("{} {}.", if *mute { "Muted" } else { "Unmuted" }, track_name(after, *track)),
         Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),
         Command::SetMasterGain { gain } => format!("Set master volume to {:.1} dB.", gain_to_db(*gain)),

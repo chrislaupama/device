@@ -142,6 +142,13 @@ int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lo
     return build_render_graph(d5, lookup, out, err);
 }
 
+void strip_matrix(float trim, float width, bool mono, float& a, float& b) noexcept {
+    const float w = mono ? 0.0f : width;
+    // L' = trim * (M + w S), R' = trim * (M - w S) with M = (L + R) / 2, S = (L - R) / 2.
+    a = trim * 0.5f * (1.0f + w);
+    b = trim * 0.5f * (1.0f - w);
+}
+
 namespace {
 
 const char* validate_device(const se_device_desc& d) {
@@ -334,6 +341,44 @@ void plan_sidechains(RenderGraph& g) {
     }
 }
 
+// Channel strip (se_session_publish_v10): validates the strip settings and
+// folds each into its track's matrix.
+int32_t apply_strips(RenderGraph& g, const se_session_desc_v10& desc, std::string& err) {
+    if (desc.strip_count == 0) return SE_OK;
+    if (desc.strips == nullptr) {
+        err = "session has strip_count > 0 but strips == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    std::unordered_map<uint64_t, uint32_t> index;
+    for (std::size_t t = 0; t < g.tracks.size(); ++t) index.emplace(g.tracks[t].track_id, static_cast<uint32_t>(t));
+    std::vector<bool> seen(g.tracks.size(), false);
+    for (uint32_t i = 0; i < desc.strip_count; ++i) {
+        const se_track_strip& st = desc.strips[i];
+        const auto it = index.find(st.track_id);
+        if (it == index.end()) {
+            err = "strip names unknown track " + std::to_string(st.track_id);
+            return SE_ERR_INVALID_ARG;
+        }
+        if (seen[it->second]) {
+            err = "track " + std::to_string(st.track_id) + " has more than one strip";
+            return SE_ERR_INVALID_ARG;
+        }
+        seen[it->second] = true;
+        if (!std::isfinite(st.trim) || st.trim < 0.0f || st.trim > 16.0f) {
+            err = "track " + std::to_string(st.track_id) + " has a trim outside 0..16";
+            return SE_ERR_INVALID_ARG;
+        }
+        if (!std::isfinite(st.width) || st.width < 0.0f || st.width > 2.0f) {
+            err = "track " + std::to_string(st.track_id) + " has a width outside 0..2";
+            return SE_ERR_INVALID_ARG;
+        }
+        TrackNode& node = g.tracks[it->second];
+        strip_matrix(st.trim, st.width, st.mono != 0, node.strip_a, node.strip_b);
+        node.strip_on = node.strip_a != 1.0f || node.strip_b != 0.0f;
+    }
+    return SE_OK;
+}
+
 // Routing (se_session_publish_v9): validates the routes and sends, marks
 // the returns and their buses, the outputs and sends, and collapses mute and
 // solo into audible / main_on / send_live (see dstudio_engine.h). Without
@@ -494,8 +539,16 @@ int32_t build_render_graph(const se_session_desc_v8& desc, const AssetLookup& lo
     return build_render_graph(d9, lookup, out, err);
 }
 
-int32_t build_render_graph(const se_session_desc_v9& desc9, const AssetLookup& lookup,
+int32_t build_render_graph(const se_session_desc_v9& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err) {
+    se_session_desc_v10 d10{};
+    d10.v9 = desc;
+    return build_render_graph(d10, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    const se_session_desc_v9& desc9 = desc10.v9;
     const se_session_desc_v8& desc8 = desc9.v8;
     const se_session_desc_v7& desc7 = desc8.v7;
     const se_session_desc_v6& desc = desc7.v6;
@@ -916,6 +969,7 @@ int32_t build_render_graph(const se_session_desc_v9& desc9, const AssetLookup& l
     g->midi_explicit = std::any_of(g->tracks.begin(), g->tracks.end(),
                                    [](const TrackNode& t) { return t.instrument && (t.arm || t.monitor); });
     if (const int32_t rc = apply_routing(*g, desc9, err); rc != SE_OK) return rc;
+    if (const int32_t rc = apply_strips(*g, desc10, err); rc != SE_OK) return rc;
     plan_sidechains(*g);
 
     g->meter_count = g->tracks.size();

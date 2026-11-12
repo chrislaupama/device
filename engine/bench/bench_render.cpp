@@ -86,10 +86,12 @@ struct Result {
 // `pdc` on/off. routing (se_session_publish_v9, plugins 0): 1 = two return
 // tracks, every track sending to both (one post-, one pre-fader); 2 = the
 // same with a DStudioTestLatency (N = `latency`) on the first return, so every
-// track's output also runs through an edge delay line.
+// track's output also runs through an edge delay line. strip
+// (se_session_publish_v10, plugins 0, routing 0): 1 = trim and width on every
+// track; 2 = trim and mono on every track.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
            bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false,
-           float preview_rate = 0.0f, const std::string& preview_file = {}, int routing = 0) {
+           float preview_rate = 0.0f, const std::string& preview_file = {}, int routing = 0, int strip = 0) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -211,7 +213,9 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     std::vector<se_send_desc> sends;
     std::vector<se_device_desc> return_fx;
     se_session_desc_v9 sd9{};
-    if (routing != 0) {
+    std::vector<se_track_strip> strips;
+    se_session_desc_v10 sd10{};
+    if (routing != 0 || strip != 0) {
         for (uint32_t t = 0; t < tracks; ++t) {
             se_track_desc_v6 d{};
             d.track_id = tds[t].track_id;
@@ -220,6 +224,8 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             d.clips = tds[t].clips;
             d.clip_count = tds[t].clip_count;
             r6.push_back(d);
+            if (strip != 0) strips.push_back({d.track_id, 0.8f, 1.5f, static_cast<uint8_t>(strip == 2 ? 1 : 0), {}});
+            if (routing == 0) continue;
             sends.push_back({d.track_id, 9001, 0.3f, 0, {}});
             sends.push_back({d.track_id, 9002, 0.2f, 1, {}});
         }
@@ -235,6 +241,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             return_fx.push_back(d);
         }
         for (uint64_t id : {9001ull, 9002ull}) {
+            if (routing == 0) break;
             se_track_desc_v6 d{};
             d.track_id = id;
             d.gain = 0.7f;
@@ -250,8 +257,12 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         sd9.route_count = static_cast<uint32_t>(routes.size());
         sd9.sends = sends.data();
         sd9.send_count = static_cast<uint32_t>(sends.size());
+        sd10.v9 = sd9;
+        sd10.strips = strips.data();
+        sd10.strip_count = static_cast<uint32_t>(strips.size());
     }
-    const int32_t published = routing != 0  ? se_session_publish_v9(e, &sd9)
+    const int32_t published = strip != 0    ? se_session_publish_v10(e, &sd10)
+                              : routing != 0 ? se_session_publish_v9(e, &sd9)
                               : automation    ? se_session_publish_v6(e, &sd6)
                               : plugins == 0 ? se_session_publish(e, &sd)
                                              : se_session_publish_v5(e, &sd5);
@@ -747,6 +758,16 @@ int main(int argc, char** argv) {
     for (const int routing : {0, 1, 2}) {
         const Result r = run(32, clips_per_track, blocks, files, features, 0, 1024, true, false, 0.0f, {}, routing);
         const char* name = routing == 0 ? "none (same tracks)" : routing == 1 ? "2 returns, 64 sends" : "+ 1024-frame return";
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
+                    r.us_per_block_max, r.rt_ratio);
+    }
+    std::printf("\nChannel strip: 32 audio tracks x %u clips, trim + width or trim + mono on every track\n",
+                clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "strip", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (const int strip : {0, 1, 2}) {
+        const Result r = run(32, clips_per_track, blocks, files, features, 0, 0, true, false, 0.0f, {}, 0, strip);
+        const char* name = strip == 0 ? "none (same tracks)" : strip == 1 ? "trim + width" : "trim + mono";
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }

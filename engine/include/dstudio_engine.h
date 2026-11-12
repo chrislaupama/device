@@ -1398,6 +1398,40 @@ typedef struct se_session_desc_v9 {
 /* MAIN THREAD (like se_session_publish_v5). */
 int32_t se_session_publish_v9(se_engine* engine, const se_session_desc_v9* session);
 
+/* ---- channel strip: trim, width and mono (ABI v1 addition) ---------------
+ * See specs/004-channel-strip-trim-width-mono.
+ *
+ * se_session_publish_v10 is se_session_publish_v9 plus per-track strip
+ * settings. A track listed in `strips` (by track_id, once) has its signal
+ * changed after its insert chain and before pre-fader sends, volume and pan:
+ * scaled by `trim` (linear), then its stereo width set by mid/side: the side
+ * signal (L - R) / 2 is scaled by `width` (0 = mono, 1 = unchanged, 2 =
+ * doubled) around the mid (L + R) / 2. mono != 0 folds the track to mono
+ * (the same as width 0) whatever `width` says. Tracks not listed, and listed
+ * tracks with trim 1, width 1 and mono 0, are unchanged (and cost nothing).
+ * Return tracks take strip settings like any track.
+ *
+ * Validation (else SE_ERR_INVALID_ARG): strips non-NULL when counted; track
+ * ids known and listed at most once; trim finite in 0..16; width finite in
+ * 0..2. */
+typedef struct se_track_strip {
+    uint64_t track_id;
+    float trim;  /* linear, 0..16 */
+    float width; /* 0..2, 1 = unchanged */
+    uint8_t mono;
+    uint8_t _pad[7];
+} se_track_strip; /* 24 bytes, align 8 */
+
+typedef struct se_session_desc_v10 {
+    se_session_desc_v9 v9;
+    const se_track_strip* strips;
+    uint32_t strip_count;
+    uint32_t _pad;
+} se_session_desc_v10; /* 104 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v10(se_engine* engine, const se_session_desc_v10* session);
+
 /* ---- MIDI input (specs/003-midi-input-and-recording) ----------------------
  * The engine reads MIDI input ports (Core MIDI on macOS, the Windows
  * multimedia MIDI API, the ALSA sequencer on Linux; none elsewhere) and

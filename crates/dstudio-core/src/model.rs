@@ -106,6 +106,16 @@ pub struct Track {
     pub gain: f32,
     /// -1.0 (left) .. +1.0 (right).
     pub pan: f32,
+    /// Channel-strip trim in dB ([Track::TRIM_RANGE_DB]), applied after the inserts and before
+    /// pre-fader sends and the fader (spec 004).
+    #[serde(default, rename = "trim", skip_serializing_if = "is_zero")]
+    pub trim_db: f32,
+    /// Stereo width ([Track::WIDTH_RANGE]): 0 = mono, 1 = unchanged, 2 = side doubled.
+    #[serde(default = "unit_width", skip_serializing_if = "is_unit_width")]
+    pub width: f32,
+    /// Fold the track to mono (overrides the width).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mono: bool,
     pub mute: bool,
     pub solo: bool,
     /// Armed for recording ("R").
@@ -150,6 +160,18 @@ pub struct Track {
 
 fn unit_height() -> f32 {
     1.0
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn unit_width() -> f32 {
+    1.0
+}
+
+fn is_unit_width(w: &f32) -> bool {
+    *w == 1.0
 }
 
 fn is_unit_height(h: &f32) -> bool {
@@ -309,11 +331,27 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0, sends: Vec::new(), output: None }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, trim_db: 0.0, width: 1.0, mono: false, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0, sends: Vec::new(), output: None }
     }
 
     /// Row height scale limits (the per-track height scale).
     pub const HEIGHT_RANGE: (f32, f32) = (0.25, 6.0);
+
+    /// Channel-strip trim limits in dB.
+    pub const TRIM_RANGE_DB: (f32, f32) = (-24.0, 24.0);
+
+    /// Stereo width limits (1 = unchanged).
+    pub const WIDTH_RANGE: (f32, f32) = (0.0, 2.0);
+
+    /// Linear trim gain.
+    pub fn trim_gain(&self) -> f32 {
+        10f32.powf(self.trim_db / 20.0)
+    }
+
+    /// True when trim, width and mono leave the signal unchanged.
+    pub fn strip_is_neutral(&self) -> bool {
+        self.trim_db == 0.0 && self.width == 1.0 && !self.mono
+    }
 
     pub fn is_return(&self) -> bool {
         self.kind == TrackKind::Return
