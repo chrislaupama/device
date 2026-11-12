@@ -214,7 +214,7 @@ pub fn picture(def: &DeviceDef, d: &Device, bpm: f64) -> Picture {
     if authored(machine, &v) {
         let span = (ms.loop_mm - ms.gap_mm - 1.1).max(1.0);
         for n in 1..=(v("heads").round() as usize).clamp(1, 6) {
-            let h = |f: &str| head_param(n, f).map_or(0.0, |id| v(id));
+            let h = |f: &str| head_param(n, f).map_or(0.0, &v);
             if h("present") < 0.5 {
                 continue;
             }
@@ -241,8 +241,8 @@ pub fn picture(def: &DeviceDef, d: &Device, bpm: f64) -> Picture {
         let spacing = v("spacing").round().clamp(0.0, 4.0) as u32;
         let morph = v("spacing_morph").clamp(0.0, 1.0);
         let count = ms.heads_mm.len();
-        for i in 0..count {
-            let mut mm = if machine == 2 { ms.heads_mm[0] - motor * CARTRIDGE_TRAVEL } else { ms.heads_mm[i] };
+        for (i, &head_mm) in ms.heads_mm.iter().enumerate() {
+            let mut mm = if machine == 2 { ms.heads_mm[0] - motor * CARTRIDGE_TRAVEL } else { head_mm };
             if spacing > 0 && i > 0 {
                 let k = i as f32;
                 let f = match spacing {

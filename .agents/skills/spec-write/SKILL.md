@@ -1,6 +1,6 @@
 ---
 name: spec-write
-description: Start spec-driven work on Device Studio by writing specs/NNN-slug/spec.md (problem, behaviour, requirements, acceptance checks, out of scope, open questions). Use when someone asks for a new feature, a behaviour change, cross-layer or performance work, or a format or C ABI change, before any code is written.
+description: Start spec-driven work on Device by writing specs/NNN-slug/spec.md (problem, behaviour, requirements, acceptance checks, out of scope, open questions). Use when someone asks for a new feature, a behaviour change, cross-layer or performance work, or a format or C ABI change, before any code is written.
 ---
 
 # Write a spec

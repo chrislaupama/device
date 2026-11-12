@@ -107,7 +107,7 @@ impl SeqGeom {
         let cols = steps_per_page(width);
         let pages = page_count(width, steps);
         let page = page.min(pages - 1);
-        let pitch = ((width - COL_X0 - 8.0) / cols as f32).min(COL_PITCH).max(6.0);
+        let pitch = ((width - COL_X0 - 8.0) / cols as f32).clamp(6.0, COL_PITCH);
         let rows = match rows {
             StepRows::Pads => drum_rack::PADS as u16,
             StepRows::Pitches => 128,
@@ -278,7 +278,7 @@ pub fn build_view(
     let steps_per_beat = p.rate.steps_per_beat();
     let every = if g.pitch >= 18.0 { 1 } else { steps_per_beat.round().max(1.0) as u16 };
     let nums = (0..g.cols)
-        .filter(|col| (g.first + col) % every == 0)
+        .filter(|col| (g.first + col).is_multiple_of(every))
         .map(|col| {
             let s = g.first + col;
             NumView { x: g.col_x(col), text: format!("{}", s + 1), beat: is_beat(p.rate, s), active: s < p.steps }
@@ -476,7 +476,7 @@ impl Controller {
             0 => {
                 self.pr.focused = true;
                 let Some((key, step)) = hit else { return };
-                if x >= MUTE_X && x < SOLO_X + BTN_W && step.is_none() {
+                if (MUTE_X..SOLO_X + BTN_W).contains(&x) && step.is_none() {
                     let solo = x >= SOLO_X;
                     if x < MUTE_X + BTN_W || solo {
                         self.pr.seq.drag = Some(SeqDrag::Flag);

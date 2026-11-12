@@ -66,6 +66,7 @@ pub const MAX_BPM: f64 = 999.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant, reason = "built once per edit, never on the audio path; boxing `Track` would touch every caller")]
 pub enum Command {
     /// Insert a track. If `track.id` is 0 a fresh id is allocated.
     AddTrack {
@@ -693,7 +694,7 @@ impl Command {
                 } else {
                     p.next_id = p.next_id.max(asset.id.0 + 1);
                 }
-                if !(asset.sample_rate > 0.0) || asset.channels == 0 {
+                if asset.sample_rate.is_nan() || asset.sample_rate <= 0.0 || asset.channels == 0 {
                     return Err(invalid("asset", "sample_rate and channels must be positive"));
                 }
                 let id = asset.id;

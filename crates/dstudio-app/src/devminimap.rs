@@ -872,7 +872,7 @@ mod tests {
             let (base, acc) = art.paths();
             assert!(base.starts_with('M') && acc.starts_with('M'), "{art:?}");
             assert!(base.ends_with('Z') && acc.ends_with('Z'), "{art:?}");
-            assert_eq!(base.matches('M').count() >= 1, true);
+            assert!(base.matches('M').count() >= 1);
         }
         let (_, none) = Art { view: true, sliders: 0, knobs: 0 }.paths();
         assert_eq!(none.matches('M').count(), 1, "only the title dot is accent without dials");

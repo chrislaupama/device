@@ -996,7 +996,7 @@ impl Controller {
         // Applied immediately when no device runs (engine ABI), else at the next block.
         if self.engine.seek(frame).is_ok() {
             self.paused = false;
-            self.cue = Some(frame as i64);
+            self.cue = Some(frame);
         }
     }
 

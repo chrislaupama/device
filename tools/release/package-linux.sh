@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packages Device Studio for Linux: a .tar.gz with the app, the plugin scanner (the app looks
+# Packages Device for Linux: a .tar.gz with the app, the plugin scanner (the app looks
 # for it next to itself), a desktop entry and an install script.
 #
 # Usage: tools/release/package-linux.sh <version> <arch> <out dir>
@@ -11,7 +11,7 @@ arch="${2:?usage: package-linux.sh <version> <arch> <out dir>}"
 out="${3:?usage: package-linux.sh <version> <arch> <out dir>}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 release="${CARGO_TARGET_DIR:-$root/target}/release"
-name="DeviceStudio-$version-linux-$arch"
+name="Device-$version-linux-$arch"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 stage="$work/$name"
@@ -29,7 +29,7 @@ done
 cat > "$stage/share/applications/device-studio.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Device Studio
+Name=Device
 Comment=Make music: arrange, record and mix
 Exec=device-studio
 Icon=audio-x-generic
@@ -39,7 +39,7 @@ DESKTOP
 
 cat > "$stage/install.sh" <<'INSTALL'
 #!/usr/bin/env sh
-# Installs Device Studio for the current user (default prefix ~/.local) or, as root, for
+# Installs Device for the current user (default prefix ~/.local) or, as root, for
 # everyone (PREFIX=/usr/local). Usage: ./install.sh [prefix]
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"

@@ -1,6 +1,6 @@
 ---
 name: spec-build
-description: Implement an agreed Device Studio spec by working through its tasks.md in order, verifying and ticking each task. Use after spec-plan, when plan.md is agreed and the spec is Building.
+description: Implement an agreed Device spec by working through its tasks.md in order, verifying and ticking each task. Use after spec-plan, when plan.md is agreed and the spec is Building.
 ---
 
 # Build a spec

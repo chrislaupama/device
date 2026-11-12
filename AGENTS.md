@@ -1,10 +1,10 @@
-# Working on Device Studio with a coding agent
+# Working on Device with a coding agent
 
 This file is for coding agents (and the people driving them). Humans start with
 [README.md](README.md) › Development, [PROGRESS.md](PROGRESS.md) and
 [docs/architecture.md](docs/architecture.md); everything below points back at those.
 
-Device Studio is a cross-platform DAW: a Rust app (`crates/dstudio-app`, Slint + wgpu) over a Rust
+Device is a cross-platform DAW: a Rust app (`crates/dstudio-app`, Slint + wgpu) over a Rust
 application core (`crates/dstudio-core`: model, commands, undo, persistence, snapshots) that drives a
 C++23 real-time engine (`engine/`) through a hand-written C ABI (`engine/include/dstudio_engine.h`,
 wrapped by `crates/dstudio-engine`).
@@ -56,7 +56,7 @@ path a skill names still exists, so skills don't silently rot as the code moves.
 ## Before any pull request
 
 ```sh
-cargo fmt --all && cargo clippy --workspace
+cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd engine && cmake --preset default && cmake --build --preset default && ctest --preset default
 cargo run --release -p dstudio-app -- --self-test --no-audio

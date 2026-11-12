@@ -1,4 +1,4 @@
-# PROGRESS: Device Studio
+# PROGRESS: Device
 
 Living handoff document for future agent sessions. Read this first, then `docs/architecture.md`.
 
@@ -469,7 +469,32 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - The project website is https://devicedaw.github.io/. Repository ownership and documentation links changed;
   application code and CI behavior are unchanged.
 
-### 2026-11-12: return tracks and sends in the Live set export (spec 005)
+### 2026-11-12: custom plugin folders
+
+- Settings › Plugins › Add folder works (it was a placeholder): it opens a folder picker, keeps the folder in the
+  preferences (`plugin_folders`) and checks for new plugins, so what the folder holds shows up. Custom folders are
+  listed after the standard ones with a "Custom" badge and a remove button; the standard ones can't be removed. A
+  folder that is gone shows the "Missing" badge and is skipped by the scan. "Check for new plugins" and "Rescan all
+  plugins" include them, and removing one drops the plugins only it held. A folder already scanned, or whose path the
+  scanner can't take (a ':' on macOS and Linux), is refused with a status message. Folder changes during a scan queue
+  one more check.
+- Engine: `dstudio_engine::scan_plugins_in` passes extra folders to the scanner process first in its
+  `$DSTUDIO_PLUGIN_PATH` (no scanner change).
+- Tests: `scanner_searches_custom_folders` (a copy of the test gain CLAP in a temp folder is found, a missing folder
+  is skipped, and the plugin goes when the folder does), `custom_plugin_folders_are_added_once_and_never_shadow_a_standard_one`,
+  the preferences round trip, and self-test section `plugin_folder_steps`. Review state `review-plugin-folders`.
+
+### 2026-11-12: Device public name
+
+- Public organization/profile, website, current docs, README hero and sharing artwork use **Device**.
+- Desktop windows, menus, update text, export creator and audio/MIDI/plugin host display names use Device.
+- macOS bundles are `Device.app`; release titles, download archives, Windows installer/shortcuts and
+  Linux launcher labels use Device. Windows upgrades remove legacy default shortcuts.
+- Existing `.dsproj` format, preferences/cache/project/scratch paths, executable, crate names,
+  platform identities and installer AppId remain stable; see `docs/building.md` › Compatibility names.
+- Historical entries retain the name used at the time. See spec 004 for requirements and verification.
+
+### 2026-11-12: return tracks and sends in the Live set export (spec 006)
 
 - Export › Project now writes return tracks and sends into the Live set (they were dropped). Each return is a Live
   return track with its volume, pan and on/off state; every track has one send per return at its level. A track whose
@@ -479,4 +504,4 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Approximations, each listed per track in the notes file: sends above 0 dB are set to 0 dB (Live's maximum), and a
   pre-fader send on a rendered track becomes post-fader with its level divided by the track volume.
 - `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
-  list. Not yet opened in Live itself (spec 005, T5).
+  list. Not yet opened in Live itself (spec 006, T5).

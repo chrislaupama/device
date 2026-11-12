@@ -1,6 +1,6 @@
 ---
 name: bug-fix
-description: Fix a Device Studio bug the project's way - reproduce it, write a small failing test, find the root cause, fix it, prove the test now passes. Use for any bug report or broken feature; escalates to a spec when the cause or fix is not obvious.
+description: Fix a Device bug the project's way - reproduce it, write a small failing test, find the root cause, fix it, prove the test now passes. Use for any bug report or broken feature; escalates to a spec when the cause or fix is not obvious.
 ---
 
 # Fix a bug

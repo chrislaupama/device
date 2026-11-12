@@ -534,7 +534,7 @@ impl Controller {
             on_param: idx(band.on),
             on: v.band_on(sel, &val),
             latch_x: latch_x * Z,
-            bank_param: v.bank.map_or(-1, |b| idx(b)),
+            bank_param: v.bank.map_or(-1, &idx),
             bank_value: s(v.bank.and_then(|b| def.param(b).map(|p| p.format(val(b)))).unwrap_or_default()),
             bank_x: (width - PAD - bank_w) * Z,
             bank_w: bank_w * Z,

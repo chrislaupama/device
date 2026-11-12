@@ -1,4 +1,4 @@
-//! Device Studio desktop application (milestone 1).
+//! Device desktop application (milestone 1).
 //!
 //! Slint shell (FemtoVG on wgpu 30) + our own wgpu timeline renderer
 //! (`gpu/`), wired to the real `dstudio_core::Document` and the C++ engine.
@@ -19,6 +19,11 @@
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, e.g. white as on the Master track)]
 //! ```
+
+// Drawing and layout code passes geometry, colours and state as plain arguments and keeps
+// per-widget closures and tuples inline; splitting those into structs and type aliases
+// would add names without making the code clearer.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// With `review-clip-bounce-menu`: the audio clip menu opens with its Bounce submenu showing.
@@ -212,6 +217,8 @@ struct Args {
     modulation_state: u8,
     /// review-settings-plugins: Settings open on the Plugins page.
     plugins_page_review: bool,
+    /// review-plugin-folders: the same with two custom plugin folders, one of them missing.
+    plugin_folders_review: bool,
     assistant_fixture: Option<PathBuf>,
     plugin_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
@@ -533,6 +540,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.plugins_page_review = true;
                 }
+                "review-plugin-folders" => {
+                    a.reference_default = true;
+                    a.plugins_page_review = true;
+                    a.plugin_folders_review = true;
+                }
                 "review-analyzers" => {
                     a.reference_default = true;
                     a.analyzers_review = true;
@@ -554,7 +566,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1045,10 +1057,41 @@ fn synth_test_state(device: dstudio_core::DeviceId) -> dstudio_core::Command {
 }
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("device-studio: {e}");
-        std::process::exit(1);
+    let code = match run() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("device-studio: {e}");
+            1
+        }
+    };
+    exit_now(code);
+}
+
+/// End the process with `code` once `run` has returned and everything it owns is dropped.
+///
+/// On Windows a normal exit (returning from `main`, or `std::process::exit`) reported
+/// 0x87A instead of our code after any run that had opened the window: something in the
+/// graphics stack ends the process with its own code while its DLLs unload, with the wgpu
+/// device still alive in Slint's thread-local backend. Nothing of ours is left to run at
+/// that point (the project, settings and engine are closed inside `run`), so the process
+/// is ended directly, which skips DLL unloading and gives the caller the real result.
+#[cfg(windows)]
+fn exit_now(code: i32) -> ! {
+    use std::io::Write;
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn TerminateProcess(process: *mut std::ffi::c_void, exit_code: u32) -> i32;
     }
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // SAFETY: both calls take no pointers from us; the pseudo-handle is always valid.
+    unsafe { TerminateProcess(GetCurrentProcess(), code as u32) };
+    std::process::exit(code)
+}
+
+#[cfg(not(windows))]
+fn exit_now(code: i32) -> ! {
+    std::process::exit(code)
 }
 
 /// AppKit adds Start Dictation, Emoji & Symbols and Enter Full Screen to any Edit and View
@@ -1702,6 +1745,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.plugins_page_review {
         let mut c = ctl.borrow_mut();
+        if args.plugin_folders_review {
+            // Review only: the preferences are not saved in --state runs.
+            let kept = std::env::temp_dir().join("Studio Plugins");
+            let _ = std::fs::create_dir_all(&kept);
+            let gone = std::env::temp_dir().join("Old Drive").join("Plugins");
+            c.settings.prefs.plugin_folders = [kept, gone].iter().map(|d| d.to_string_lossy().into_owned()).collect();
+        }
         c.open_settings();
         c.settings_page(3);
     }
@@ -2172,10 +2222,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Typing in a name field only records the draft: no model push per keystroke.
         let ctl2 = ctl.clone();
         studio.on_track_rename_draft(move |id, t, epoch| {
-            if let Ok(mut c) = ctl2.try_borrow_mut() {
-                if epoch == c.doc_epoch as i32 {
-                    c.rename_draft = Some((TrackId(id as u64), t.to_string()));
-                }
+            if let Ok(mut c) = ctl2.try_borrow_mut()
+                && epoch == c.doc_epoch as i32
+            {
+                c.rename_draft = Some((TrackId(id as u64), t.to_string()));
             }
         });
         let ctl2 = ctl.clone();
@@ -2607,6 +2657,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_devmenu_pick, |c, i: i32| c.devmenu_pick(i.max(0) as usize));
     on!(on_devmenu_dismiss, |c| c.devmenu_dismiss());
     on!(on_plugins_rescan, |c, rescan: bool| c.start_plugin_scan(rescan));
+    on!(on_plugins_remove_folder, |c, dir: slint::SharedString| c.plugins_remove_folder(dir.as_str()));
+    {
+        // The folder dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
+        let ctl = ctl.clone();
+        studio.on_plugins_add_folder(move || {
+            if let Some(dir) = rfd::FileDialog::new().set_title("Add plugin folder").pick_folder() {
+                ctl.borrow_mut().plugins_add_folder(&dir);
+            }
+        });
+    }
     on!(on_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     // TODO(feedback): wire "Report a bug" / "Share your feedback" to a real channel. No-ops for now.
     on!(on_report_bug, |c| c.set_status("Report a bug: not connected yet (TODO)", 3));
@@ -3281,7 +3341,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
-            let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
+            let median = if n.is_multiple_of(2) { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
             println!(
                 "{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3},\"update_ui_mean_ms\":{:.3}}}",
                 ms[(n * 95 / 100).min(n - 1)],

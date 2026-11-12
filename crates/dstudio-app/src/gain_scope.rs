@@ -275,8 +275,8 @@ mod tests {
         h.head = 256.0;
         let px = h.pixels(300.0, 2.0);
         assert_eq!(px.out.len(), 301);
-        assert!(px.out.iter().any(|&o| o == 0.9));
-        assert!(px.pre.iter().any(|&p| p == 1.2));
+        assert!(px.out.contains(&0.9));
+        assert!(px.pre.contains(&1.2));
         assert!(px.gain.iter().any(|&g| g == -6.0));
         assert_eq!(px.out[0], 0.0);
     }

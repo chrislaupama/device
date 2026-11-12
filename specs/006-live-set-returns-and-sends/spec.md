@@ -1,6 +1,6 @@
 # Return tracks and sends in the Live set export
 
-Status: Built, waiting on a check in Live (T5) · Spec: 005 · Issue: #31
+Status: Merged untested in Live (T5 open, parked until basic song creation works) · Spec: 006 · Issue: #31
 
 ## Problem
 

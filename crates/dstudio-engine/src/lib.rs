@@ -922,8 +922,8 @@ pub struct DeviceStatus {
     pub buffer_size: u32,
     pub input_channels: u32,
     pub output_channels: u32,
-    /// Input-side latency in engine frames (device + safety offset + stream
-    /// + one buffer). Recorded takes are compensated by
+    /// Input-side latency in engine frames (device, safety offset, stream
+    /// and one buffer). Recorded takes are compensated by
     /// `input_latency_frames + output_latency_frames`.
     pub input_latency_frames: u32,
     pub output_latency_frames: u32,
@@ -1040,7 +1040,7 @@ impl Engine {
     /// .input_name` is `None`, [`Engine::input_error`] says why, and a
     /// running restart returns `SE_ERR_DEVICE` with that message.
     pub fn configure_device(&self, cfg: &DeviceConfig) -> Result<(), EngineError> {
-        let out = cfg.output.as_deref().map(|s| CString::new(s)).transpose().map_err(|_| nul_error())?;
+        let out = cfg.output.as_deref().map(CString::new).transpose().map_err(|_| nul_error())?;
         let input_enabled = cfg.input.is_some();
         let inp = cfg.input.as_deref().filter(|s| !s.is_empty()).map(CString::new).transpose().map_err(|_| nul_error())?;
         let c = ffi::se_device_config {
@@ -1393,6 +1393,18 @@ pub fn test_plugin_dir() -> PathBuf {
 /// unchanged bundles (and blocklisted ones) come from the cache. Blocking:
 /// call from a worker thread. `progress` receives a short status per plugin.
 pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&str)) -> Result<ScanReport, EngineError> {
+    scan_plugins_in(cache_path, rescan, &[], progress)
+}
+
+/// [`scan_plugins`] that also searches `extra_dirs` (the user's custom plugin
+/// folders, every format), ahead of `$DSTUDIO_PLUGIN_PATH`. A folder that does
+/// not exist is skipped.
+pub fn scan_plugins_in(
+    cache_path: &Path,
+    rescan: bool,
+    extra_dirs: &[PathBuf],
+    progress: &mut dyn FnMut(&str),
+) -> Result<ScanReport, EngineError> {
     use std::io::{BufRead, Read};
     let exe = plugin_scanner_path();
     if !exe.is_file() {
@@ -1407,6 +1419,16 @@ pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&s
     cmd.arg("--scan").arg("--cache").arg(cache_path);
     if rescan {
         cmd.arg("--rescan");
+    }
+    // The scanner reads its extra folders from $DSTUDIO_PLUGIN_PATH: the custom ones go first. A
+    // folder whose path holds the list separator cannot be passed (the app refuses to add one).
+    let extra: Vec<&PathBuf> = extra_dirs.iter().filter(|d| std::env::join_paths([d]).is_ok()).collect();
+    if !extra.is_empty() {
+        let inherited = std::env::var_os("DSTUDIO_PLUGIN_PATH");
+        let all = extra.into_iter().cloned().chain(inherited.iter().flat_map(std::env::split_paths));
+        if let Ok(joined) = std::env::join_paths(all) {
+            cmd.env("DSTUDIO_PLUGIN_PATH", joined);
+        }
     }
     #[cfg(windows)]
     {

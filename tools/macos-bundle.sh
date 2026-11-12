@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Wraps the release build in "Device Studio.app", so macOS names the app menu, About, Hide and
-# Quit "Device Studio" instead of the executable's name.
+# Wraps the release build in "Device.app", so macOS names the app menu, About, Hide and
+# Quit "Device" instead of the executable's name.
 # Usage: tools/macos-bundle.sh [output dir]   (default: $CARGO_TARGET_DIR/release or target/release)
 # DSTUDIO_APP_EXE and DSTUDIO_SCANNER_EXE override the executables to bundle (the release
 # workflow passes universal binaries). The plugin scanner goes next to the app executable in
@@ -18,7 +18,7 @@ if [ -z "$scanner" ]; then
   scanner="$(ls -t "$(dirname "$exe")"/build/dstudio-engine-*/out/build/dstudio_plugin_scanner 2>/dev/null | head -1 || true)"
 fi
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
-app="$out/Device Studio.app"
+app="$out/Device.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp "$exe" "$app/Contents/MacOS/device-studio"
@@ -32,8 +32,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Device Studio</string>
-    <key>CFBundleDisplayName</key><string>Device Studio</string>
+    <key>CFBundleName</key><string>Device</string>
+    <key>CFBundleDisplayName</key><string>Device</string>
     <key>CFBundleIdentifier</key><string>com.dstudio.studio</string>
     <key>CFBundleExecutable</key><string>device-studio</string>
     <key>CFBundlePackageType</key><string>APPL</string>
@@ -41,7 +41,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>$version</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSMicrophoneUsageDescription</key><string>Device Studio records from your audio inputs.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Device records from your audio inputs.</string>
 </dict>
 </plist>
 PLIST

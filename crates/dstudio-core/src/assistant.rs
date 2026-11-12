@@ -30,6 +30,7 @@ pub enum Mode {
 /// One action proposed by the model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant, reason = "a handful per assistant turn; `Edit` holds a `Command`, see its note")]
 pub enum AssistantAction {
     /// Any validated edit command (see `Command`).
     Edit { command: Command },

@@ -45,7 +45,7 @@ constexpr bool kInstrument = true;
 #endif
 
 const clap_plugin_descriptor_t kDescriptor = {
-    CLAP_VERSION_INIT, kId, kName, "DStudio", "", "", "", "1.0.0", "Device Studio test plugin", kFeatures};
+    CLAP_VERSION_INIT, kId, kName, "DStudio", "", "", "", "1.0.0", "Device test plugin", kFeatures};
 
 struct Voice {
     bool on = false;

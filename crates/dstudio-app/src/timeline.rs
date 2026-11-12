@@ -202,12 +202,11 @@ impl RulerSteps {
             .map(|i| cand[i])
             .find(|&c| c * px_per_beat >= if c >= beats_per_bar - EPS { GRID_BAR_MIN_PX } else { GRID_MIN_PX })
             .unwrap_or(cand[n - 1]);
-        if let Some(g) = grid {
-            if let Some(fixed) = Self::fixed_step(g, beats_per_bar, px_per_beat) {
-                if g.is_triplet() || fixed < tick_beats {
-                    tick_beats = fixed;
-                }
-            }
+        if let Some(g) = grid
+            && let Some(fixed) = Self::fixed_step(g, beats_per_bar, px_per_beat)
+            && (g.is_triplet() || fixed < tick_beats)
+        {
+            tick_beats = fixed;
         }
         let line_beats = if tick_beats < beats_per_bar - EPS { tick_beats } else { tick_beats.max(tick_bars as f64 * beats_per_bar) };
 

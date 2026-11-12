@@ -679,9 +679,9 @@ impl Controller {
         live_set::validate(&xml, Some(folder)).map_err(|e| format!("the Live set failed its structure check: {e}"))?;
         let als = folder.join(format!("{name}.als"));
         let bytes = live_set::gzip(&xml).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
         std::fs::write(&als, bytes).map_err(|e| e.to_string())?;
-        let _ = writeln!(notes, "Exported from Device Studio for Ableton Live 11 or later.\n");
+        let _ = writeln!(notes, "Exported from Device for Ableton Live 11 or later.\n");
         if rendered.is_empty() {
             let _ = writeln!(notes, "No track has clips, so the set has empty tracks only.");
         } else {

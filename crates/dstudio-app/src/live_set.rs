@@ -776,7 +776,7 @@ pub fn to_xml(set: &LiveSet) -> String {
             ("MajorVersion", MAJOR_VERSION.into()),
             ("MinorVersion", MINOR_VERSION.into()),
             ("SchemaChangeCount", "3".into()),
-            ("Creator", "Device Studio".into()),
+            ("Creator", "Device".into()),
             ("Revision", String::new()),
         ],
     );

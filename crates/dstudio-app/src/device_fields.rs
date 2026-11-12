@@ -545,7 +545,7 @@ fn character_mod(i: &Input) -> Plot {
                 SINGLE if mode == 1 => (4.0, 2.2, 0.0),
                 SINGLE => (6.5, 3.0, 0.0),
                 TWIN => (3.55, if mode == 2 { 0.35 } else { 1.85 }, 0.0),
-                CROSSED => CROSSED_MODES[(mode as usize).min(3)],
+                CROSSED => CROSSED_MODES[mode.min(3)],
                 _ => (0.0, 0.0, 0.0),
             };
             let roff = if circuit == FLANGER { 0.25 * w } else { 0.5 * w };

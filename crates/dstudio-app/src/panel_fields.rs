@@ -1667,9 +1667,9 @@ mod tests {
     #[test]
     fn biquad_magnitudes() {
         assert!((biquad_db(2, 1000.0, 1.0, 6.0, 1000.0) - 6.0).abs() < 0.05);
-        assert!((biquad_db(0, 1000.0, 0.7071, 0.0, 1000.0) + 3.01).abs() < 0.1);
-        assert!(biquad_db(4, 1000.0, 0.7071, 0.0, 100.0).abs() < 0.05);
-        assert!((biquad_db(1, 200.0, 0.7071, -12.0, 20.0) + 12.0).abs() < 0.3);
+        assert!((biquad_db(0, 1000.0, std::f32::consts::FRAC_1_SQRT_2, 0.0, 1000.0) + 3.01).abs() < 0.1);
+        assert!(biquad_db(4, 1000.0, std::f32::consts::FRAC_1_SQRT_2, 0.0, 100.0).abs() < 0.05);
+        assert!((biquad_db(1, 200.0, std::f32::consts::FRAC_1_SQRT_2, -12.0, 20.0) + 12.0).abs() < 0.3);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Device Studio is pre-alpha and has no releases yet. Only the latest `main` branch is supported, and fixes land there.
+Device is pre-alpha and has no releases yet. Only the latest `main` branch is supported, and fixes land there.
 
 ## Reporting a vulnerability
 

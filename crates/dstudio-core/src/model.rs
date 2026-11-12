@@ -357,8 +357,7 @@ pub fn return_letter(index: usize) -> char {
 
 impl Project {
     pub fn empty(name: &str) -> Self {
-        let mut p = Project::default();
-        p.name = name.into();
+        let mut p = Project { name: name.into(), ..Default::default() };
         p.tracks.clear();
         p
     }

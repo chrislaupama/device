@@ -1,4 +1,4 @@
-//! Device Studio application core.
+//! Device application core.
 //!
 //! * [`model`]: the authoritative project data model (application thread only)
 //! * [`command`]: validated, invertible, serialisable edit commands

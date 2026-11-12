@@ -2940,10 +2940,10 @@ impl Controller {
                 sync_model(&m.maps, g.maps);
             }
             self.synth.pushed = Some(key);
-        } else if let Some(labels) = self.synth_pictures_changed(&v, bpm) {
-            if let Some(m) = &self.synth.models {
-                sync_model(&m.labels, labels);
-            }
+        } else if let Some(labels) = self.synth_pictures_changed(&v, bpm)
+            && let Some(m) = &self.synth.models
+        {
+            sync_model(&m.labels, labels);
         }
         s.set_synth_enabled(enabled);
         // The shared card header (and the folded strip) read the Synth as a device card.
@@ -3227,7 +3227,7 @@ mod tests {
     fn bench_synth_panel() {
         let v = defaults();
         let n = 300;
-        for p in 0..PAGES.len() {
+        for (p, page) in PAGES.iter().enumerate() {
             let t0 = std::time::Instant::now();
             for _ in 0..n {
                 std::hint::black_box(displays(&v, 120.0, p, 1));
@@ -3237,7 +3237,7 @@ mod tests {
             for _ in 0..n {
                 std::hint::black_box(layout(&ctx(&v), p, 1, 0));
             }
-            println!("{:<12} pictures {pics:8.1} us  layout {:6.1} us", PAGES[p], t0.elapsed().as_secs_f64() * 1e6 / n as f64);
+            println!("{:<12} pictures {pics:8.1} us  layout {:6.1} us", page, t0.elapsed().as_secs_f64() * 1e6 / n as f64);
         }
     }
 

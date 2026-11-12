@@ -248,6 +248,7 @@ fn span(c: roxmltree::Node) -> Result<Span, String> {
         loop_end: number(c, "Loop/LoopEnd")?,
         start_relative: number(c, "Loop/StartRelative").unwrap_or(0.0),
     };
+    #[allow(clippy::neg_cmp_op_on_partial_ord, reason = "NaN bounds must be rejected too")]
     if !(s.end > s.start) || !(s.loop_end > s.loop_start || !s.loop_on) {
         return Err(format!("clip {} has an empty span", c.attribute("Id").unwrap_or("?")));
     }

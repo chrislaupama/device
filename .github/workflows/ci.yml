@@ -31,7 +31,7 @@ concurrency:
 #                     and ctest, then `cargo test` over the workspace (debug);
 #   app (<system>)    the app's release build and its smoke tests (a
 #                     screenshot and the scripted self-test).
-# plus `lint` (workflow and script checks, seconds). The required checks are
+# plus `lint` (workflow, script and Rust formatting checks, seconds). The required checks are
 # `build-test (macOS)`, `build-test (Windows)` and `build-test (Linux)`: each
 # passes only when lint and every tests and app job passed, so one failure
 # turns all three red (the failing job is named in the check list).
@@ -62,6 +62,8 @@ env:
   CCACHE_BASEDIR: ${{ github.workspace }}
   CCACHE_NOHASHDIR: "true"
   CCACHE_MAXSIZE: 1G
+  # Toolchain for `cargo fmt --check` and clippy (builds and tests use stable).
+  RUST_LINT_TOOLCHAIN: "1.97.0"
   HOMEBREW_NO_AUTO_UPDATE: "1"
   HOMEBREW_NO_INSTALL_CLEANUP: "1"
 
@@ -90,6 +92,13 @@ jobs:
         run: tools/ci/test-changes.sh
       - name: Agent skills
         run: python3 tools/agents/check_skills.py
+      # Formatting is checked with a pinned toolchain (RUST_LINT_TOOLCHAIN,
+      # also used for clippy in `tests (Linux)`), so a new stable Rust cannot
+      # turn the job red overnight. Raise the pin by hand, in its own change.
+      - name: Rust formatting (cargo fmt --check)
+        run: |
+          rustup toolchain install "$RUST_LINT_TOOLCHAIN" --profile minimal --component rustfmt --no-self-update
+          cargo "+$RUST_LINT_TOOLCHAIN" fmt --all --check
       - name: Engine pin checker (offline self-test)
         run: tools/ci/engine_pins.py --self-test
 
@@ -260,6 +269,13 @@ jobs:
       - name: Rust workspace — test
         if: steps.changes.outputs.rust == 'true' && !cancelled()
         run: cargo test --workspace --locked --no-fail-fast
+      # Clippy over every target with warnings as errors, on Linux only (the
+      # lints are the same on every system) and with the pinned lint toolchain.
+      - name: Rust workspace — clippy (Linux)
+        if: runner.os == 'Linux' && steps.changes.outputs.rust == 'true' && !cancelled()
+        run: |
+          rustup toolchain install "$RUST_LINT_TOOLCHAIN" --profile minimal --component clippy --no-self-update
+          cargo "+$RUST_LINT_TOOLCHAIN" clippy --workspace --all-targets --locked -- -D warnings
       - name: ccache statistics
         if: steps.changes.outputs.run == 'true' && !cancelled()
         run: ccache --show-stats
@@ -468,10 +484,8 @@ jobs:
           grep -h -E "^self-test" "$RUNNER_TEMP/selftest.log" "$RUNNER_TEMP/selftest-audio.log"
           if [ "$shot_status" -ne 0 ] || [ ! -s app-linux.png ]; then echo "::error title=Screenshot failed (Linux)::exit status $shot_status"; exit 1; fi
           [ "$plain_status" -eq 0 ] && [ "$audio_status" -eq 0 ]
-      # Windows exits with code 0x87A after a run that passed (not yet
-      # explained, see engine/README.md), so the exit code is printed but not
-      # checked; a missing screenshot or self-test summary, or a failed check,
-      # fails the step.
+      # A non-zero exit code, a missing screenshot or self-test summary, or a
+      # failed check fails the step.
       - name: App — screenshot (Windows, WARP)
         if: runner.os == 'Windows' && steps.changes.outputs.run == 'true'
         timeout-minutes: 5
@@ -486,6 +500,7 @@ jobs:
           Get-Content shot-windows-stderr.txt
           "screenshot run exit code: 0x{0:X8}" -f $p.ExitCode
           if (-not (Test-Path app-windows.png)) { throw "no screenshot" }
+          if ($p.ExitCode -ne 0) { throw "the app exited with 0x{0:X8}" -f $p.ExitCode }
       # The full self-test under WARP takes about 30 minutes (the software
       # renderer is capped at two frames in flight so it no longer runs out of
       # memory), so pull requests skip it unless they carry the
@@ -513,6 +528,7 @@ jobs:
           if (-not $line) { Get-Content selftest-windows-stderr.txt -Tail 30; throw "no self-test summary" }
           $line.Value
           if ($line.Groups[1].Value -ne $line.Groups[2].Value) { throw "self-test failures" }
+          if ($p.ExitCode -ne 0) { throw "the self-test passed but the app exited with 0x{0:X8}" -f $p.ExitCode }
       - name: Upload app screenshots and self-test logs
         if: steps.changes.outputs.run == 'true' && !cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
