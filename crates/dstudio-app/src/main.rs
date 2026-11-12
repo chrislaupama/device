@@ -944,10 +944,31 @@ fn synth_test_state(device: dstudio_core::DeviceId) -> dstudio_core::Command {
     dstudio_core::Command::SetDeviceParams { device, params, preset: Some("Test: reference-synth".into()) }
 }
 
+#[cfg(windows)]
+unsafe extern "system" {
+    fn GetCurrentProcess() -> *mut std::ffi::c_void;
+    fn TerminateProcess(h: *mut std::ffi::c_void, code: u32) -> i32;
+}
+
 fn main() {
+    let probe = std::env::var("DSTUDIO_EXIT_PROBE").unwrap_or_default();
+    if probe == "early" {
+        eprintln!("probe: early exit before anything is created");
+        std::process::exit(0);
+    }
     if let Err(e) = run() {
         eprintln!("device-studio: {e}");
         std::process::exit(1);
+    }
+    eprintln!("probe: run() returned Ok (probe={probe:?})");
+    #[cfg(windows)]
+    if probe == "terminate" {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        unsafe { TerminateProcess(GetCurrentProcess(), 0) };
+    }
+    if probe == "exit0" {
+        std::process::exit(0);
     }
 }
 
