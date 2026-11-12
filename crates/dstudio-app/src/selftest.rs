@@ -343,7 +343,7 @@ fn midi_steps() -> Vec<Step> {
         Check("record history", record(h0.clone())),
         Do("Cmd+Shift+M (clip.insert_midi)", Box::new(|a| key(a, "M", true, true))),
         Check(
-            "1-bar MIDI clip at the playhead, Clip tab open, nothing selected, one undo step",
+            "1-bar MIDI clip at the playhead, selected and open in the piano roll, one undo step",
             Box::new(move |c, a| {
                 let m = instrument_clip(c).ok_or("no MIDI clip")?;
                 let s = a.global::<Studio>();
@@ -352,8 +352,8 @@ fn midi_steps() -> Vec<Step> {
                     && m.length == 4 * PPQ
                     && m.name == "MIDI"
                     && s.get_bottom_tab() == 1
-                    && !s.get_pr_visible()
-                    && c.selected_clip.is_none())
+                    && s.get_pr_visible()
+                    && c.selected_clip == Some(m.id))
                 .then_some(())
                 .ok_or(format!("start {} len {} tab {} pr {}", m.start, m.length, s.get_bottom_tab(), s.get_pr_visible()))
             }),

@@ -2311,16 +2311,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
+        // A second press that completes a double-click acts on its own, and so do its moves and
+        // release (src/clipedit.rs). It leaves press_epoch alone: a bump moves keyboard focus back
+        // to the main area, away from a rename field the double-click just opened.
         if kind == 0 {
-            c.press_epoch = c.press_epoch.wrapping_add(1);
             c.snap.bypass = cmd;
-        }
-        // A second press that completes a double-click acts on its own (src/clipedit.rs).
-        if kind == 2 {
+            c.lane_press_used = c.lane_press_double(x, y);
+            if !c.lane_press_used {
+                c.press_epoch = c.press_epoch.wrapping_add(1);
+            }
+        } else if kind == 2 {
             c.lane_release(x, y);
         }
-        if kind != 0 || !c.lane_press_double(x, y) {
+        if !c.lane_press_used {
             c.pointer_mods(kind, x, y, shift, alt)
+        }
+        if kind == 2 {
+            c.lane_press_used = false;
         }
     });
     on!(on_snap_toggle, |c| c.snap_toggle());

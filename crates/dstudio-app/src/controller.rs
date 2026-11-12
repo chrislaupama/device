@@ -441,6 +441,8 @@ pub struct Controller {
     pub press_epoch: i32,
     /// The last press in the arrangement lanes (time, x, y), for double-clicks (src/clipedit.rs).
     pub(crate) lane_last_down: Option<(std::time::Instant, f32, f32)>,
+    /// The press under way completed a double-click: its moves and release do nothing else.
+    pub(crate) lane_press_used: bool,
     /// Text typed in an open track name field (Studio.track-rename-draft), committed when the
     /// panel holding the field changes before the field commits itself.
     pub rename_draft: Option<(TrackId, String)>,
@@ -591,6 +593,7 @@ impl Controller {
             rename_section: None,
             press_epoch: 0,
             lane_last_down: None,
+            lane_press_used: false,
             rename_draft: None,
             rename_panel: None,
             rename_open_epoch: 0,
