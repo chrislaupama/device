@@ -394,7 +394,7 @@ Result run_preview_notes(uint32_t tracks, uint32_t blocks, int mode) {
     Result r{};
     r.us_per_block_avg = wall_us / blocks;
     r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
-    r.us_per_block_max = sorted.back();
+    r.us_per_block_max = sorted.empty() ? 0.0 : sorted.back();
     r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
     return r;
 }
@@ -459,7 +459,7 @@ Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params)
     Result r{};
     r.us_per_block_avg = wall_us / blocks;
     r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
-    r.us_per_block_max = sorted.back();
+    r.us_per_block_max = sorted.empty() ? 0.0 : sorted.back();
     r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
     return r;
 }
@@ -527,7 +527,7 @@ Result run_midi_input(uint32_t tracks, uint32_t blocks, int mode) {
     Result r{};
     r.us_per_block_avg = wall_us / blocks;
     r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
-    r.us_per_block_max = sorted.back();
+    r.us_per_block_max = sorted.empty() ? 0.0 : sorted.back();
     r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
     return r;
 }
@@ -668,7 +668,7 @@ Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
     Result r{};
     r.us_per_block_avg = wall_us / blocks;
     r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
-    r.us_per_block_max = sorted.back();
+    r.us_per_block_max = sorted.empty() ? 0.0 : sorted.back();
     r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
     return r;
 }
