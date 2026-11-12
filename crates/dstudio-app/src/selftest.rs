@@ -3884,6 +3884,9 @@ fn strip_steps() -> Vec<Step> {
         Check(
             "strip: track 1 neutral again",
             Box::new(|c, _| c.project().tracks[0].strip_is_neutral().then_some(()).ok_or("not neutral".into())),
+        ),
+    ]
+}
 
 /// Settings › Plugins custom folders (issue #33): add one holding a copy of the test gain CLAP
 /// and one that does not exist, remove them again.
