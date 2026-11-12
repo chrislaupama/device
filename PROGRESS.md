@@ -483,3 +483,13 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Tests: `scanner_searches_custom_folders` (a copy of the test gain CLAP in a temp folder is found, a missing folder
   is skipped, and the plugin goes when the folder does), `custom_plugin_folders_are_added_once_and_never_shadow_a_standard_one`,
   the preferences round trip, and self-test section `plugin_folder_steps`. Review state `review-plugin-folders`.
+
+### 2026-11-12: Device public name
+
+- Public organization/profile, website, current docs, README hero and sharing artwork use **Device**.
+- Desktop windows, menus, update text, export creator and audio/MIDI/plugin host display names use Device.
+- macOS bundles are `Device.app`; release titles, download archives, Windows installer/shortcuts and
+  Linux launcher labels use Device. Windows upgrades remove legacy default shortcuts.
+- Existing `.dsproj` format, preferences/cache/project/scratch paths, executable, crate names,
+  platform identities and installer AppId remain stable; see `docs/building.md` › Compatibility names.
+- Historical entries retain the name used at the time. See spec 004 for requirements and verification.

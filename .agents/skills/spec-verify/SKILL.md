@@ -1,6 +1,6 @@
 ---
 name: spec-verify
-description: Check a built Device Studio spec against the code before its pull request - every requirement and acceptance check, the principles, docs, tests, screenshots and benchmark evidence - and mark it Done. Use after spec-build, and again after any review changes.
+description: Check a built Device spec against the code before its pull request - every requirement and acceptance check, the principles, docs, tests, screenshots and benchmark evidence - and mark it Done. Use after spec-build, and again after any review changes.
 ---
 
 # Verify a spec

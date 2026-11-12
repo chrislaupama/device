@@ -1166,7 +1166,7 @@ pub struct DeviceDef {
 pub const SIDECHAIN_ENABLE_IDS: [&str; 3] = ["sidechainEnable", "sidechain", "sc_source"];
 
 /// The vendor shown for built-in devices.
-pub const VENDOR: &str = "Device Studio";
+pub const VENDOR: &str = "Device";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {

@@ -1,6 +1,6 @@
 ---
 name: dstudio-command
-description: Add or change an edit in Device Studio's application core - a dstudio_core::Command with validation, exact inverse, coalescing, undo label and JSON form - plus the model, persistence, migration and snapshot changes it needs. Use whenever a change lets the user (or the assistant, or a script) modify a project.
+description: Add or change an edit in Device's application core - a dstudio_core::Command with validation, exact inverse, coalescing, undo label and JSON form - plus the model, persistence, migration and snapshot changes it needs. Use whenever a change lets the user (or the assistant, or a script) modify a project.
 ---
 
 # Adding or changing an edit

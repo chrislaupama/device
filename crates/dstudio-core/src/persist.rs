@@ -27,7 +27,7 @@ pub enum PersistError {
     #[error("malformed project file: {0}")]
     Format(#[from] serde_json::Error),
     #[error(
-        "not a Device Studio project (format = {0:?}); a project saved before the app was renamed has to be opened in an earlier build and saved again with Save As under a .dsproj name"
+        "not a Device project (format = {0:?}); a project saved before the app was renamed has to be opened in an earlier build and saved again with Save As under a .dsproj name"
     )]
     WrongFormat(String),
     #[error("project schema {found} is newer than supported {supported}")]
