@@ -1105,6 +1105,14 @@ impl Engine {
         out
     }
 
+    /// Whether the transport wrapped at the loop end during the latest capture pass
+    /// (a real wrap, never a seek back); still answers after capture is disabled.
+    pub fn midi_capture_wrapped(&self) -> bool {
+        let mut w = 0u8;
+        let rc = unsafe { ffi::se_midi_capture_wrapped(self.raw, &mut w) };
+        rc == ffi::SE_OK && w != 0
+    }
+
     pub fn midi_stats(&self) -> MidiStats {
         let mut s = ffi::se_midi_stats::default();
         unsafe { ffi::se_midi_stats_get(self.raw, &mut s) };

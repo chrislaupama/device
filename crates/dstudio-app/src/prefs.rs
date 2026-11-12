@@ -73,6 +73,24 @@ pub struct Preferences {
     /// Timeline › Returns pill off: return track rows hidden (view state, not project state).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hide_returns: bool,
+    /// Settings › MIDI.
+    #[serde(default, skip_serializing_if = "MidiPrefs::is_default")]
+    pub midi: MidiPrefs,
+}
+
+/// Settings › MIDI: MIDI inputs are on by default, including ones plugged in
+/// later, so only the ones the user switched off are stored (by engine port id).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MidiPrefs {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub disabled_inputs: Vec<String>,
+}
+
+impl MidiPrefs {
+    pub fn is_default(&self) -> bool {
+        self.disabled_inputs.is_empty()
+    }
 }
 
 /// Settings › General, with its defaults.
@@ -163,7 +181,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dstudio-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.dsproj".into()], recent_resolved: vec!["/private/tmp/Song.dsproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() }, hide_returns: true };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.dsproj".into()], recent_resolved: vec!["/private/tmp/Song.dsproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() }, midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] }, hide_returns: true };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());
@@ -175,6 +193,7 @@ mod tests {
         assert_eq!(loaded.general, GeneralPrefs::default(), "files without General get the defaults");
         assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
         assert!(!loaded.hide_returns, "files without the Returns pill state show the returns");
+        assert!(loaded.midi.disabled_inputs.is_empty(), "MIDI inputs default to on");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

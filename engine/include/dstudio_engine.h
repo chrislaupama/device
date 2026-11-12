@@ -1456,6 +1456,11 @@ int32_t se_midi_capture_enable(se_engine* engine, uint8_t enabled);
 /* Pops up to `capacity` captured events in order; *out_count receives how
  * many were written. MAIN THREAD. */
 int32_t se_midi_capture_read(se_engine* engine, se_midi_captured* out, size_t capacity, size_t* out_count);
+/* *out_wrapped = 1 when the transport wrapped at the loop end while the
+ * latest capture pass ran (also after it was disabled, until the next
+ * enable), else 0. Seeks never count. Lets the app tell a loop wrap from a
+ * seek back. Any thread. */
+int32_t se_midi_capture_wrapped(se_engine* engine, uint8_t* out_wrapped);
 
 typedef struct se_midi_stats {
     uint64_t received;        /* messages received from ports and se_midi_inject */

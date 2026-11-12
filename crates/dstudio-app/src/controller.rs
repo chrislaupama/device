@@ -188,7 +188,7 @@ pub enum JobResult {
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// Takes of one finished recording pass, loaded into the engine.
-    Recorded { doc_epoch: u64, takes: Vec<(dstudio_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)> },
+    Recorded { doc_epoch: u64, takes: Vec<(dstudio_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)>, midi: Vec<dstudio_core::Command> },
     /// Settings › Audio "Test" tone loaded into the engine.
     TestTone(Result<AssetInfo, String>),
     /// Plugin catalogue scan finished (src/devices.rs).
@@ -430,6 +430,9 @@ pub struct Controller {
     pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_range_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
+    // ---- MIDI input (src/midi_in.rs) ----
+    pub midi_in: crate::midi_in::MidiInState,
+    pub(crate) midi_inputs_model: Rc<VecModel<crate::MidiInputRow>>,
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
@@ -563,6 +566,8 @@ impl Controller {
             export_tracks_model: Rc::new(VecModel::default()),
             export_range_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
+            midi_in: Default::default(),
+            midi_inputs_model: Rc::new(VecModel::default()),
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
             files: Default::default(),
@@ -624,6 +629,7 @@ impl Controller {
         s.set_export_range_items(ModelRc::from(self.export_range_model.clone()));
         s.set_undo_history_rows(ModelRc::from(self.undo_history_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
+        s.set_midi_inputs(ModelRc::from(self.midi_inputs_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
         s.set_files(ModelRc::from(self.files_model.clone()));
         s.set_files_guides(ModelRc::from(self.files_guides_model.clone()));
@@ -845,7 +851,20 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// Undo and redo wait while a MIDI pass records: they could change which
+    /// instrument tracks are armed, and the pass records on the ones armed at its start.
+    fn history_locked(&mut self) -> bool {
+        if self.midi_in.pass.is_some() {
+            self.set_status("Stop recording to undo or redo", 4);
+            return true;
+        }
+        false
+    }
+
     pub fn undo(&mut self) {
+        if self.history_locked() {
+            return;
+        }
         self.synth.drop_gesture();
         self.auto.sel = None;
         match self.doc.undo() {
@@ -856,6 +875,9 @@ impl Controller {
     }
 
     pub fn redo(&mut self) {
+        if self.history_locked() {
+            return;
+        }
         self.synth.drop_gesture();
         self.auto.sel = None;
         match self.doc.redo() {
@@ -1196,7 +1218,7 @@ impl Controller {
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
-                JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
+                JobResult::Recorded { doc_epoch, takes, midi } => self.finish_recorded(doc_epoch, takes, midi),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
@@ -2108,7 +2130,7 @@ impl Controller {
 
 /// Mini note view of a MIDI clip: (rel start, rel length, rel pitch 0 top .. 1 bottom).
 /// `shift` = ticks the clip start moved (left-resize preview).
-fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len: Ticks) -> Vec<[f32; 4]> {
+pub(crate) fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len: Ticks) -> Vec<[f32; 4]> {
     if notes.is_empty() || len <= 0 {
         return Vec::new();
     }
