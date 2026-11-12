@@ -41,7 +41,8 @@ wgpu.
 
 ## Features
 
-- **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Set the tempo in the
+- **Timeline.** Double-click an empty spot on an instrument track to make a MIDI clip there (or right-click it, or
+  use Create › MIDI Clip), import audio, move and trim clips, loop a range, and play against a metronome. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected

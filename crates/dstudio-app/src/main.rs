@@ -875,7 +875,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         }
         "draw_mode.toggle" => ctl.borrow_mut().auto_toggle_draw(),
         "clip.insert_midi" => {
-            ctl.borrow_mut().insert_midi_clip();
+            ctl.borrow_mut().insert_and_open_midi_clip();
         }
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
         "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
@@ -2357,15 +2357,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
-    on!(on_lane_double, |c, x: f32, y: f32| {
-        c.section_double(x, y);
-    });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
+        // A second press that completes a double-click acts on its own, and so do its moves and
+        // release (src/clipedit.rs). It leaves press_epoch alone: a bump moves keyboard focus back
+        // to the main area, away from a rename field the double-click just opened.
         if kind == 0 {
-            c.press_epoch = c.press_epoch.wrapping_add(1);
             c.snap.bypass = cmd;
+            c.lane_press_used = c.lane_press_double(x, y);
+            if !c.lane_press_used {
+                c.press_epoch = c.press_epoch.wrapping_add(1);
+            }
+        } else if kind == 2 {
+            c.lane_release(x, y);
         }
-        c.pointer_mods(kind, x, y, shift, alt)
+        if !c.lane_press_used {
+            c.pointer_mods(kind, x, y, shift, alt)
+        }
+        if kind == 2 {
+            c.lane_press_used = false;
+        }
     });
     on!(on_snap_toggle, |c| c.snap_toggle());
     on!(on_snap_menu_toggle, |c, x: f32, y: f32| c.snap_menu_toggle(x, y));
@@ -3207,19 +3217,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     let size = ((c.lanes_size.0 * scale).round() as u32, (c.lanes_size.1 * scale).round() as u32);
                     let f = &mut *f;
                     if let Some(r) = f.renderer.as_mut() {
-                        if let Some(tex) = r.ensure_target(size) {
-                            match gpu::to_slint_image(tex) {
-                                Ok(img) => app.global::<Studio>().set_timeline_image(img),
-                                Err(e) => eprintln!("timeline texture import failed: {e}"),
-                            }
-                        }
+                        r.ensure_target(size);
                         f.tex = r.target_size();
                         r.sync_peaks(c.peaks.generation, &c.peaks.data);
                         let auto = c.auto_scene(scale);
                         let mut sc = c.scene(scale);
                         sc.auto = auto.as_ref();
                         timeline::build(&mut f.dl, &sc);
-                        r.render(&f.dl);
+                        if let Some(tex) = r.render(&f.dl) {
+                            match gpu::to_slint_image(tex) {
+                                Ok(img) => app.global::<Studio>().set_timeline_image(img),
+                                Err(e) => eprintln!("timeline texture import failed: {e}"),
+                            }
+                        }
                     }
                     // Clip editor texture (only while a MIDI or audio clip is open in the Clip tab).
                     let pr_vis = c.clip_editor_visible();
@@ -3234,15 +3244,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let notes = c.pr_notes();
                         if let (false, Some(r), Some(sc)) = (c.seq_visible(), f.pr_renderer.as_mut(), c.pr_scene(scale, &notes)) {
                             let phys = ((size.0 * scale).round() as u32, (size.1 * scale).round() as u32);
-                            if let Some(tex) = r.ensure_target(phys) {
+                            r.ensure_target(phys);
+                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
+                            pianoroll::build(&mut f.pr_dl, &sc);
+                            if let Some(tex) = r.render(&f.pr_dl) {
                                 match gpu::to_slint_image(tex) {
                                     Ok(img) => app.global::<Studio>().set_pr_image(img),
                                     Err(e) => eprintln!("piano roll texture import failed: {e}"),
                                 }
                             }
-                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
-                            pianoroll::build(&mut f.pr_dl, &sc);
-                            r.render(&f.pr_dl);
                         }
                     }
                     f.pr_visible = pr_vis;

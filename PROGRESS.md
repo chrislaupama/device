@@ -520,6 +520,33 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
   list. Not yet opened in Live itself (spec 006, T5).
 
+### 2026-11-12: making MIDI clips from the timeline
+
+- Double-click an empty spot on an instrument track's lane: a one-bar MIDI clip in that bar (on the beat while snapping
+  is off or bypassed), moved past a clip it would start inside and cut short rather than running into the next one.
+  It is selected and opens in the piano roll, so notes can be drawn straight away. A double-click on a clip opens it
+  in the Clip tab. Double-clicks in the lanes are timed by the app (500 ms from the first click's release), not by
+  Slint, because the first click often selects a track and rebuilding the panels for it can outlast Slint's window.
+- Right-click on an empty spot: Insert MIDI clip (instrument tracks) and Paste (when the copied clip fits the track),
+  both acting at that spot.
+- ⌘⇧M now opens the new clip in the piano roll (the Clip tab used to say "No clip selected").
+- New Create menu in the menu bar: Audio Track (⌘T), Instrument Track (⇧⌘T), MIDI Clip (⇧⌘M).
+- Tests: `double_click_on_an_empty_instrument_lane_makes_a_clip_ready_for_notes`,
+  `a_new_clip_fits_between_its_neighbours`, `the_empty_lane_menu_inserts_and_pastes_where_it_was_opened`.
+- From a hand walkthrough on a Mac (new project, clips, notes, play, sections, save and reopen):
+  - The piano roll showed only the first of several notes added one after another until the panel was switched
+    away and back. The bottom panel's rounded corners make Slint keep it as a cached picture (a layer) that it redraws
+    only when a property it read changes, and drawing new notes into our own texture changed none. The renderer now
+    hands its texture to Slint again whenever the picture changed (a new `Image`, which Slint never treats as equal),
+    and skips drawing when nothing changed; the timeline gets the same. Self-test section `note_redraw_steps` checks
+    the screen itself (a snapshot through Slint's caches): before the fix only the first of three notes showed.
+  - ⇧⌘M and Create › MIDI Clip with the playhead inside a clip stacked a second clip exactly on top of it. The new
+    clip now goes after the clips at the playhead and stops at the next one (`insert_at_the_playhead_never_stacks_clips`).
+  - A double-click that makes a clip or renames a section no longer moves the playhead (the first click's seek is
+    taken back), and renaming a section keeps the clip open in the Clip tab.
+  - Saving names the project after its folder (the title and `project.json` used to stay "Untitled"), and the window
+    title says "Edited" while there are unsaved changes.
+
 ### 2026-11-12: return tracks and sends read as one pair
 
 - A return track is the shared effect track ("Return A"); a send is how much of one track goes into it. Every

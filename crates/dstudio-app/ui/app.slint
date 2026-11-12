@@ -688,7 +688,6 @@ component Timeline inherits Panel {
                 }
             }
             moved => { Studio.lane-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
-            double-clicked => { Studio.lane-double(self.mouse-x, self.mouse-y); }
             changed mouse-x => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             changed mouse-y => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             scroll-event(e) => {
@@ -1091,7 +1090,7 @@ export struct LayoutAnchors {
 }
 
 export component AppWindow inherits Window {
-    title: Studio.project-name + " — Device";
+    title: Studio.project-name + (Studio.project-edited ? " — Edited" : "") + " — Device";
     preferred-width: 1440px;
     preferred-height: 820px;
     min-width: 960px;
@@ -1140,6 +1139,13 @@ export component AppWindow inherits Window {
             MenuItem { title: "Copy"; enabled: Studio.can-copy && !Studio.menu-replay; shortcut: @keys(Control + C); activated => { Studio.menu-key("c", true, false); } }
             MenuItem { title: "Paste"; enabled: !Studio.menu-replay; shortcut: @keys(Control + V); activated => { Studio.menu-key("v", true, false); } }
             MenuItem { title: "Delete"; activated => { Studio.menu-key(Key.Delete, false, false); } }
+        }
+        Menu {
+            title: "Create";
+            MenuItem { title: "Audio Track"; enabled: !Studio.menu-replay; shortcut: @keys(Control + T); activated => { Studio.menu-key("t", true, false); } }
+            MenuItem { title: "Instrument Track"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + T); activated => { Studio.menu-key("t", true, true); } }
+            MenuSeparator { }
+            MenuItem { title: "MIDI Clip"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + M); activated => { Studio.menu-key("m", true, true); } }
         }
         Menu {
             title: "View";

@@ -7,7 +7,10 @@ use crate::pianoroll::{self, GRID_Y, ROW_H};
 use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, SeqNum, SeqRow, ShapeRow, Studio, YLabel};
 use dstudio_core::midi::{self, MidiClip};
 use dstudio_core::steps::StepPattern;
-use dstudio_core::{ClipId, Command, PPQ, Ticks, TrackKind};
+use dstudio_core::{ClipId, Command, PPQ, Ticks, TrackId, TrackKind};
+
+/// Longest gap between the two clicks of a double-click in the arrangement lanes (the macOS default).
+const LANE_DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Context-menu geometry (window points).
 pub const MENU_W: f32 = 209.0;
@@ -64,6 +67,7 @@ impl MenuAction {
             MenuAction::ToMidi => "Convert to MIDI Clip",
             MenuAction::Ask => "Ask",
             MenuAction::Paste => "Paste",
+            MenuAction::InsertMidiClip => "Insert MIDI clip",
             MenuAction::SectionRename => "Rename…",
             MenuAction::SectionColor => "Color",
             MenuAction::SectionInsert => "Insert",
@@ -82,6 +86,7 @@ impl MenuAction {
             MenuAction::Disable | MenuAction::Enable => "0",
             MenuAction::Ask => "⌘ K",
             MenuAction::Paste => "⌘ V",
+            MenuAction::InsertMidiClip => "⇧⌘ M",
             MenuAction::SectionDelete => "Del",
             _ => "",
         }
@@ -133,7 +138,9 @@ impl Controller {
     // ---------------------------------------------------------------- clip commands
 
     /// ⌘⇧M: 1-bar empty MIDI clip at the playhead (snapped to the beat) on the
-    /// selected instrument track. Opens the Clip tab (the clip is not selected).
+    /// selected instrument track. Opens the Clip tab (the clip is not selected). When the
+    /// playhead is inside a clip, the new clip goes straight after it rather than on top, and it
+    /// ends early rather than running into the next clip.
     pub fn insert_midi_clip(&mut self) -> Option<ClipId> {
         let p = self.project();
         let Some(t) = self.selected_track.and_then(|t| p.track(t)) else {
@@ -145,21 +152,189 @@ impl Controller {
             return None;
         }
         let track = t.id;
+        let at = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
+        let Some((start, max_len)) = self.free_span(track, at, at) else {
+            self.set_status("No room for a clip at the playhead", 3);
+            return None;
+        };
+        let id = self.add_empty_midi_clip(track, start, max_len)?;
+        self.set_bottom_tab(BottomTab::Clip);
+        Some(id)
+    }
+
+    /// An empty one-bar MIDI clip on instrument track `track` at `start` (a one-bar drum
+    /// pattern on a Drum Rack track), cut short to `max_len` when given. One undo step.
+    fn add_empty_midi_clip(&mut self, track: TrackId, start: Ticks, max_len: Option<Ticks>) -> Option<ClipId> {
+        let p = self.project();
+        let t = p.track(track)?;
         let rack = t.instrument_plugin.as_ref().is_some_and(crate::stepseq::is_drum_rack);
-        let start = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
         let id = ClipId(p.next_id);
-        // On a Drum Rack track the new clip is a one-bar drum pattern.
         let mut clip = if rack {
             MidiClip::empty_pattern(start, dstudio_core::steps::StepRows::Pads)
         } else {
             MidiClip::empty(start, p.ticks_per_bar())
         };
-        clip.id = id;
-        if self.execute(Command::AddMidiClip { track, clip }) {
-            self.set_bottom_tab(BottomTab::Clip);
-            return Some(id);
+        if let Some(max) = max_len.filter(|&m| m > 0 && m < clip.length) {
+            // A pattern's length is its steps; only a plain clip is cut short.
+            if clip.pattern.is_none() {
+                clip.length = max;
+                clip.clip_loop = Some(midi::ClipLoop::whole(max));
+            }
         }
-        None
+        clip.id = id;
+        self.execute(Command::AddMidiClip { track, clip }).then_some(id)
+    }
+
+    /// A press in the arrangement lanes: when it is the second press of a double-click (quick and
+    /// near the first click), runs `lane_double` and returns whether that did something, in which
+    /// case the press does nothing else and the playhead goes back to where it was before the
+    /// first click. The gap is timed from when the first click's release was
+    /// handled (`lane_release`), not from its press: the first click often selects a track, and
+    /// rebuilding the panels for it can take longer than a double-click on a slow machine, which
+    /// is also why this does not use Slint's own double-click.
+    pub fn lane_press_double(&mut self, x: f32, y: f32) -> bool {
+        let now = std::time::Instant::now();
+        let double =
+            self.lane_last_down.is_some_and(|(t, lx, ly)| now - t < LANE_DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
+        if !double {
+            self.lane_last_down = Some((now, x, y));
+            self.lane_playhead_before = self.playhead_state();
+            self.lane_clip_before = self.selected_clip;
+            return false;
+        }
+        self.lane_last_down = None;
+        let done = self.lane_double(x, y);
+        // The first click of the pair moved the playhead to the pointer; making or renaming
+        // something is not a seek, so it goes back.
+        if let Some(st) = self.lane_playhead_before.take().filter(|_| done) {
+            self.restore_playhead(st);
+        }
+        // A press in the section lane also let go of the open clip; renaming a section is not a
+        // reason to close it in the Clip tab.
+        let clip = self.lane_clip_before.take();
+        if done && self.rename_section.is_some() && self.selected_clip.is_none() && clip.is_some_and(|c| self.clip_track(c).is_some()) {
+            self.select_clip(clip);
+        }
+        done
+    }
+
+    /// The release of a click in the arrangement lanes: restarts the double-click timer when it is
+    /// the release of the press `lane_press_double` noted.
+    pub fn lane_release(&mut self, x: f32, y: f32) {
+        if let Some((t, lx, ly)) = self.lane_last_down.as_mut()
+            && (*lx - x).abs() < 4.0
+            && (*ly - y).abs() < 4.0
+        {
+            *t = std::time::Instant::now();
+        }
+    }
+
+    /// Double-click in the arrangement. In the section lane it renames or inserts a section;
+    /// on an empty spot of an instrument track's lane it makes a new one-bar MIDI clip there
+    /// (`create_midi_clip_at`); on a clip it opens that clip in the Clip tab. Returns whether
+    /// the double-click did something.
+    pub fn lane_double(&mut self, x: f32, y: f32) -> bool {
+        use crate::timeline::{Hit, hit_test};
+        if self.section_double(x, y) {
+            return true;
+        }
+        if self.auto.shown {
+            return false;
+        }
+        match hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y) {
+            Hit::Track(i) => {
+                let Some(t) = self.project().tracks.get(i) else { return false };
+                if t.kind != TrackKind::Instrument {
+                    self.set_status("MIDI clips go on instrument tracks: drop an audio file here, or record", 3);
+                    return false;
+                }
+                let track = t.id;
+                let pointer = (self.view.beat_at(x).max(0.0) * PPQ as f64).round() as Ticks;
+                self.create_midi_clip_at(track, pointer).is_some()
+            }
+            Hit::Clip { index, .. } => {
+                let Some(&id) = self.clip_ids.get(index) else { return false };
+                self.select_clip(Some(id));
+                self.set_bottom_tab(BottomTab::Clip);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A new one-bar MIDI clip on instrument track `track` in the bar under `pointer` (on the
+    /// beat while snapping is off or bypassed), moved past a clip it would start inside and
+    /// ending early rather than running into the next one. The clip is selected and opened in
+    /// the Clip tab so notes can be drawn straight away.
+    pub fn create_midi_clip_at(&mut self, track: TrackId, pointer: Ticks) -> Option<ClipId> {
+        let at = self.lane_floor(pointer);
+        let Some((start, max_len)) = self.free_span(track, at, pointer) else {
+            self.set_status("No room for a clip here", 3);
+            return None;
+        };
+        let id = self.add_empty_midi_clip(track, start, max_len)?;
+        self.select_track(track);
+        self.select_clip(Some(id));
+        self.set_bottom_tab(BottomTab::Clip);
+        Some(id)
+    }
+
+    /// The start of the bar at `pointer` (of the beat while snapping is off or bypassed): where
+    /// clips made or pasted from the lane itself go.
+    fn lane_floor(&self, pointer: Ticks) -> Ticks {
+        let step = if self.snap_active() { self.project().ticks_per_bar() } else { PPQ };
+        pointer.max(0).div_euclid(step.max(1)) * step
+    }
+
+    /// ⌘⇧M and Create › MIDI Clip: insert at the playhead and open the clip in the piano roll.
+    pub fn insert_and_open_midi_clip(&mut self) -> Option<ClipId> {
+        let id = self.insert_midi_clip()?;
+        self.select_clip(Some(id));
+        Some(id)
+    }
+
+    /// Right-click on an empty spot of track row `i`: Insert MIDI clip (instrument tracks) and
+    /// Paste (when the copied clip fits the track), both acting at that spot.
+    fn open_lane_menu(&mut self, i: usize, x: f32, wx: f32, wy: f32, win: (f32, f32)) {
+        let Some(t) = self.project().tracks.get(i) else {
+            self.menu_close();
+            return;
+        };
+        let (track, kind) = (t.id, t.kind);
+        let paste = match &self.clipboard {
+            Some(ClipboardItem::Audio { .. }) => kind == TrackKind::Audio,
+            Some(ClipboardItem::Midi { .. }) => kind == TrackKind::Instrument,
+            None => false,
+        };
+        self.select_track(track);
+        let pointer = (self.view.beat_at(x).max(0.0) * PPQ as f64).round() as Ticks;
+        self.open_menu(vec![(MenuAction::InsertMidiClip, kind == TrackKind::Instrument), (MenuAction::Paste, paste)], wx, wy, win);
+        self.menu.lane = Some((track, pointer));
+    }
+
+    /// Where a new clip wanted at `at` can go on `track`, given the pointer was at `pointer`
+    /// (in the gap between clips, or `at` itself for the playhead): the start moved past the clips
+    /// that cover it, one after another, and the room left before the next clip (`None`: no clip
+    /// after it). `None` when there is no room.
+    fn free_span(&self, track: TrackId, at: Ticks, pointer: Ticks) -> Option<(Ticks, Option<Ticks>)> {
+        let p = self.project();
+        let t = p.track(track)?;
+        let spans: Vec<(Ticks, Ticks)> = t
+            .midi_clips
+            .iter()
+            .map(|c| (c.start, c.end()))
+            .chain(t.clips.iter().map(|c| (c.start, c.start + p.clip_length_ticks(c))))
+            .collect();
+        let mut start = at;
+        while let Some(end) = spans.iter().filter(|&&(s, e)| s <= start.max(pointer) && e > start).map(|&(_, e)| e).max() {
+            start = end;
+        }
+        let next = spans.iter().filter(|&&(s, _)| s >= start).map(|&(s, _)| s).min();
+        match next {
+            Some(n) if n <= start => None,
+            Some(n) => Some((start, Some(n - start))),
+            None => Some((start, None)),
+        }
     }
 
     /// ⌘R: reverse the selected clip. An audio clip plays backwards (pressing again plays it
@@ -281,16 +456,27 @@ impl Controller {
     /// ⌘V: paste at the playhead (beat-snapped) on the selected track when its kind
     /// matches, else on the clip's original track.
     pub fn paste_clip(&mut self) {
+        self.paste_clip_at(None);
+    }
+
+    /// Paste on `target` (track, position) when it can take the clip, else on the selected track
+    /// at the playhead (snapped to the beat), else on the track the clip was copied from.
+    pub fn paste_clip_at(&mut self, target: Option<(TrackId, Ticks)>) {
         let Some(item) = self.clipboard.clone() else { return };
         let p = self.project();
-        let at = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
+        let at = target.map_or_else(|| ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0), |(_, at)| at);
         let new_id = ClipId(p.next_id);
         let (kind, orig) = match &item {
             ClipboardItem::Audio { track, .. } => (TrackKind::Audio, *track),
             ClipboardItem::Midi { track, .. } => (TrackKind::Instrument, *track),
         };
-        let track =
-            self.selected_track.and_then(|t| p.track(t)).filter(|t| t.kind == kind).map(|t| t.id).or_else(|| p.track(orig).map(|t| t.id));
+        let track = target
+            .map(|(t, _)| t)
+            .or(self.selected_track)
+            .and_then(|t| p.track(t))
+            .filter(|t| t.kind == kind)
+            .map(|t| t.id)
+            .or_else(|| p.track(orig).map(|t| t.id));
         let Some(track) = track else {
             self.set_status("Paste: no matching track", 3);
             return;
@@ -364,6 +550,12 @@ impl Controller {
             return;
         }
         let hit = hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
+        if let Hit::Track(i) = hit
+            && !self.auto.shown
+        {
+            self.open_lane_menu(i, x, wx, wy, win);
+            return;
+        }
         let Hit::Clip { index, .. } = hit else {
             self.menu_close();
             return;
@@ -437,6 +629,7 @@ impl Controller {
         self.menu.pos = (mx, my);
         self.menu.clip = None;
         self.menu.section = None;
+        self.menu.lane = None;
         self.ui_dirty = true;
     }
 
@@ -446,6 +639,7 @@ impl Controller {
             self.menu.sub_open = false;
             self.menu.clip = None;
             self.menu.section = None;
+            self.menu.lane = None;
             self.ui_dirty = true;
         }
     }
@@ -457,6 +651,20 @@ impl Controller {
         }
         if let Some(id) = self.menu.section {
             self.section_menu_activate(id, action);
+            return;
+        }
+        if let Some((track, at)) = self.menu.lane {
+            self.menu_close();
+            match action {
+                MenuAction::InsertMidiClip => {
+                    self.create_midi_clip_at(track, at);
+                }
+                MenuAction::Paste => {
+                    let at = self.lane_floor(at);
+                    self.paste_clip_at(Some((track, at)));
+                }
+                _ => {}
+            }
             return;
         }
         let Some(id) = self.menu.clip else { return };
@@ -978,5 +1186,185 @@ mod reverse_tests {
             l.unroll(&notes, 7680).iter().find(|(m, _)| m.id == 1),
             "it plays as it did"
         );
+    }
+}
+
+#[cfg(test)]
+mod lane_tests {
+    use super::*;
+    use crate::timeline::{Hit, hit_test};
+    use dstudio_core::Project;
+
+    fn controller() -> Controller {
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        c.lanes_size = (1200.0, 600.0);
+        c.rebuild_vis();
+        c
+    }
+
+    fn track(c: &Controller, kind: TrackKind) -> (usize, TrackId) {
+        c.project().tracks.iter().enumerate().find(|(_, t)| t.kind == kind).map(|(i, t)| (i, t.id)).unwrap()
+    }
+
+    /// A lane point (x, y) in bar `bar` (from 0), beat `beat`, on track row `row`.
+    fn lane_point(c: &Controller, row: usize, bar: i64, beat: f64) -> (f32, f32) {
+        let beats = (bar * c.project().ticks_per_bar()) as f64 / PPQ as f64 + beat;
+        let x = c.view.x_of(beats);
+        let y = (0..600)
+            .map(|y| y as f32)
+            .find(|&y| matches!(hit_test(&c.view, c.lanes_size, c.lane_tracks(), &c.clip_vis, x, y), Hit::Track(i) if i == row));
+        (x, y.expect("the track row is on screen"))
+    }
+
+    fn midi_clips(c: &Controller, t: TrackId) -> Vec<(Ticks, Ticks)> {
+        c.project().track(t).unwrap().midi_clips.iter().map(|m| (m.start, m.length)).collect()
+    }
+
+    /// Double-clicking an empty spot of an instrument track makes a one-bar clip in that bar and
+    /// opens it in the piano roll; on an audio track it makes nothing.
+    #[test]
+    fn double_click_on_an_empty_instrument_lane_makes_a_clip_ready_for_notes() {
+        let mut c = controller();
+        let bar = c.project().ticks_per_bar();
+        let (row, inst) = track(&c, TrackKind::Instrument);
+        let (x, y) = lane_point(&c, row, 2, 2.5);
+        assert!(c.lane_double(x, y));
+        assert_eq!(midi_clips(&c, inst), [(2 * bar, bar)]);
+        let id = c.project().track(inst).unwrap().midi_clips[0].id;
+        assert_eq!(c.selected_clip, Some(id));
+        assert_eq!(c.pr_clip().map(|m| m.id), Some(id), "the piano roll shows the new clip");
+        c.undo();
+        assert!(c.project().track(inst).unwrap().midi_clips.is_empty(), "one undo step");
+
+        let (row, audio) = track(&c, TrackKind::Audio);
+        c.rebuild_vis();
+        let (x, y) = lane_point(&c, row, 1, 0.0);
+        assert!(!c.lane_double(x, y));
+        assert!(c.project().track(audio).unwrap().midi_clips.is_empty() && c.project().track(audio).unwrap().clips.is_empty());
+    }
+
+    /// A clip made in a bar that another clip already covers part of fills only the free part.
+    #[test]
+    fn a_new_clip_fits_between_its_neighbours() {
+        let mut c = controller();
+        let bar = c.project().ticks_per_bar();
+        let (_, inst) = track(&c, TrackKind::Instrument);
+        for (id, start, len) in [(800, 0, bar + bar / 4), (801, 2 * bar - bar / 4, bar)] {
+            c.execute(Command::AddMidiClip { track: inst, clip: MidiClip { id: ClipId(id), ..MidiClip::empty(start, len) } });
+        }
+        // Pointer in the gap in bar 1 (from 0): the clip starts where the first one ends and stops at the second.
+        let id = c.create_midi_clip_at(inst, bar + bar / 2).expect("room in the gap");
+        let m = c.project().midi_clip(id).unwrap();
+        assert_eq!((m.start, m.length), (bar + bar / 4, bar / 2));
+        assert_eq!(m.clip_loop.map(|l| (l.start, l.end)), Some((0, bar / 2)), "the loop follows the shorter length");
+    }
+
+    /// ⌘⇧M with the playhead inside a clip puts the new clip after it, never on top of it, and
+    /// stops it at the next clip.
+    #[test]
+    fn insert_at_the_playhead_never_stacks_clips() {
+        let mut c = controller();
+        let bar = c.project().ticks_per_bar();
+        let (_, inst) = track(&c, TrackKind::Instrument);
+        c.select_track(inst);
+        c.insert_midi_clip().expect("first clip");
+        c.insert_midi_clip().expect("second clip, after the first");
+        assert_eq!(midi_clips(&c, inst), [(0, bar), (bar, bar)], "the playhead stayed at 0");
+        // A clip waiting a beat after the end of bar 3 leaves the third clip one beat.
+        c.execute(Command::AddMidiClip { track: inst, clip: MidiClip { id: ClipId(900), ..MidiClip::empty(2 * bar + PPQ, bar) } });
+        let id = c.insert_midi_clip().expect("third clip");
+        let m = c.project().midi_clip(id).unwrap();
+        assert_eq!((m.start, m.length), (2 * bar, PPQ));
+        let spans = midi_clips(&c, inst);
+        for (i, a) in spans.iter().enumerate() {
+            for b in &spans[i + 1..] {
+                assert!(a.0 + a.1 <= b.0 || b.0 + b.1 <= a.0, "clips {a:?} and {b:?} overlap");
+            }
+        }
+    }
+
+    /// A double-click that makes a clip is not a seek: the first click's move of the playhead is
+    /// taken back. A single click still moves it.
+    #[test]
+    fn a_double_click_that_makes_a_clip_leaves_the_playhead_where_it_was() {
+        let mut c = controller();
+        let (row, inst) = track(&c, TrackKind::Instrument);
+        c.seek_beats(1.0);
+        let (x, y) = lane_point(&c, row, 3, 1.5);
+        let click = |c: &mut Controller| {
+            if !c.lane_press_double(x, y) {
+                c.pointer_mods(0, x, y, false, false);
+            }
+            c.lane_release(x, y);
+            c.pointer_mods(2, x, y, false, false);
+        };
+        click(&mut c);
+        let bar = c.project().ticks_per_bar();
+        assert_eq!(c.playhead_ticks(), 3 * bar + 3 * PPQ / 2, "a single click seeks");
+        c.seek_beats(1.0);
+        c.lane_last_down = None; // a while later
+        click(&mut c);
+        click(&mut c);
+        assert_eq!(midi_clips(&c, inst), [(3 * bar, bar)], "the double-click made a clip");
+        assert_eq!(c.playhead_ticks(), PPQ, "and left the playhead at beat 2");
+    }
+
+    /// Double-clicking a section to rename it keeps the clip that was open in the Clip tab.
+    #[test]
+    fn renaming_a_section_keeps_the_open_clip() {
+        let mut c = controller();
+        let (_, inst) = track(&c, TrackKind::Instrument);
+        c.insert_section(None).expect("a section");
+        c.create_midi_clip_at(inst, 0).expect("a clip");
+        let open = c.selected_clip;
+        assert!(c.pr_visible());
+        let (x, y) = (c.view.x_of(1.0), (crate::sections::LANE_TOP + crate::sections::LANE_BOTTOM) / 2.0);
+        for _ in 0..2 {
+            if !c.lane_press_double(x, y) {
+                c.pointer_mods(0, x, y, false, false);
+            }
+            c.lane_release(x, y);
+            c.pointer_mods(2, x, y, false, false);
+        }
+        assert!(c.rename_section.is_some(), "the rename field is open");
+        assert_eq!(c.selected_clip, open);
+        assert!(c.pr_visible(), "the piano roll still shows the clip");
+    }
+
+    /// Saving names the project after its folder, and a saved project has no unsaved changes.
+    #[test]
+    fn saving_names_the_project_after_its_folder() {
+        let mut c = controller();
+        let dir = std::env::temp_dir().join(format!("dstudio-name-{}", std::process::id())).join("Verse Ideas.dsproj");
+        c.save_to(&dir);
+        assert_eq!(c.project().name, "Verse Ideas");
+        assert!(!c.doc.is_dirty());
+        let saved = dstudio_core::persist::load(&dir).expect("saved project loads");
+        assert_eq!(saved.project.name, "Verse Ideas");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    /// Right-click on an empty instrument lane: Insert MIDI clip makes the clip in that bar, and
+    /// Paste (once a clip is copied) puts the copy there.
+    #[test]
+    fn the_empty_lane_menu_inserts_and_pastes_where_it_was_opened() {
+        let mut c = controller();
+        let bar = c.project().ticks_per_bar();
+        let (row, inst) = track(&c, TrackKind::Instrument);
+        let (x, y) = lane_point(&c, row, 3, 1.0);
+        c.lane_context(x, y, 500.0, 300.0, (1400.0, 900.0));
+        assert!(c.menu.open);
+        assert_eq!(c.menu.items, [(MenuAction::InsertMidiClip, true), (MenuAction::Paste, false)], "nothing copied yet");
+        c.menu_activate(0);
+        assert_eq!(midi_clips(&c, inst), [(3 * bar, bar)]);
+
+        assert!(c.copy_clip());
+        c.rebuild_vis();
+        let (x, y) = lane_point(&c, row, 5, 3.0);
+        c.lane_context(x, y, 500.0, 300.0, (1400.0, 900.0));
+        assert_eq!(c.menu.items[1], (MenuAction::Paste, true));
+        c.menu_activate(1);
+        assert_eq!(midi_clips(&c, inst), [(3 * bar, bar), (5 * bar, bar)]);
     }
 }

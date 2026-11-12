@@ -2,8 +2,14 @@
 //!
 //! Pattern from ADR 0001: we render into our own offscreen
 //! `Rgba8Unorm` texture on the same `Device`/`Queue` Slint renders with, from
-//! the `BeforeRendering` notifier, and hand the texture to Slint once per
-//! resize via `slint::Image::try_from(wgpu::Texture)`.
+//! the `BeforeRendering` notifier, and hand the texture to Slint via
+//! `slint::Image::try_from(wgpu::Texture)` each time its picture changes.
+//!
+//! Handing it over again matters: the panels have rounded corners, so Slint keeps each one as a
+//! cached picture (a layer) and redraws it only when a property it read changes. Drawing new
+//! content into the same texture changes no property, so the screen kept the old notes or clips
+//! until something else in the panel changed. A new `Image` for the texture is such a change (Slint
+//! never treats two wgpu images as equal), and an unchanged picture is neither drawn nor handed over.
 //!
 //! The renderer is data-driven: `timeline.rs` builds a [`DrawList`] of
 //! instances in physical pixels from the project + view; this module only
@@ -66,9 +72,32 @@ impl DrawList {
         self.top.clear();
         self.over.clear();
     }
+
+    /// Draws exactly the same picture as `other`.
+    fn same_as(&self, other: &DrawList) -> bool {
+        fn eq<T: Pod>(a: &[T], b: &[T]) -> bool {
+            bytemuck::cast_slice::<T, u8>(a) == bytemuck::cast_slice::<T, u8>(b)
+        }
+        eq(&self.base, &other.base)
+            && eq(&self.waves, &other.waves)
+            && eq(&self.top, &other.top)
+            && eq(&self.over, &other.over)
+            && self.lanes_clip == other.lanes_clip
+            && self.clear == other.clear
+    }
+
+    fn copy_from(&mut self, other: &DrawList) {
+        self.base.clone_from(&other.base);
+        self.waves.clone_from(&other.waves);
+        self.top.clone_from(&other.top);
+        self.over.clone_from(&other.over);
+        self.lanes_clip = other.lanes_clip;
+        self.clear = other.clear;
+    }
 }
 
 struct Target {
+    texture: wgpu::Texture,
     view: wgpu::TextureView,
     size: (u32, u32),
     globals: wgpu::Buffer,
@@ -93,6 +122,10 @@ pub struct Renderer {
     wave_buf: wgpu::Buffer,
     wave_cap: usize,
     pub last_counts: (usize, usize, usize),
+    /// What the target holds now, and whether it must be drawn again whatever the draw list
+    /// (new target, new peaks).
+    drawn: DrawList,
+    stale: bool,
     /// Frames submitted but maybe not finished, oldest first (see [`Renderer::end_frame`]).
     in_flight: std::collections::VecDeque<wgpu::SubmissionIndex>,
     /// Frames whose [`Renderer::end_frame`] had to wait, and the total wait.
@@ -206,6 +239,8 @@ impl Renderer {
             wave_buf: vbuf(device, "waves", 1024 * 64),
             wave_cap: 1024,
             last_counts: (0, 0, 0),
+            drawn: DrawList::default(),
+            stale: true,
             in_flight: Default::default(),
             throttled: (0, std::time::Duration::ZERO),
         }
@@ -239,15 +274,16 @@ impl Renderer {
             self.peaks_view = Self::make_peaks(&self.device, &self.queue, data);
             self.peaks_generation = generation;
             self.bind_group = None;
+            self.stale = true;
         }
     }
 
-    /// Ensure the offscreen target has the given physical size. Returns the new
-    /// texture (to wrap as `slint::Image`) when it was (re)created.
-    pub fn ensure_target(&mut self, size: (u32, u32)) -> Option<wgpu::Texture> {
+    /// Ensure the offscreen target has the given physical size (the next [`Renderer::render`]
+    /// draws into it and hands it over).
+    pub fn ensure_target(&mut self, size: (u32, u32)) {
         let size = (size.0.max(1), size.1.max(1));
         if self.target.as_ref().map(|t| t.size) == Some(size) {
-            return None;
+            return;
         }
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("timeline"),
@@ -266,9 +302,9 @@ impl Renderer {
             contents: bytemuck::bytes_of(&Globals { target_size: [size.0 as f32, size.1 as f32], _pad: [0.0; 2] }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        self.target = Some(Target { view, size, globals });
+        self.target = Some(Target { texture, view, size, globals });
         self.bind_group = None;
-        Some(texture)
+        self.stale = true;
     }
 
     /// Call once per frame after Slint has rendered: keeps the GPU at most
@@ -321,9 +357,14 @@ impl Renderer {
         }
     }
 
-    /// Upload the draw list and submit one command buffer on Slint's queue.
-    pub fn render(&mut self, dl: &DrawList) {
-        let Some(tl) = self.target.as_ref() else { return };
+    /// Draw `dl` into the target (one command buffer on Slint's queue) when it differs from what
+    /// the target holds. Returns the texture when its picture changed: wrap it in a new
+    /// `slint::Image` and set it again, so Slint redraws the panel that shows it (module docs).
+    pub fn render(&mut self, dl: &DrawList) -> Option<wgpu::Texture> {
+        let tl = self.target.as_ref()?;
+        if !self.stale && dl.same_as(&self.drawn) {
+            return None;
+        }
         if self.bind_group.is_none() {
             self.bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("timeline"),
@@ -385,6 +426,9 @@ impl Renderer {
             }
         }
         self.queue.submit([enc.finish()]);
+        self.drawn.copy_from(dl);
+        self.stale = false;
+        Some(tl.texture.clone())
     }
 }
 

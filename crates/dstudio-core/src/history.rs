@@ -144,6 +144,14 @@ impl Document {
         }
     }
 
+    /// Name the project after where it is saved (Save, Save As). Not an undo step and not a
+    /// change to save: it follows the project folder's name.
+    pub fn set_project_name(&mut self, name: &str) {
+        if self.project.name != name {
+            self.project.name = name.to_string();
+        }
+    }
+
     /// Record the modulation bases of plugin devices before saving (no undo
     /// step, like [Self::sync_device_states]); devices not listed get none.
     pub fn sync_mod_bases(&mut self, bases: &[(crate::device::DeviceId, Vec<(u32, f32)>)]) {
