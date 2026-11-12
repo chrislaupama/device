@@ -1069,7 +1069,7 @@ export struct LayoutAnchors {
 }
 
 export component AppWindow inherits Window {
-    title: Studio.project-name + " — Device";
+    title: Studio.project-name + (Studio.project-edited ? " — Edited" : "") + " — Device";
     preferred-width: 1440px;
     preferred-height: 820px;
     min-width: 960px;

@@ -259,6 +259,36 @@ fn tab_to(app: &AppWindow, index: i32) {
     }
 }
 
+/// What the window shows: a fresh frame drawn through Slint's caches, the way the screen gets it
+/// (not our own textures). Take it with the controller unborrowed, so the frame also renders the
+/// timeline and piano roll.
+struct Shot {
+    buf: slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    scale: f32,
+    dy: f32,
+}
+
+impl Shot {
+    fn take(app: &AppWindow) -> Option<Shot> {
+        let buf = app.window().take_snapshot().inspect_err(|e| eprintln!("self-test: snapshot failed: {e}")).ok()?;
+        Some(Shot { buf, scale: app.window().scale_factor(), dy: menu_bar_h() })
+    }
+
+    /// The colour at content point (x, y).
+    fn at(&self, x: f32, y: f32) -> Option<[u8; 3]> {
+        let (px, py) = ((x * self.scale) as u32, ((y + self.dy) * self.scale) as u32);
+        (px < self.buf.width() && py < self.buf.height()).then(|| {
+            let p = self.buf.as_slice()[(py * self.buf.width() + px) as usize];
+            [p.r, p.g, p.b]
+        })
+    }
+}
+
+/// Largest per-channel difference between two colours.
+fn px_diff(a: [u8; 3], b: [u8; 3]) -> u8 {
+    (0..3).map(|i| a[i].abs_diff(b[i])).max().unwrap_or(0)
+}
+
 fn instrument_clip(c: &Controller) -> Option<&dstudio_core::MidiClip> {
     c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument)?.midi_clips.first()
 }
@@ -13508,6 +13538,132 @@ fn shortcut_steps() -> Vec<Step> {
 /// Piano-roll velocity lane: the toolbar toggle opens it under the grid; dragging a stem moves
 /// the note's velocity, a sweep across empty lane paints the stems it passes; each gesture is one
 /// undo step.
+/// Bug: the piano roll showed only the first of several notes added one after another (a
+/// double-click each, as by hand) until the panel was switched away and back. The bottom panel's
+/// rounded corners make Slint keep it as a cached picture that it redraws only when one of its
+/// properties changes; the note grid is our own texture, so a new note changed nothing it watched.
+/// These steps look at the screen itself (a snapshot through Slint's caches), not the document.
+fn note_redraw_steps() -> Vec<Step> {
+    use Step::*;
+    let shots: Rc<RefCell<Vec<Shot>>> = Rc::default();
+    let (s0, s1, s2, s3, s4) = (shots.clone(), shots.clone(), shots.clone(), shots.clone(), shots);
+    let look = |slot: Rc<RefCell<Vec<Shot>>>| -> Box<dyn Fn(&AppWindow, &Ctl)> {
+        Box::new(move |a, _| {
+            if let Some(shot) = Shot::take(a) {
+                slot.borrow_mut().push(shot);
+            }
+        })
+    };
+    // Double-click in the middle of beat `beat`'s first 1/16 on pitch `pitch` (pen off).
+    let add = |beat: f64, pitch: i32| -> Box<dyn Fn(&AppWindow, &Ctl)> {
+        Box::new(move |a, ctl| {
+            let (x, y) = pr_xy(ctl, beat + 0.125, pitch);
+            double_click(a, x, y);
+        })
+    };
+    // Window points at the centres of the open clip's notes.
+    fn note_centres(c: &Controller) -> Vec<(f32, f32)> {
+        let v = c.pr_view();
+        let notes = c.pr_clip().map(|m| m.notes.clone()).unwrap_or_default();
+        notes
+            .iter()
+            .map(|n| {
+                let (x, y, w, h) = v.note_rect(n);
+                (pr_origin().0 + x + w / 2.0, pr_origin().1 + y + h / 2.0)
+            })
+            .collect()
+    }
+    let colours = |shot: &Shot, pts: &[(f32, f32)]| -> Vec<[u8; 3]> { pts.iter().filter_map(|&(x, y)| shot.at(x, y)).collect() };
+    let centres: Rc<RefCell<Vec<(f32, f32)>>> = Rc::default();
+    let (c1, c2, c3) = (centres.clone(), centres.clone(), centres);
+    vec![
+        DoC(
+            "note redraw: a new instrument track with an empty MIDI clip open in the piano roll, pen off",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.mixer_open = false;
+                let color = crate::controller::next_track_color(c.project());
+                let track = dstudio_core::Track::new(dstudio_core::TrackId(0), TrackKind::Instrument, "Notes", color);
+                c.execute(dstudio_core::Command::AddTrack { index: None, track });
+                if let Some(t) = c.project().tracks.last().map(|t| t.id) {
+                    c.select_track(t);
+                }
+                c.seek_beats(96.0);
+                c.insert_and_open_midi_clip();
+                c.snap.grid = Some(crate::timeline::GridSize::Sixteenth);
+                (c.pr.pen, c.pr.vel_lane) = (false, false);
+                // As a click does: the interface takes the new state before the next frame.
+                c.update_ui(a);
+            }),
+        ),
+        DoC(
+            "note redraw: scroll D4 to the middle of the grid (once the editor has its size)",
+            Box::new(|a, ctl| {
+                let mut c = ctl.borrow_mut();
+                let v = c.pr_view();
+                c.pr.scroll = (v.y_of(62) + v.scroll - crate::pianoroll::GRID_Y - (v.h - crate::pianoroll::GRID_Y) / 2.0).max(0.0);
+                c.update_ui(a);
+            }),
+        ),
+        Check(
+            "note redraw: the empty clip is open",
+            Box::new(|c, a| {
+                (c.pr_clip().is_some_and(|m| m.notes.is_empty()) && a.global::<Studio>().get_pr_visible())
+                    .then_some(())
+                    .ok_or("no empty clip open".into())
+            }),
+        ),
+        DoC("note redraw: look at the screen", look(s0)),
+        DoC("note redraw: double-click C4 at beat 1", add(0.0, 60)),
+        DoC("note redraw: double-click D4 at beat 2", add(1.0, 62)),
+        DoC("note redraw: double-click E4 at beat 3", add(2.0, 64)),
+        Check(
+            "note redraw: the clip holds the 3 notes",
+            Box::new(move |c, _| {
+                *c1.borrow_mut() = note_centres(c);
+                let got: Vec<u8> = c.pr_clip().map(|m| m.notes.iter().map(|n| n.pitch).collect()).unwrap_or_default();
+                (got == [60, 62, 64]).then_some(()).ok_or(format!("pitches {got:?}"))
+            }),
+        ),
+        DoC("note redraw: look at the screen again", look(s1)),
+        Check(
+            "note redraw: all 3 notes show on screen, not only the first",
+            Box::new(move |_, _| {
+                let (shots, pts) = (s2.borrow(), c2.borrow());
+                let [before, after] = [0, 1].map(|i| shots.get(i).map(|s| colours(s, &pts)).unwrap_or_default());
+                if pts.len() != 3 || before.len() != 3 || after.len() != 3 {
+                    return Err(format!("{} notes, {} snapshots", pts.len(), shots.len()));
+                }
+                let diffs: Vec<u8> = before.iter().zip(&after).map(|(b, a)| px_diff(*b, *a)).collect();
+                diffs
+                    .iter()
+                    .all(|&d| d > 40)
+                    .then_some(())
+                    .ok_or(format!("change at C4/D4/E4 {diffs:?} (before {before:?}, after {after:?})"))
+            }),
+        ),
+        Do("note redraw: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        DoC("note redraw: look once more", look(s3)),
+        Check(
+            "note redraw: undo takes E4 off the screen, C4 and D4 stay",
+            Box::new(move |c, _| {
+                let shots = s4.borrow();
+                let pts = note_centres(c);
+                let gone = shots.first().zip(shots.get(1)).zip(shots.get(2));
+                let Some(((before, drawn), now)) = gone else { return Err(format!("{} snapshots", shots.len())) };
+                // Where E4 was: back to the empty grid. Where C4 and D4 are: still the drawn notes.
+                let e4 = c3.borrow().get(2).copied().ok_or("no E4 centre")?;
+                let (b, n) = (before.at(e4.0, e4.1).unwrap_or_default(), now.at(e4.0, e4.1).unwrap_or_default());
+                let kept: Vec<u8> =
+                    pts.iter().map(|&(x, y)| px_diff(drawn.at(x, y).unwrap_or_default(), now.at(x, y).unwrap_or_default())).collect();
+                (pts.len() == 2 && px_diff(b, n) <= 12 && kept.iter().all(|&d| d <= 12))
+                    .then_some(())
+                    .ok_or(format!("E4 spot before {b:?} now {n:?}; C4/D4 change {kept:?}"))
+            }),
+        ),
+    ]
+}
+
 fn velocity_lane_steps() -> Vec<Step> {
     use crate::pianoroll::VEL_H;
     use Step::*;
@@ -13720,6 +13876,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(plugin_folder_steps());
     all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
+    all.extend(note_redraw_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.

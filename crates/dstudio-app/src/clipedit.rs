@@ -138,7 +138,9 @@ impl Controller {
     // ---------------------------------------------------------------- clip commands
 
     /// ⌘⇧M: 1-bar empty MIDI clip at the playhead (snapped to the beat) on the
-    /// selected instrument track. Opens the Clip tab (the clip is not selected).
+    /// selected instrument track. Opens the Clip tab (the clip is not selected). When the
+    /// playhead is inside a clip, the new clip goes straight after it rather than on top, and it
+    /// ends early rather than running into the next clip.
     pub fn insert_midi_clip(&mut self) -> Option<ClipId> {
         let p = self.project();
         let Some(t) = self.selected_track.and_then(|t| p.track(t)) else {
@@ -150,8 +152,12 @@ impl Controller {
             return None;
         }
         let track = t.id;
-        let start = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
-        let id = self.add_empty_midi_clip(track, start, None)?;
+        let at = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
+        let Some((start, max_len)) = self.free_span(track, at, at) else {
+            self.set_status("No room for a clip at the playhead", 3);
+            return None;
+        };
+        let id = self.add_empty_midi_clip(track, start, max_len)?;
         self.set_bottom_tab(BottomTab::Clip);
         Some(id)
     }
@@ -181,7 +187,8 @@ impl Controller {
 
     /// A press in the arrangement lanes: when it is the second press of a double-click (quick and
     /// near the first click), runs `lane_double` and returns whether that did something, in which
-    /// case the press does nothing else. The gap is timed from when the first click's release was
+    /// case the press does nothing else and the playhead goes back to where it was before the
+    /// first click. The gap is timed from when the first click's release was
     /// handled (`lane_release`), not from its press: the first click often selects a track, and
     /// rebuilding the panels for it can take longer than a double-click on a slow machine, which
     /// is also why this does not use Slint's own double-click.
@@ -191,10 +198,24 @@ impl Controller {
             self.lane_last_down.is_some_and(|(t, lx, ly)| now - t < LANE_DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
         if !double {
             self.lane_last_down = Some((now, x, y));
+            self.lane_playhead_before = self.playhead_state();
+            self.lane_clip_before = self.selected_clip;
             return false;
         }
         self.lane_last_down = None;
-        self.lane_double(x, y)
+        let done = self.lane_double(x, y);
+        // The first click of the pair moved the playhead to the pointer; making or renaming
+        // something is not a seek, so it goes back.
+        if let Some(st) = self.lane_playhead_before.take().filter(|_| done) {
+            self.restore_playhead(st);
+        }
+        // A press in the section lane also let go of the open clip; renaming a section is not a
+        // reason to close it in the Clip tab.
+        let clip = self.lane_clip_before.take();
+        if done && self.rename_section.is_some() && self.selected_clip.is_none() && clip.is_some_and(|c| self.clip_track(c).is_some()) {
+            self.select_clip(clip);
+        }
+        done
     }
 
     /// The release of a click in the arrangement lanes: restarts the double-click timer when it is
@@ -292,8 +313,9 @@ impl Controller {
     }
 
     /// Where a new clip wanted at `at` can go on `track`, given the pointer was at `pointer`
-    /// (in the gap between clips): the start moved past a clip that ends after `at`, and the room
-    /// left before the next clip (`None`: no clip after it). `None` when there is no room.
+    /// (in the gap between clips, or `at` itself for the playhead): the start moved past the clips
+    /// that cover it, one after another, and the room left before the next clip (`None`: no clip
+    /// after it). `None` when there is no room.
     fn free_span(&self, track: TrackId, at: Ticks, pointer: Ticks) -> Option<(Ticks, Option<Ticks>)> {
         let p = self.project();
         let t = p.track(track)?;
@@ -303,7 +325,10 @@ impl Controller {
             .map(|c| (c.start, c.end()))
             .chain(t.clips.iter().map(|c| (c.start, c.start + p.clip_length_ticks(c))))
             .collect();
-        let start = spans.iter().filter(|&&(s, e)| s <= pointer && e > at).map(|&(_, e)| e).fold(at, Ticks::max);
+        let mut start = at;
+        while let Some(end) = spans.iter().filter(|&&(s, e)| s <= start.max(pointer) && e > start).map(|&(_, e)| e).max() {
+            start = end;
+        }
         let next = spans.iter().filter(|&&(s, _)| s >= start).map(|&(s, _)| s).min();
         match next {
             Some(n) if n <= start => None,
@@ -1233,6 +1258,91 @@ mod lane_tests {
         let m = c.project().midi_clip(id).unwrap();
         assert_eq!((m.start, m.length), (bar + bar / 4, bar / 2));
         assert_eq!(m.clip_loop.map(|l| (l.start, l.end)), Some((0, bar / 2)), "the loop follows the shorter length");
+    }
+
+    /// ⌘⇧M with the playhead inside a clip puts the new clip after it, never on top of it, and
+    /// stops it at the next clip.
+    #[test]
+    fn insert_at_the_playhead_never_stacks_clips() {
+        let mut c = controller();
+        let bar = c.project().ticks_per_bar();
+        let (_, inst) = track(&c, TrackKind::Instrument);
+        c.select_track(inst);
+        c.insert_midi_clip().expect("first clip");
+        c.insert_midi_clip().expect("second clip, after the first");
+        assert_eq!(midi_clips(&c, inst), [(0, bar), (bar, bar)], "the playhead stayed at 0");
+        // A clip waiting a beat after the end of bar 3 leaves the third clip one beat.
+        c.execute(Command::AddMidiClip { track: inst, clip: MidiClip { id: ClipId(900), ..MidiClip::empty(2 * bar + PPQ, bar) } });
+        let id = c.insert_midi_clip().expect("third clip");
+        let m = c.project().midi_clip(id).unwrap();
+        assert_eq!((m.start, m.length), (2 * bar, PPQ));
+        let spans = midi_clips(&c, inst);
+        for (i, a) in spans.iter().enumerate() {
+            for b in &spans[i + 1..] {
+                assert!(a.0 + a.1 <= b.0 || b.0 + b.1 <= a.0, "clips {a:?} and {b:?} overlap");
+            }
+        }
+    }
+
+    /// A double-click that makes a clip is not a seek: the first click's move of the playhead is
+    /// taken back. A single click still moves it.
+    #[test]
+    fn a_double_click_that_makes_a_clip_leaves_the_playhead_where_it_was() {
+        let mut c = controller();
+        let (row, inst) = track(&c, TrackKind::Instrument);
+        c.seek_beats(1.0);
+        let (x, y) = lane_point(&c, row, 3, 1.5);
+        let click = |c: &mut Controller| {
+            if !c.lane_press_double(x, y) {
+                c.pointer_mods(0, x, y, false, false);
+            }
+            c.lane_release(x, y);
+            c.pointer_mods(2, x, y, false, false);
+        };
+        click(&mut c);
+        let bar = c.project().ticks_per_bar();
+        assert_eq!(c.playhead_ticks(), 3 * bar + 3 * PPQ / 2, "a single click seeks");
+        c.seek_beats(1.0);
+        c.lane_last_down = None; // a while later
+        click(&mut c);
+        click(&mut c);
+        assert_eq!(midi_clips(&c, inst), [(3 * bar, bar)], "the double-click made a clip");
+        assert_eq!(c.playhead_ticks(), PPQ, "and left the playhead at beat 2");
+    }
+
+    /// Double-clicking a section to rename it keeps the clip that was open in the Clip tab.
+    #[test]
+    fn renaming_a_section_keeps_the_open_clip() {
+        let mut c = controller();
+        let (_, inst) = track(&c, TrackKind::Instrument);
+        c.insert_section(None).expect("a section");
+        c.create_midi_clip_at(inst, 0).expect("a clip");
+        let open = c.selected_clip;
+        assert!(c.pr_visible());
+        let (x, y) = (c.view.x_of(1.0), (crate::sections::LANE_TOP + crate::sections::LANE_BOTTOM) / 2.0);
+        for _ in 0..2 {
+            if !c.lane_press_double(x, y) {
+                c.pointer_mods(0, x, y, false, false);
+            }
+            c.lane_release(x, y);
+            c.pointer_mods(2, x, y, false, false);
+        }
+        assert!(c.rename_section.is_some(), "the rename field is open");
+        assert_eq!(c.selected_clip, open);
+        assert!(c.pr_visible(), "the piano roll still shows the clip");
+    }
+
+    /// Saving names the project after its folder, and a saved project has no unsaved changes.
+    #[test]
+    fn saving_names_the_project_after_its_folder() {
+        let mut c = controller();
+        let dir = std::env::temp_dir().join(format!("dstudio-name-{}", std::process::id())).join("Verse Ideas.dsproj");
+        c.save_to(&dir);
+        assert_eq!(c.project().name, "Verse Ideas");
+        assert!(!c.doc.is_dirty());
+        let saved = dstudio_core::persist::load(&dir).expect("saved project loads");
+        assert_eq!(saved.project.name, "Verse Ideas");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 
     /// Right-click on an empty instrument lane: Insert MIDI clip makes the clip in that bar, and

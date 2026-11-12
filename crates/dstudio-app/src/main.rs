@@ -3165,19 +3165,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     let size = ((c.lanes_size.0 * scale).round() as u32, (c.lanes_size.1 * scale).round() as u32);
                     let f = &mut *f;
                     if let Some(r) = f.renderer.as_mut() {
-                        if let Some(tex) = r.ensure_target(size) {
-                            match gpu::to_slint_image(tex) {
-                                Ok(img) => app.global::<Studio>().set_timeline_image(img),
-                                Err(e) => eprintln!("timeline texture import failed: {e}"),
-                            }
-                        }
+                        r.ensure_target(size);
                         f.tex = r.target_size();
                         r.sync_peaks(c.peaks.generation, &c.peaks.data);
                         let auto = c.auto_scene(scale);
                         let mut sc = c.scene(scale);
                         sc.auto = auto.as_ref();
                         timeline::build(&mut f.dl, &sc);
-                        r.render(&f.dl);
+                        if let Some(tex) = r.render(&f.dl) {
+                            match gpu::to_slint_image(tex) {
+                                Ok(img) => app.global::<Studio>().set_timeline_image(img),
+                                Err(e) => eprintln!("timeline texture import failed: {e}"),
+                            }
+                        }
                     }
                     // Clip editor texture (only while a MIDI or audio clip is open in the Clip tab).
                     let pr_vis = c.clip_editor_visible();
@@ -3192,15 +3192,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let notes = c.pr_notes();
                         if let (false, Some(r), Some(sc)) = (c.seq_visible(), f.pr_renderer.as_mut(), c.pr_scene(scale, &notes)) {
                             let phys = ((size.0 * scale).round() as u32, (size.1 * scale).round() as u32);
-                            if let Some(tex) = r.ensure_target(phys) {
+                            r.ensure_target(phys);
+                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
+                            pianoroll::build(&mut f.pr_dl, &sc);
+                            if let Some(tex) = r.render(&f.pr_dl) {
                                 match gpu::to_slint_image(tex) {
                                     Ok(img) => app.global::<Studio>().set_pr_image(img),
                                     Err(e) => eprintln!("piano roll texture import failed: {e}"),
                                 }
                             }
-                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
-                            pianoroll::build(&mut f.pr_dl, &sc);
-                            r.render(&f.pr_dl);
                         }
                     }
                     f.pr_visible = pr_vis;

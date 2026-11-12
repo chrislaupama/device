@@ -533,3 +533,16 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - New Create menu in the menu bar: Audio Track (⌘T), Instrument Track (⇧⌘T), MIDI Clip (⇧⌘M).
 - Tests: `double_click_on_an_empty_instrument_lane_makes_a_clip_ready_for_notes`,
   `a_new_clip_fits_between_its_neighbours`, `the_empty_lane_menu_inserts_and_pastes_where_it_was_opened`.
+- From a hand walkthrough on a Mac (new project, clips, notes, play, sections, save and reopen):
+  - The piano roll showed only the first of several notes added one after another until the panel was switched
+    away and back. The bottom panel's rounded corners make Slint keep it as a cached picture (a layer) that it redraws
+    only when a property it read changes, and drawing new notes into our own texture changed none. The renderer now
+    hands its texture to Slint again whenever the picture changed (a new `Image`, which Slint never treats as equal),
+    and skips drawing when nothing changed; the timeline gets the same. Self-test section `note_redraw_steps` checks
+    the screen itself (a snapshot through Slint's caches): before the fix only the first of three notes showed.
+  - ⇧⌘M and Create › MIDI Clip with the playhead inside a clip stacked a second clip exactly on top of it. The new
+    clip now goes after the clips at the playhead and stops at the next one (`insert_at_the_playhead_never_stacks_clips`).
+  - A double-click that makes a clip or renames a section no longer moves the playhead (the first click's seek is
+    taken back), and renaming a section keeps the clip open in the Clip tab.
+  - Saving names the project after its folder (the title and `project.json` used to stay "Untitled"), and the window
+    title says "Edited" while there are unsaved changes.

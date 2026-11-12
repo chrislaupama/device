@@ -441,6 +441,11 @@ pub struct Controller {
     pub press_epoch: i32,
     /// The last press in the arrangement lanes (time, x, y), for double-clicks (src/clipedit.rs).
     pub(crate) lane_last_down: Option<(std::time::Instant, f32, f32)>,
+    /// Where the playhead was before that press moved it (stopped transport only) and the clip
+    /// selected before it, put back when the press turns out to start a double-click that made or
+    /// renamed something (src/clipedit.rs `lane_press_double`).
+    pub(crate) lane_playhead_before: Option<PlayheadState>,
+    pub(crate) lane_clip_before: Option<ClipId>,
     /// The press under way completed a double-click: its moves and release do nothing else.
     pub(crate) lane_press_used: bool,
     /// Text typed in an open track name field (Studio.track-rename-draft), committed when the
@@ -593,6 +598,8 @@ impl Controller {
             rename_section: None,
             press_epoch: 0,
             lane_last_down: None,
+            lane_playhead_before: None,
+            lane_clip_before: None,
             lane_press_used: false,
             rename_draft: None,
             rename_panel: None,
@@ -1015,6 +1022,19 @@ impl Controller {
 
     pub fn playhead_ticks(&self) -> Ticks {
         self.project().frames_to_ticks(self.audible_frames(), self.rate)
+    }
+
+    /// The stopped transport's position and cue, to put back with [`Controller::restore_playhead`]
+    /// (`None` while playing: the playhead moves on by itself).
+    pub(crate) fn playhead_state(&self) -> Option<PlayheadState> {
+        (!self.engine.transport().playing).then(|| PlayheadState { frame: self.audible_frames(), paused: self.paused, cue: self.cue })
+    }
+
+    pub(crate) fn restore_playhead(&mut self, st: PlayheadState) {
+        if self.engine.transport().playing || self.engine.seek(st.frame).is_err() {
+            return;
+        }
+        (self.paused, self.cue) = (st.paused, st.cue);
     }
 
     pub fn seek_beats(&mut self, beats: f64) {
@@ -1468,6 +1488,9 @@ impl Controller {
         self.doc.sync_device_states(&states);
         let bases = self.mod_bases_now();
         self.doc.sync_mod_bases(&bases);
+        if let Some(name) = project_name_of(dir) {
+            self.doc.set_project_name(&name);
+        }
         match persist::save(self.project(), dir) {
             Ok(()) => {
                 self.doc.mark_saved();
@@ -2141,7 +2164,10 @@ impl Controller {
         } else {
             self.tracks_model.set_vec(rows);
         }
-        s.set_project_name(p.name.clone().into());
+        // The folder's name once saved (a project folder renamed in the Finder shows its new name).
+        let name = self.project_dir.as_deref().and_then(project_name_of).unwrap_or_else(|| p.name.clone());
+        s.set_project_name(name.into());
+        s.set_project_edited(self.doc.is_dirty());
         let sentence = dstudio_core::history::sentence_case;
         s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {}", sentence(l))).into());
         s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {}", sentence(l))).into());
@@ -2349,6 +2375,19 @@ pub(crate) fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len
 /// unless the playhead was moved since it stopped; Stop in place resumes where it stopped.
 /// Where Play starts: a position the user chose since the last pause, else the last playback's
 /// start after a pause (Return to start), else wherever the transport is (None).
+/// The project's name for its folder `dir` (`Song.dsproj` is "Song").
+fn project_name_of(dir: &Path) -> Option<String> {
+    dir.file_stem().and_then(|s| s.to_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from)
+}
+
+/// A stopped transport's playhead (see [`Controller::playhead_state`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlayheadState {
+    frame: i64,
+    paused: bool,
+    cue: Option<i64>,
+}
+
 fn play_from(stop_in_place: bool, play_start: Option<i64>, paused: bool, cue: Option<i64>) -> Option<i64> {
     cue.or(play_start.filter(|_| paused && !stop_in_place))
 }
