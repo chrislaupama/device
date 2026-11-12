@@ -5,8 +5,8 @@
 <h1><img alt="Device Studio. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%"></h1>
 
 <p>
-  <a href="https://github.com/chrislaupama/device/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/device/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <a href="https://github.com/chrislaupama/device/actions/workflows/perf.yml"><img alt="Performance" src="https://github.com/chrislaupama/device/actions/workflows/perf.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/devicedaw/device/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/devicedaw/device/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/devicedaw/device/actions/workflows/perf.yml"><img alt="Performance" src="https://github.com/devicedaw/device/actions/workflows/perf.yml/badge.svg?branch=main"></a>
   <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-e0a84b?style=flat-square">
   <img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-4b8be0?style=flat-square">
   <img alt="Engine: C++23" src="https://img.shields.io/badge/engine-C%2B%2B23-6e6e6e?style=flat-square">
@@ -15,6 +15,7 @@
 </p>
 
 <p>
+  <a href="https://devicedaw.github.io/"><b>Website</b></a> ·
   <a href="#build-from-source"><b>Build</b></a> ·
   <a href="docs/architecture.md"><b>Architecture</b></a> ·
   <a href="docs/devices.md"><b>Devices</b></a> ·
@@ -180,7 +181,7 @@ hardware is tested by hand on a Mac.
 
 **No builds have been released yet.** For now, build it from source. Release packages for macOS (`.dmg`), Windows
 (installer and `.zip`) and Linux (`.tar.gz`) are built by the Release workflow and will appear on the
-[releases page](https://github.com/chrislaupama/device/releases) once a version is tagged; see
+[releases page](https://github.com/devicedaw/device/releases) once a version is tagged; see
 [Release packages](docs/building.md#release-packages).
 
 ### Build from source
@@ -190,7 +191,7 @@ Visual Studio 2022 or GCC 13). The first build downloads the CLAP headers and th
 On Linux, install the packages listed in the [build guide](docs/building.md#linux) first.
 
 ```sh
-git clone https://github.com/chrislaupama/device.git
+git clone https://github.com/devicedaw/device.git
 cd device
 cargo run --release -p dstudio-app -- --demo
 ```

@@ -9,7 +9,7 @@ Device Studio is pre-alpha and has no releases yet. Only the latest `main` branc
 Please do not report security problems in public issues, discussions or pull requests.
 
 Report them privately through GitHub instead: open the repository's **Security** tab and choose **Report a
-vulnerability** ([direct link](https://github.com/chrislaupama/device/security/advisories/new)). Include:
+vulnerability** ([direct link](https://github.com/devicedaw/device/security/advisories/new)). Include:
 
 - what the problem is and what an attacker could do with it,
 - steps or a file (for example a crafted project, audio file or plugin) that reproduces it,

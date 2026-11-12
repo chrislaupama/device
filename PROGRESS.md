@@ -264,7 +264,8 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   The macOS bundle id is `com.devicestudio.app` (microphone permission is asked again once).
 - Internal names use `dstudio` (`dstudio-*` crates, `dstudio::` namespace, `dstudio_engine.h`,
   `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins, `studio.dstudio.test.*` ids).
-  Not `device`: it already names the effects/instruments concept. The GitHub repo is `chrislaupama/device`.
+  Not `device`: it already names the effects/instruments concept. The GitHub repo was `chrislaupama/device`
+  (transferred to `devicedaw/device` on 2026-11-12).
 
 ### 2026-11-10: Linux audio runs in CI; Linux plugin windows; Windows CI GPU memory
 
@@ -460,3 +461,10 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   Loop region in the menu, checks the readout and estimate, exports it and checks the file's length and sound. Review
   state `review-export-range`.
 
+### 2026-11-12: Device Studio GitHub organization
+
+- Transferred the existing public repository to `devicedaw/device`, preserving its history, branches and issues.
+- Updated the README badges and clone command, private security-report links, release-provenance examples and
+  pull request media guidance to the organization URL. The old repository URL redirects to the new location.
+- The project website is https://devicedaw.github.io/. Repository ownership and documentation links changed;
+  application code and CI behavior are unchanged.

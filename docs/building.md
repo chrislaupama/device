@@ -292,7 +292,7 @@ for it first, and is smoke-tested on its runner (installed, then started to
 render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
 creates a **draft** GitHub release with generated notes, a `SHA256SUMS.txt` and
 a signed build provenance attestation for every package (check a download with
-`gh attestation verify <file> --repo chrislaupama/device`); the tag must match the
+`gh attestation verify <file> --repo devicedaw/device`); the tag must match the
 `version` in the root `Cargo.toml`. A manual run (Actions › Release › Run
 workflow) or a pull request that changes the packaging builds the packages as
 run artifacts without releasing anything.

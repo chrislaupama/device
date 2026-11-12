@@ -79,7 +79,7 @@ Afterwards, go back to your checkout and remove the folder: `cd -` (or `cd` to t
 Link each file by the commit that added it, not by the branch name:
 
 ```text
-https://raw.githubusercontent.com/chrislaupama/device/<commit>/<folder>/<file>
+https://raw.githubusercontent.com/devicedaw/device/<commit>/<folder>/<file>
 ```
 
 A link by commit always shows the file as it was when the description was written; a link by branch name would change
@@ -88,7 +88,7 @@ if the file were replaced, and breaks if the file moves. In the description:
 ```markdown
 | Before | After |
 |---|---|
-| ![Mixer before](https://raw.githubusercontent.com/chrislaupama/device/<commit>/return-tracks/before-mixer.png) | ![Mixer after](https://raw.githubusercontent.com/chrislaupama/device/<commit>/return-tracks/after-mixer.png) |
+| ![Mixer before](https://raw.githubusercontent.com/devicedaw/device/<commit>/return-tracks/before-mixer.png) | ![Mixer after](https://raw.githubusercontent.com/devicedaw/device/<commit>/return-tracks/after-mixer.png) |
 ```
 
 For a recording or an audio file, link it: `[Dragging a send knob (MP4)](https://raw.githubusercontent.com/...)`.

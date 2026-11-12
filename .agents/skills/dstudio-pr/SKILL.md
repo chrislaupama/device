@@ -33,7 +33,7 @@ cargo run --release -p dstudio-app -- --self-test --no-audio
 Screenshots, recordings and other media for the description never go on the pull request's own
 branch, so they never land on `main`. Commit them to the `pr-screenshots` branch (an orphan branch
 holding only media, one folder per change, never merged), push it, and link each file by that
-commit's hash: `https://raw.githubusercontent.com/chrislaupama/device/<commit>/<folder>/<file>`.
+commit's hash: `https://raw.githubusercontent.com/devicedaw/device/<commit>/<folder>/<file>`.
 Only add commits on top of `pr-screenshots`: never delete, rebase or force-push it, because its
 history is what keeps the hash links working. `docs/pr-media.md` has the
 commands, folder and file names, formats and sizes.
