@@ -232,9 +232,36 @@ Every action in every workflow is pinned to a commit hash; Dependabot moves the
 hashes in one grouped pull request a week. Cargo crates and the engine's C++
 SDKs are updated by hand. For Cargo crates, Dependabot opens security-fix pull
 requests once "Dependabot security updates" is on in the repository settings
-(Settings › Code security). Dependabot does not see the SDKs that
-`engine/CMakeLists.txt` fetches, so their advisories are checked by hand when
-they are updated.
+(Settings › Code security).
+
+### Engine dependencies
+
+The engine fetches its third-party code with CMake `FetchContent` at pins set
+in `engine/CMakeLists.txt`: release tags for the CLAP and VST3 SDKs and the
+Signalsmith libraries (each with the commit the tag pointed at,
+`DSTUDIO_<NAME>_TAG_COMMIT`), and plain commits for dr_libs and stb, which
+decode untrusted audio files. Dependabot cannot see these, so:
+
+- The configure step checks that every fetched checkout is at its pinned
+  commit and stops if a tag was moved upstream.
+- The **Engine pins** workflow runs `tools/ci/engine_pins.py` every Monday. It
+  reports a newer release tag, a moved tag, and, for dr_libs and stb, a change
+  upstream to one of the files we compile. While there is something to do it
+  keeps the issue "Engine third-party pins need attention" open and current,
+  and closes it when every pin is current. Run the script by hand for the same
+  report.
+
+To update a pin:
+
+1. Read the upstream release notes or the compare link from the report,
+   looking for security fixes and API changes.
+2. Change the tag or commit in `engine/CMakeLists.txt`. For a tag, also set
+   its `_TAG_COMMIT` (`git ls-remote <repository> 'refs/tags/<tag>^{}'`, or
+   without `^{}` for a lightweight tag).
+3. Update the version, commit and date in `engine/third_party_licenses.md`,
+   and the licence text if upstream changed it.
+4. Build and run the engine tests (`ctest`); for a decoder also run the
+   decode benchmark (`dstudio_decode_bench`) and compare with main.
 
 ### Performance checks
 

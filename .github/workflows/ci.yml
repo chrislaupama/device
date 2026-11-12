@@ -99,6 +99,8 @@ jobs:
         run: |
           rustup toolchain install "$RUST_LINT_TOOLCHAIN" --profile minimal --component rustfmt --no-self-update
           cargo "+$RUST_LINT_TOOLCHAIN" fmt --all --check
+      - name: Engine pin checker (offline self-test)
+        run: tools/ci/engine_pins.py --self-test
 
   tests:
     name: tests (${{ matrix.name }})

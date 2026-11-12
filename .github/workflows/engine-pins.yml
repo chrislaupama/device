@@ -1,0 +1,65 @@
+name: Engine pins
+# The C++ engine fetches its third-party code at pinned tags and commits
+# (engine/CMakeLists.txt), which Dependabot and cargo audit cannot see. Once a
+# week this compares every pin with its upstream (tools/ci/engine_pins.py) and
+# keeps one issue, "Engine third-party pins need attention", up to date: it is
+# opened or updated while a pin is behind or a pinned tag moved, and closed
+# when everything is current again.
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-pins
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: check
+    # Scheduled runs only in the main repository, not in forks.
+    if: github.event_name != 'schedule' || github.repository == 'devicedaw/device'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare pins with upstream
+        id: pins
+        run: |
+          status=0
+          tools/ci/engine_pins.py > "$RUNNER_TEMP/report.md" || status=$?
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/report.md"
+          if [ "$status" -gt 1 ]; then echo "the check itself failed"; exit 1; fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.pins.outputs.status }}
+          TITLE: Engine third-party pins need attention
+        run: |
+          number=$(gh api "repos/$GITHUB_REPOSITORY/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100" \
+            --jq "[.[] | select(.pull_request == null and .title == \"$TITLE\")][0].number // empty")
+          if [ "$STATUS" = 1 ]; then
+            {
+              echo "The weekly check of the engine's pinned third-party sources (\`engine/CMakeLists.txt\`) found something to do."
+              echo
+              cat "$RUNNER_TEMP/report.md"
+              echo
+              echo "_Updated by the Engine pins workflow; it closes this issue when every pin is current._"
+            } > "$RUNNER_TEMP/body.md"
+            if [ -n "$number" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$number" -F "body=@$RUNNER_TEMP/body.md" --jq .html_url
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues" -f "title=$TITLE" -F "body=@$RUNNER_TEMP/body.md" --jq .html_url
+            fi
+          elif [ -n "$number" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$number" -f state=closed -f state_reason=completed --jq .html_url
+          fi

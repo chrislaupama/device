@@ -73,8 +73,11 @@ TEST_CASE(lfo_shapes_follow_the_spec) {
 
 TEST_CASE(lfo_free_rate_and_synced_clock) {
     // Free, 1 Hz sine: the wave peaks at 0.25 s and bottoms out at 0.75 s.
+    // .at() on copies of the file-scope defaults: GCC 15 can't see that a
+    // dynamically initialised global vector is non-empty and flags [] writes
+    // as null dereferences (-Wnull-dereference, an error in CI).
     std::vector<float> v = kLfo;
-    v[1] = 0.f;
+    v.at(1) = 0.f;
     DeviceRig rig("lfo", v);
     auto p = lfo_points(rig, 48000, false);
     CHECK_NEAR(p[0], 0.5, 1e-4);
@@ -156,11 +159,11 @@ TEST_CASE(lfo_moves_a_builtin_parameter_in_the_engine) {
     EngineHandle e(48000, 256);
     const uint64_t a = load_asset(e, {sine(48000, 400.0, 48000.0, 0.1), sine(48000, 400.0, 48000.0, 0.1)});
     std::vector<float> comp = kComp;
-    comp[0] = 0.f; // threshold at 0 dB, ratio 1: no compression
-    comp[1] = 1.f;
+    comp.at(0) = 0.f; // threshold at 0 dB, ratio 1: no compression (.at(): see above)
+    comp.at(1) = 1.f;
     std::vector<float> lfo = kLfo;
-    lfo[0] = 4.f; // square
-    lfo[1] = 0.f; // free, 1 Hz
+    lfo.at(0) = 4.f; // square
+    lfo.at(1) = 0.f; // free, 1 Hz
     uint64_t id = 10; // fresh instances per run: a free LFO starts its cycle when created
     const auto run = [&](bool lfo_on, float depth) {
         DeviceSession s;
