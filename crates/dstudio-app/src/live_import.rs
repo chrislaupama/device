@@ -3,7 +3,10 @@
 //! turns it into a DStudio project. Arrangement clips come in; looped clips repeat their loop
 //! the way Live plays them. What DStudio can't hold yet is counted in [Report].
 use crate::live_set::{child, number, path, value};
-use dstudio_core::{Asset, AssetId, Clip, ClipId, ClipWarp, Device, DeviceId, MidiClip, Note, PluginFormat, PluginKind, PluginRef, Project, Track, TrackId, TrackKind, WarpMarker, WarpMode, PPQ};
+use dstudio_core::{
+    Asset, AssetId, Clip, ClipId, ClipWarp, Device, DeviceId, MidiClip, Note, PPQ, PluginFormat, PluginKind, PluginRef, Project, Track,
+    TrackId, TrackKind, WarpMarker, WarpMode,
+};
 use std::path::{Path, PathBuf};
 
 pub struct ParsedSet {
@@ -119,7 +122,10 @@ fn elements<'a, 'i>(n: roxmltree::Node<'a, 'i>) -> impl Iterator<Item = roxmltre
 }
 
 fn sample_ref(file: roxmltree::Node) -> SampleRef {
-    let relative = value(file, "RelativePath").ok().filter(|r| !r.is_empty() && value(file, "RelativePathType").is_ok_and(|t| t != "0")).map(str::to_string);
+    let relative = value(file, "RelativePath")
+        .ok()
+        .filter(|r| !r.is_empty() && value(file, "RelativePathType").is_ok_and(|t| t != "0"))
+        .map(str::to_string);
     SampleRef { relative, absolute: value(file, "Path").unwrap_or("").to_string() }
 }
 
@@ -134,23 +140,41 @@ fn plugin(d: roxmltree::Node) -> Option<ParsedPlugin> {
     let name = value(info, "Name").unwrap_or("").trim().to_string();
     let (format, id, vendor, instrument) = match info.tag_name().name() {
         "Vst3PluginInfo" => {
-            let words: Vec<u32> = path(info, "Uid").into_iter().flat_map(elements).filter_map(|f| f.attribute("Value")?.parse::<i64>().ok()).map(|w| w as u32).collect();
+            let words: Vec<u32> = path(info, "Uid")
+                .into_iter()
+                .flat_map(elements)
+                .filter_map(|f| f.attribute("Value")?.parse::<i64>().ok())
+                .map(|w| w as u32)
+                .collect();
             if words.len() != 4 {
                 return None;
             }
-            (PluginFormat::Vst3, words.iter().map(|w| format!("{w:08X}")).collect::<String>(), String::new(), num(info, "DeviceType") == Some(1.0))
+            (
+                PluginFormat::Vst3,
+                words.iter().map(|w| format!("{w:08X}")).collect::<String>(),
+                String::new(),
+                num(info, "DeviceType") == Some(1.0),
+            )
         }
         "AuPluginInfo" => {
             let code = |p: &str| num(info, p).map(|v| (v as i64 as u32).to_be_bytes().iter().map(|&b| b as char).collect::<String>());
             let (kind, sub, maker) = (code("ComponentType")?, code("ComponentSubType")?, code("ComponentManufacturer")?);
             let instrument = kind == "aumu";
-            (PluginFormat::AudioUnit, format!("{kind} {sub} {maker}"), value(info, "Manufacturer").unwrap_or("").trim().to_string(), instrument)
+            (
+                PluginFormat::AudioUnit,
+                format!("{kind} {sub} {maker}"),
+                value(info, "Manufacturer").unwrap_or("").trim().to_string(),
+                instrument,
+            )
         }
         _ => return None,
     };
     let kind = if instrument { PluginKind::Instrument } else { PluginKind::Effect };
     let name = if name.is_empty() { "Plugin".into() } else { name };
-    Some(ParsedPlugin { plugin: PluginRef { format, id, path: None, name, vendor, version: String::new(), kind }, on: value(d, "On/Manual").map_or(true, |v| v == "true") })
+    Some(ParsedPlugin {
+        plugin: PluginRef { format, id, path: None, name, vendor, version: String::new(), kind },
+        on: value(d, "On/Manual").map_or(true, |v| v == "true"),
+    })
 }
 
 /// A finite number, so a corrupt value (NaN, inf) falls back to its default.
@@ -163,7 +187,10 @@ fn drums(rack: roxmltree::Node) -> ParsedDrums {
     let mut out = ParsedDrums::default();
     for b in path(rack, "Branches").into_iter().flat_map(elements).filter(|b| b.has_tag_name("DrumBranch")) {
         let note = 128i32.saturating_sub(num(b, "BranchInfo/ReceivingNote").unwrap_or(0.0) as i32);
-        if !(dstudio_core::builtin::drum_rack::FIRST_NOTE as i32..dstudio_core::builtin::drum_rack::FIRST_NOTE as i32 + dstudio_core::builtin::drum_rack::PADS as i32).contains(&note) {
+        if !(dstudio_core::builtin::drum_rack::FIRST_NOTE as i32
+            ..dstudio_core::builtin::drum_rack::FIRST_NOTE as i32 + dstudio_core::builtin::drum_rack::PADS as i32)
+            .contains(&note)
+        {
             out.outside += 1;
             continue;
         }
@@ -194,10 +221,12 @@ fn drums(rack: roxmltree::Node) -> ParsedDrums {
         let mixer_gain = num(b, "MixerDevice/Volume/Manual").unwrap_or(1.0).max(1e-6);
         out.pads.push(ParsedPad {
             note: note as u8,
-            on: value(b, "MixerDevice/Speaker/Manual").map_or(true, |v| v == "true") && value(*s, "On/Manual").map_or(true, |v| v == "true"),
+            on: value(b, "MixerDevice/Speaker/Manual").map_or(true, |v| v == "true")
+                && value(*s, "On/Manual").map_or(true, |v| v == "true"),
             gain_db: (num(*s, "VolumeAndPan/Volume/Manual").unwrap_or(0.0) + 20.0 * mixer_gain.log10()) as f32,
             pan: (num(*s, "VolumeAndPan/Panorama/Manual").unwrap_or(0.0) + num(b, "MixerDevice/Panorama/Manual").unwrap_or(0.0)) as f32,
-            transpose: (num(*s, "Pitch/TransposeKey/Manual").unwrap_or(0.0) + num(*s, "Pitch/TransposeFine/Manual").unwrap_or(0.0) / 100.0).round() as f32,
+            transpose: (num(*s, "Pitch/TransposeKey/Manual").unwrap_or(0.0) + num(*s, "Pitch/TransposeFine/Manual").unwrap_or(0.0) / 100.0)
+                .round() as f32,
             start: start as f32,
             end: end as f32,
             fade_in: if one_shot { fade("VolumeAndPan/OneShotEnvelope/FadeInTime/Manual") } else { 0.0 },
@@ -292,7 +321,11 @@ pub fn parse(xml: &str) -> Result<ParsedSet, String> {
             drums: rack.map(|r| drums(*r)),
             plugins,
         };
-        let events = if midi { "DeviceChain/MainSequencer/ClipTimeable/ArrangerAutomation/Events" } else { "DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events" };
+        let events = if midi {
+            "DeviceChain/MainSequencer/ClipTimeable/ArrangerAutomation/Events"
+        } else {
+            "DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events"
+        };
         for c in path(t, events).into_iter().flat_map(elements) {
             let name = value(c, "Name").unwrap_or("").to_string();
             let disabled = flag(c, "Disabled");
@@ -371,7 +404,11 @@ pub struct Sample {
 
 /// The file a clip's sample ref names: next to the set first, then where Live last saw it.
 pub fn find_sample(set_dir: &Path, r: &SampleRef) -> Option<PathBuf> {
-    r.relative.as_ref().map(|rel| set_dir.join(rel)).filter(|p| p.is_file()).or_else(|| Some(PathBuf::from(&r.absolute)).filter(|p| !r.absolute.is_empty() && p.is_file()))
+    r.relative
+        .as_ref()
+        .map(|rel| set_dir.join(rel))
+        .filter(|p| p.is_file())
+        .or_else(|| Some(PathBuf::from(&r.absolute)).filter(|p| !r.absolute.is_empty() && p.is_file()))
 }
 
 /// What an import left out, for the status line.
@@ -451,7 +488,14 @@ type Found = Option<(AssetId, f64, u64)>;
 
 /// The asset for a sample ref, made the first time a file is used (two refs, relative and
 /// absolute, can name one file). None, and listed as missing, when it wasn't found.
-fn asset_for(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut Vec<(AssetId, PathBuf)>, report: &mut Report, sample: &dyn Fn(&SampleRef) -> Option<Sample>, r: &SampleRef) -> Found {
+fn asset_for(
+    p: &mut Project,
+    assets: &mut Vec<(SampleRef, Found)>,
+    files: &mut Vec<(AssetId, PathBuf)>,
+    report: &mut Report,
+    sample: &dyn Fn(&SampleRef) -> Option<Sample>,
+    r: &SampleRef,
+) -> Found {
     if let Some((_, a)) = assets.iter().find(|(x, _)| x == r) {
         return *a;
     }
@@ -461,7 +505,14 @@ fn asset_for(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut 
             return (a.id, a.sample_rate, a.frames);
         }
         let id = AssetId(p.alloc_id());
-        p.assets.push(Asset { id, relative_path: None, absolute_path: path, sample_rate: s.sample_rate, channels: s.channels.max(1), frames: s.frames });
+        p.assets.push(Asset {
+            id,
+            relative_path: None,
+            absolute_path: path,
+            sample_rate: s.sample_rate,
+            channels: s.channels.max(1),
+            frames: s.frames,
+        });
         files.push((id, s.path));
         (id, s.sample_rate, s.frames)
     });
@@ -474,7 +525,14 @@ fn asset_for(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut 
 
 /// DStudio's Drum Rack for a Live one: pad n plays the Live pad on note 35 + n, its sample in the
 /// pad's first slot.
-fn drum_rack(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut Vec<(AssetId, PathBuf)>, report: &mut Report, sample: &dyn Fn(&SampleRef) -> Option<Sample>, d: &ParsedDrums) -> dstudio_core::Device {
+fn drum_rack(
+    p: &mut Project,
+    assets: &mut Vec<(SampleRef, Found)>,
+    files: &mut Vec<(AssetId, PathBuf)>,
+    report: &mut Report,
+    sample: &dyn Fn(&SampleRef) -> Option<Sample>,
+    d: &ParsedDrums,
+) -> dstudio_core::Device {
     use dstudio_core::builtin::drum_rack::{DRUM_RACK, FIRST_NOTE};
     let mut dev = DRUM_RACK.instantiate();
     dev.id = dstudio_core::DeviceId(p.alloc_id());
@@ -483,8 +541,23 @@ fn drum_rack(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut 
     for pad in &d.pads {
         let n = (pad.note - FIRST_NOTE) as u32 + 1;
         let Some((asset, _, _)) = asset_for(p, assets, files, report, sample, &pad.sample) else { continue };
-        let name = pad.sample.relative.as_deref().unwrap_or(&pad.sample.absolute).rsplit(['/', '\\']).next().unwrap_or("").rsplit_once('.').map_or("Sample", |(stem, _)| stem).to_string();
-        dev.samples.push(dstudio_core::DeviceSample { slot: (n - 1) * dstudio_core::builtin::pad_sampler::LAYERS, asset, name, slices: Vec::new() });
+        let name = pad
+            .sample
+            .relative
+            .as_deref()
+            .unwrap_or(&pad.sample.absolute)
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("")
+            .rsplit_once('.')
+            .map_or("Sample", |(stem, _)| stem)
+            .to_string();
+        dev.samples.push(dstudio_core::DeviceSample {
+            slot: (n - 1) * dstudio_core::builtin::pad_sampler::LAYERS,
+            asset,
+            name,
+            slices: Vec::new(),
+        });
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
         for (k, v) in [
             ("on", flag(pad.on)),
@@ -507,7 +580,12 @@ fn drum_rack(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut 
 
 /// `installed` gives the scanned plugin for a Live one; a plugin that isn't installed comes in
 /// as a placeholder device that the engine can't load (its card says so).
-pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<Sample>, installed: &dyn Fn(&PluginRef) -> Option<PluginRef>) -> (Project, Vec<(AssetId, PathBuf)>, Report) {
+pub fn build(
+    set: &ParsedSet,
+    name: &str,
+    sample: &dyn Fn(&SampleRef) -> Option<Sample>,
+    installed: &dyn Fn(&PluginRef) -> Option<PluginRef>,
+) -> (Project, Vec<(AssetId, PathBuf)>, Report) {
     let mut p = Project::empty(name);
     p.transport.bpm = set.bpm.clamp(20.0, 999.0);
     p.transport.time_signature.numerator = set.numerator.max(1);
@@ -515,7 +593,13 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
     p.transport.loop_enabled = set.loop_on;
     p.transport.loop_start = ticks(set.loop_start.max(0.0));
     p.transport.loop_end = p.transport.loop_start + ticks(set.loop_length.max(1.0));
-    let mut report = Report { group_tracks: set.group_tracks, return_tracks: set.return_tracks, session_clips: set.session_clips, devices: set.devices, ..Default::default() };
+    let mut report = Report {
+        group_tracks: set.group_tracks,
+        return_tracks: set.return_tracks,
+        session_clips: set.session_clips,
+        devices: set.devices,
+        ..Default::default()
+    };
     let mut assets: Vec<(SampleRef, Option<(AssetId, f64, u64)>)> = Vec::new();
     let mut files = Vec::new();
     for t in &set.tracks {
@@ -538,7 +622,8 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
                     }
                 }
                 if let [a, .., b] = warp.markers.as_slice() {
-                    warp.original_bpm = ((b.beat - a.beat) / ((b.source - a.source) as f64 / rate) * 60.0).clamp(dstudio_core::warp::MIN_ORIGINAL_BPM, dstudio_core::warp::MAX_ORIGINAL_BPM);
+                    warp.original_bpm = ((b.beat - a.beat) / ((b.source - a.source) as f64 / rate) * 60.0)
+                        .clamp(dstudio_core::warp::MIN_ORIGINAL_BPM, dstudio_core::warp::MAX_ORIGINAL_BPM);
                 }
                 warp.enabled = true;
                 warp.mode = warp_mode(c.warp_mode);
@@ -550,7 +635,12 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
             // (StartRelative) plays its first pass partly, so it comes in as repeated clips.
             let s = &c.span;
             let clip_loop = (s.loop_on && s.start_relative.abs() < 1e-9 && (s.end - s.start) > (s.loop_end - s.loop_start) * scale + 1e-9)
-                .then(|| dstudio_core::AudioLoop { on: true, start: 0, end: ticks((s.loop_end - s.loop_start) * scale), length: ticks(s.end - s.start) })
+                .then(|| dstudio_core::AudioLoop {
+                    on: true,
+                    start: 0,
+                    end: ticks((s.loop_end - s.loop_start) * scale),
+                    length: ticks(s.end - s.start),
+                })
                 .filter(|l| l.validate().is_ok());
             let parts = if clip_loop.is_some() { vec![(s.loop_start, s.loop_end, 0.0)] } else { pieces(s, scale) };
             for (from, to, at) in parts {
@@ -560,7 +650,18 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
                     continue;
                 }
                 let id = ClipId(p.alloc_id());
-                track.clips.push(Clip { id, asset, name: c.name.clone(), start: ticks(c.span.start + at), source_offset: s0, source_length: s1 - s0, gain: c.gain.clamp(0.0, 4.0), warp: warp.clone(), disabled: c.disabled, clip_loop });
+                track.clips.push(Clip {
+                    id,
+                    asset,
+                    name: c.name.clone(),
+                    start: ticks(c.span.start + at),
+                    source_offset: s0,
+                    source_length: s1 - s0,
+                    gain: c.gain.clamp(0.0, 4.0),
+                    warp: warp.clone(),
+                    disabled: c.disabled,
+                    clip_loop,
+                });
                 report.clips += 1;
             }
         }
@@ -579,9 +680,25 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
                     }
                 }
             }
-            let clip_loop = looped.then(|| dstudio_core::midi::ClipLoop { on: true, start: 0, end: ticks(s.loop_end - s.loop_start).min(length).max(1), span: 0 });
+            let clip_loop = looped.then(|| dstudio_core::midi::ClipLoop {
+                on: true,
+                start: 0,
+                end: ticks(s.loop_end - s.loop_start).min(length).max(1),
+                span: 0,
+            });
             let id = ClipId(p.alloc_id());
-            track.midi_clips.push(MidiClip { id, name: c.name.clone(), start: ticks(s.start), length, notes, pattern: None, disabled: c.disabled, composer: None, scale: None, clip_loop });
+            track.midi_clips.push(MidiClip {
+                id,
+                name: c.name.clone(),
+                start: ticks(s.start),
+                length,
+                notes,
+                pattern: None,
+                disabled: c.disabled,
+                composer: None,
+                scale: None,
+                clip_loop,
+            });
             report.clips += 1;
         }
         if let Some(d) = &t.drums {
@@ -719,15 +836,20 @@ impl crate::controller::Controller {
         }
         let name = job.file.file_stem().map_or_else(|| "Live Set".into(), |s| s.to_string_lossy().into_owned());
         let rate = self.rate;
-        let (project, files, report) = build(&set, &name, &|r| {
-            let path = &loaded.refs.iter().find(|l| l.0 == *r)?.1;
-            loaded.files.iter().find(|f| f.0 == *path).map(|(p, info, _)| Sample {
-                path: p.clone(),
-                sample_rate: info.source_sample_rate,
-                channels: info.channels,
-                frames: (info.frames as f64 * info.source_sample_rate / rate).round().max(1.0) as u64,
-            })
-        }, &|r| self.devices.catalog.find(r).map(|i| i.plugin.clone()));
+        let (project, files, report) = build(
+            &set,
+            &name,
+            &|r| {
+                let path = &loaded.refs.iter().find(|l| l.0 == *r)?.1;
+                loaded.files.iter().find(|f| f.0 == *path).map(|(p, info, _)| Sample {
+                    path: p.clone(),
+                    sample_rate: info.source_sample_rate,
+                    channels: info.channels,
+                    frames: (info.frames as f64 * info.source_sample_rate / rate).round().max(1.0) as u64,
+                })
+            },
+            &|r| self.devices.catalog.find(r).map(|i| i.plugin.clone()),
+        );
         self.dialogs_close();
         self.stop_return();
         for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
@@ -755,7 +877,7 @@ impl crate::controller::Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::live_set::{to_xml, LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack};
+    use crate::live_set::{LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack, to_xml};
 
     fn set() -> LiveSet {
         LiveSet {
@@ -794,7 +916,10 @@ mod tests {
                         name: "chords".into(),
                         start: 2.0,
                         length: 4.0,
-                        notes: vec![SetNote { pitch: 60, time: 0.0, duration: 1.0, velocity: 100 }, SetNote { pitch: 64, time: 3.5, duration: 1.0, velocity: 90 }],
+                        notes: vec![
+                            SetNote { pitch: 60, time: 0.0, duration: 1.0, velocity: 100 },
+                            SetNote { pitch: 64, time: 3.5, duration: 1.0, velocity: 90 },
+                        ],
                     }]),
                 },
             ],
@@ -802,7 +927,12 @@ mod tests {
     }
 
     fn sample(r: &SampleRef) -> Option<Sample> {
-        (r.relative.as_deref() == Some("Samples/break.wav")).then(|| Sample { path: "/s/break.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 192_000 })
+        (r.relative.as_deref() == Some("Samples/break.wav")).then(|| Sample {
+            path: "/s/break.wav".into(),
+            sample_rate: 48_000.0,
+            channels: 2,
+            frames: 192_000,
+        })
     }
 
     fn import(xml: &str) -> (Project, Report) {
@@ -827,7 +957,10 @@ mod tests {
         assert_eq!(p.assets[0].absolute_path, "/s/break.wav");
         let m = &keys.midi_clips[0];
         assert_eq!((m.start, m.length, m.clip_loop), (2 * PPQ, 4 * PPQ, None));
-        assert_eq!(m.notes.iter().map(|n| (n.pitch, n.start, n.length, n.velocity)).collect::<Vec<_>>(), [(60, 0, PPQ, 100), (64, 7 * PPQ / 2, PPQ / 2, 90)]);
+        assert_eq!(
+            m.notes.iter().map(|n| (n.pitch, n.start, n.length, n.velocity)).collect::<Vec<_>>(),
+            [(60, 0, PPQ, 100), (64, 7 * PPQ / 2, PPQ / 2, 90)]
+        );
         assert_eq!(report.summary("Set"), "Imported Set: 2 tracks, 2 clips");
     }
 
@@ -844,9 +977,12 @@ mod tests {
     fn looped_clips_repeat_their_loop() {
         let s = Span { start: 0.0, end: 10.0, loop_on: true, loop_start: 1.0, loop_end: 4.0, start_relative: 1.0 };
         assert_eq!(pieces(&s, 1.0), [(2.0, 4.0, 0.0), (1.0, 4.0, 2.0), (1.0, 4.0, 5.0), (1.0, 3.0, 8.0)]);
-        let xml = to_xml(&set()).replace(r#"<LoopOn Value="false" />"#, r#"<LoopOn Value="true" />"#).replace(r#"<CurrentEnd Value="8" />"#, r#"<CurrentEnd Value="14" />"#);
+        let xml = to_xml(&set())
+            .replace(r#"<LoopOn Value="false" />"#, r#"<LoopOn Value="true" />"#)
+            .replace(r#"<CurrentEnd Value="8" />"#, r#"<CurrentEnd Value="14" />"#);
         let (p, _) = import(&xml);
-        let clips: Vec<(i64, u64, Option<(bool, i64, i64, i64)>)> = p.tracks[0].clips.iter().map(|c| (c.start, c.source_length, c.clip_loop.map(|l| (l.on, l.start, l.end, l.length)))).collect();
+        let clips: Vec<(i64, u64, Option<(bool, i64, i64, i64)>)> =
+            p.tracks[0].clips.iter().map(|c| (c.start, c.source_length, c.clip_loop.map(|l| (l.on, l.start, l.end, l.length)))).collect();
         assert_eq!(clips, [(4 * PPQ, 144_000, Some((true, 0, 4 * PPQ, 10 * PPQ)))], "a 10-beat clip of a 4-beat loop");
         let m = &p.tracks[1].midi_clips[0];
         assert_eq!(m.clip_loop.map(|l| (l.on, l.start, l.end)), Some((true, 0, 4 * PPQ)));
@@ -870,7 +1006,17 @@ mod tests {
         let mut s = set();
         if let SetContent::Audio(clips) = &mut s.tracks[0].content {
             let c = &clips[0];
-            let other = SetAudioClip { name: "again".into(), start: 12.0, length: c.length, relative_path: "Elsewhere/break.wav".into(), absolute_path: c.absolute_path.clone(), file_size: 1, frames: c.frames, sample_rate: c.sample_rate, markers: Vec::new() };
+            let other = SetAudioClip {
+                name: "again".into(),
+                start: 12.0,
+                length: c.length,
+                relative_path: "Elsewhere/break.wav".into(),
+                absolute_path: c.absolute_path.clone(),
+                file_size: 1,
+                frames: c.frames,
+                sample_rate: c.sample_rate,
+                markers: Vec::new(),
+            };
             clips.push(other);
         }
         let any = |_: &SampleRef| Some(Sample { path: "/s/break.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 192_000 });
@@ -893,7 +1039,13 @@ mod tests {
 
     #[test]
     fn a_drum_rack_becomes_ours() {
-        let branches = [pad(36, 0, 1, "Samples/break.wav", 1), pad(37, 1, 0, "Samples/gone.wav", 1), pad(60, 0, 1, "Samples/break.wav", 1), pad(38, 0, 1, "Samples/break.wav", 2)].concat();
+        let branches = [
+            pad(36, 0, 1, "Samples/break.wav", 1),
+            pad(37, 1, 0, "Samples/gone.wav", 1),
+            pad(60, 0, 1, "Samples/break.wav", 1),
+            pad(38, 0, 1, "Samples/break.wav", 2),
+        ]
+        .concat();
         let rack = format!(r#"<Devices><DrumGroupDevice Id="0"><Branches>{branches}</Branches></DrumGroupDevice></Devices>"#);
         let xml = to_xml(&set());
         let at = xml.find("<MidiTrack").unwrap();
@@ -904,7 +1056,10 @@ mod tests {
         let param = |k: &str| dev.params[k];
         assert!((param("p1_gain") + 12.02).abs() < 0.01, "Simpler -6 dB and a pad mixer at half gain");
         assert!((param("p1_pan") - 0.3).abs() < 1e-6);
-        assert_eq!([param("p1_on"), param("p1_transpose"), param("p1_start"), param("p1_end"), param("p1_reverse"), param("p1_gate")], [1.0, 3.0, 0.0, 0.5, 1.0, 0.0]);
+        assert_eq!(
+            [param("p1_on"), param("p1_transpose"), param("p1_start"), param("p1_end"), param("p1_reverse"), param("p1_gate")],
+            [1.0, 3.0, 0.0, 0.5, 1.0, 0.0]
+        );
         assert!((param("p1_fadeIn") - 2.0).abs() < 1e-3 && (param("p1_fadeOut") - 4.0).abs() < 1e-3, "10 and 20 ms of a 500 ms window");
         assert_eq!((report.drum_pads, report.choked_pads, report.missing_samples.len(), report.devices), (2, 1, 1, 0));
         let summary = report.summary("Set");
@@ -913,7 +1068,10 @@ mod tests {
 
     #[test]
     fn a_corrupt_pad_number_falls_back() {
-        let rack = format!(r#"<DrumGroupDevice Id="0"><Branches>{}</Branches></DrumGroupDevice>"#, pad(36, 0, 1, "Samples/break.wav", 1).replace(r#"<SampleStart Value="0" />"#, r#"<SampleStart Value="NaN" />"#));
+        let rack = format!(
+            r#"<DrumGroupDevice Id="0"><Branches>{}</Branches></DrumGroupDevice>"#,
+            pad(36, 0, 1, "Samples/break.wav", 1).replace(r#"<SampleStart Value="0" />"#, r#"<SampleStart Value="NaN" />"#)
+        );
         let doc = roxmltree::Document::parse(&rack).unwrap();
         let d = drums(doc.root_element());
         assert_eq!((d.pads[0].start, d.pads[0].end), (0.0, 0.5));
@@ -928,24 +1086,53 @@ mod tests {
 
     fn vst3(words: [i64; 4], name: &str, device_type: u8, on: bool) -> String {
         let fields: String = words.iter().enumerate().map(|(i, w)| format!(r#"<Fields.{i} Value="{w}" />"#)).collect();
-        format!(r#"<PluginDevice Id="0"><On><Manual Value="{on}" /></On><PluginDesc><Vst3PluginInfo Id="0"><Name Value="{name}" /><Uid>{fields}</Uid><DeviceType Value="{device_type}" /></Vst3PluginInfo></PluginDesc></PluginDevice>"#)
+        format!(
+            r#"<PluginDevice Id="0"><On><Manual Value="{on}" /></On><PluginDesc><Vst3PluginInfo Id="0"><Name Value="{name}" /><Uid>{fields}</Uid><DeviceType Value="{device_type}" /></Vst3PluginInfo></PluginDesc></PluginDevice>"#
+        )
     }
 
     #[test]
     fn plugins_come_in_as_devices_or_placeholders() {
         let au = r#"<AuPluginDevice Id="0"><On><Manual Value="true" /></On><PluginDesc><AuPluginInfo Id="0"><Name Value="Echo" /><Manufacturer Value="Us" /><ComponentType Value="1635083896" /><ComponentSubType Value="1684368505" /><ComponentManufacturer Value="1970496032" /></AuPluginInfo></PluginDesc></AuPluginDevice>"#;
         let xml = to_xml(&set());
-        let xml = with_devices(&xml, "<AudioTrack", &format!(r#"{au}{}<Eq8 Id="0" />{}"#, vst3([1, 2, 3, -1], "Squash", 2, false), vst3([5, 6, 7, 8], "Synth", 1, true)));
+        let xml = with_devices(
+            &xml,
+            "<AudioTrack",
+            &format!(r#"{au}{}<Eq8 Id="0" />{}"#, vst3([1, 2, 3, -1], "Squash", 2, false), vst3([5, 6, 7, 8], "Synth", 1, true)),
+        );
         let xml = with_devices(&xml, "<MidiTrack", &vst3([0x5653_5400, 0, 0, 1], "Keys Synth", 1, true));
-        let installed = |r: &PluginRef| (r.id == "aufx dely usb ").then(|| PluginRef { path: Some("/Library/Echo.component".into()), name: "Echo Installed".into(), ..r.clone() });
+        let installed = |r: &PluginRef| {
+            (r.id == "aufx dely usb ").then(|| PluginRef {
+                path: Some("/Library/Echo.component".into()),
+                name: "Echo Installed".into(),
+                ..r.clone()
+            })
+        };
         let (p, _, report) = build(&parse(&xml).unwrap(), "Set", &sample, &installed);
-        let fx: Vec<(PluginFormat, &str, &str, bool)> = p.tracks[0].devices.iter().map(|d| (d.plugin.format, d.plugin.id.as_str(), d.plugin.name.as_str(), d.enabled)).collect();
-        assert_eq!(fx, [(PluginFormat::AudioUnit, "aufx dely usb ", "Echo Installed", true), (PluginFormat::Vst3, "000000010000000200000003FFFFFFFF", "Squash", false)]);
+        let fx: Vec<(PluginFormat, &str, &str, bool)> =
+            p.tracks[0].devices.iter().map(|d| (d.plugin.format, d.plugin.id.as_str(), d.plugin.name.as_str(), d.enabled)).collect();
+        assert_eq!(
+            fx,
+            [
+                (PluginFormat::AudioUnit, "aufx dely usb ", "Echo Installed", true),
+                (PluginFormat::Vst3, "000000010000000200000003FFFFFFFF", "Squash", false)
+            ]
+        );
         assert!(p.tracks[0].instrument_plugin.is_none(), "an instrument on an audio track is left out");
         let keys = p.tracks[1].instrument_plugin.as_ref().expect("the MIDI track's instrument");
-        assert_eq!((keys.plugin.kind, keys.plugin.id.as_str(), keys.plugin.path.as_deref()), (PluginKind::Instrument, "56535400000000000000000000000001", None));
-        assert_eq!((report.plugins, report.missing_plugins.clone(), report.devices), (3, vec!["Squash".to_string(), "Keys Synth".to_string()], 2));
-        assert!(report.summary("Set").ends_with("2 devices, 2 plugins not installed, the settings of 3 plugins"), "{}", report.summary("Set"));
+        assert_eq!(
+            (keys.plugin.kind, keys.plugin.id.as_str(), keys.plugin.path.as_deref()),
+            (PluginKind::Instrument, "56535400000000000000000000000001", None)
+        );
+        assert_eq!(
+            (report.plugins, report.missing_plugins.clone(), report.devices),
+            (3, vec!["Squash".to_string(), "Keys Synth".to_string()], 2)
+        );
+        assert!(
+            report.summary("Set").ends_with("2 devices, 2 plugins not installed, the settings of 3 plugins"),
+            "{}",
+            report.summary("Set")
+        );
     }
 
     #[test]
@@ -960,4 +1147,3 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
-

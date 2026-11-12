@@ -6,14 +6,7 @@ use std::time::{Duration, Instant};
 fn add_return(d: &mut Document) -> TrackId {
     let name = d.project().next_return_name();
     let t = Track::new(TrackId(0), TrackKind::Return, &name, ColorIndex(9));
-    d.execute(
-        Command::AddTrack {
-            index: None,
-            track: t,
-        },
-        Origin::User,
-    )
-    .unwrap();
+    d.execute(Command::AddTrack { index: None, track: t }, Origin::User).unwrap();
     d.project().tracks.last().unwrap().id
 }
 
@@ -21,14 +14,7 @@ fn add_send(d: &mut Document, track: TrackId, target: TrackId) {
     let mut sends = d.project().track(track).unwrap().sends.clone();
     sends.push(TrackSend::new(target));
     let cmd = Command::SetSends { track, sends };
-    d.execute(
-        Command::Batch {
-            label: "Add Send".into(),
-            commands: vec![cmd],
-        },
-        Origin::User,
-    )
-    .unwrap();
+    d.execute(Command::Batch { label: "Add Send".into(), commands: vec![cmd] }, Origin::User).unwrap();
 }
 
 #[test]
@@ -40,48 +26,14 @@ fn returns_stay_after_ordinary_tracks() {
     assert_eq!(d.project().next_return_name(), "Return B");
     // A new ordinary track goes before the returns, and can't be placed among them.
     let audio = Track::new(TrackId(0), TrackKind::Audio, "Vox", ColorIndex(2));
-    d.execute(
-        Command::AddTrack {
-            index: None,
-            track: audio.clone(),
-        },
-        Origin::User,
-    )
-    .unwrap();
+    d.execute(Command::AddTrack { index: None, track: audio.clone() }, Origin::User).unwrap();
     assert_eq!(
-        d.project()
-            .tracks
-            .iter()
-            .map(|t| t.kind)
-            .collect::<Vec<_>>(),
-        [
-            TrackKind::Audio,
-            TrackKind::Instrument,
-            TrackKind::Audio,
-            TrackKind::Return
-        ]
+        d.project().tracks.iter().map(|t| t.kind).collect::<Vec<_>>(),
+        [TrackKind::Audio, TrackKind::Instrument, TrackKind::Audio, TrackKind::Return]
     );
-    assert!(
-        d.execute(
-            Command::AddTrack {
-                index: Some(4),
-                track: audio
-            },
-            Origin::User
-        )
-        .is_err()
-    );
+    assert!(d.execute(Command::AddTrack { index: Some(4), track: audio }, Origin::User).is_err());
     let r = Track::new(TrackId(0), TrackKind::Return, "R", ColorIndex(9));
-    assert!(
-        d.execute(
-            Command::AddTrack {
-                index: Some(0),
-                track: r
-            },
-            Origin::User
-        )
-        .is_err()
-    );
+    assert!(d.execute(Command::AddTrack { index: Some(0), track: r }, Origin::User).is_err());
     assert_eq!(d.project().ordinary_track_count(), 3);
     assert_eq!(d.project().return_index(a), Some(0));
     // The cap.
@@ -90,16 +42,7 @@ fn returns_stay_after_ordinary_tracks() {
     }
     let before = d.project().clone();
     let r = Track::new(TrackId(0), TrackKind::Return, "R", ColorIndex(9));
-    assert!(
-        d.execute(
-            Command::AddTrack {
-                index: None,
-                track: r
-            },
-            Origin::User
-        )
-        .is_err()
-    );
+    assert!(d.execute(Command::AddTrack { index: None, track: r }, Origin::User).is_err());
     assert_eq!(d.project(), &before);
 }
 
@@ -138,66 +81,21 @@ fn return_tracks_refuse_clips_input_and_sends() {
     let audio = d.project().tracks[0].id;
     for cmd in [
         Command::AddClip { track: r, clip },
-        Command::SetTrackArm {
-            track: r,
-            arm: true,
-        },
-        Command::SetTrackMonitor {
-            track: r,
-            monitor: true,
-        },
-        Command::SetTrackInput {
-            track: r,
-            input: Some(InputSource {
-                channel: 0,
-                stereo: false,
-            }),
-        },
-        Command::AddMidiClip {
-            track: r,
-            clip: MidiClip::empty(0, PPQ),
-        },
+        Command::SetTrackArm { track: r, arm: true },
+        Command::SetTrackMonitor { track: r, monitor: true },
+        Command::SetTrackInput { track: r, input: Some(InputSource { channel: 0, stereo: false }) },
+        Command::AddMidiClip { track: r, clip: MidiClip::empty(0, PPQ) },
         // Returns have no sends and always go to the master.
-        Command::SetSends {
-            track: r,
-            sends: vec![TrackSend::new(r)],
-        },
-        Command::SetTrackOutput {
-            track: r,
-            output: Some(r),
-        },
+        Command::SetSends { track: r, sends: vec![TrackSend::new(r)] },
+        Command::SetTrackOutput { track: r, output: Some(r) },
         // Sends and outputs only into return tracks, one send per return, levels in range.
-        Command::SetSends {
-            track: audio,
-            sends: vec![TrackSend::new(audio)],
-        },
-        Command::SetSends {
-            track: audio,
-            sends: vec![TrackSend::new(r), TrackSend::new(r)],
-        },
-        Command::SetSends {
-            track: audio,
-            sends: vec![TrackSend {
-                level: 3.0,
-                ..TrackSend::new(r)
-            }],
-        },
-        Command::SetSends {
-            track: audio,
-            sends: vec![TrackSend {
-                level: f32::NAN,
-                ..TrackSend::new(r)
-            }],
-        },
-        Command::SetTrackOutput {
-            track: audio,
-            output: Some(d.project().tracks[1].id),
-        },
+        Command::SetSends { track: audio, sends: vec![TrackSend::new(audio)] },
+        Command::SetSends { track: audio, sends: vec![TrackSend::new(r), TrackSend::new(r)] },
+        Command::SetSends { track: audio, sends: vec![TrackSend { level: 3.0, ..TrackSend::new(r) }] },
+        Command::SetSends { track: audio, sends: vec![TrackSend { level: f32::NAN, ..TrackSend::new(r) }] },
+        Command::SetTrackOutput { track: audio, output: Some(d.project().tracks[1].id) },
     ] {
-        assert!(
-            d.execute(cmd.clone(), Origin::User).is_err(),
-            "{cmd:?} must be refused"
-        );
+        assert!(d.execute(cmd.clone(), Origin::User).is_err(), "{cmd:?} must be refused");
         assert_eq!(d.project(), &before);
     }
 }
@@ -209,41 +107,17 @@ fn sends_and_output_undo_and_coalesce() {
     let audio = d.project().tracks[0].id;
     add_send(&mut d, audio, r);
     assert_eq!(d.undo_label(), Some("Add Send"));
-    assert_eq!(
-        d.project().track(audio).unwrap().sends,
-        vec![TrackSend {
-            target: r,
-            level: 1.0,
-            pre_fader: false
-        }]
-    );
+    assert_eq!(d.project().track(audio).unwrap().sends, vec![TrackSend { target: r, level: 1.0, pre_fader: false }]);
     // A level drag is one undo step.
     let t0 = Instant::now();
     for i in 1..=10 {
-        let sends = vec![TrackSend {
-            level: 1.0 - i as f32 * 0.05,
-            ..TrackSend::new(r)
-        }];
-        d.execute_at(
-            Command::SetSends {
-                track: audio,
-                sends,
-            },
-            t0 + Duration::from_millis(i * 16),
-        )
-        .unwrap();
+        let sends = vec![TrackSend { level: 1.0 - i as f32 * 0.05, ..TrackSend::new(r) }];
+        d.execute_at(Command::SetSends { track: audio, sends }, t0 + Duration::from_millis(i * 16)).unwrap();
     }
     assert_eq!(d.undo_label(), Some("Send Level Change"));
     d.undo().unwrap();
     assert_eq!(d.project().track(audio).unwrap().sends[0].level, 1.0);
-    d.execute(
-        Command::SetTrackOutput {
-            track: audio,
-            output: Some(r),
-        },
-        Origin::User,
-    )
-    .unwrap();
+    d.execute(Command::SetTrackOutput { track: audio, output: Some(r) }, Origin::User).unwrap();
     assert_eq!(d.undo_label(), Some("Output Change"));
     d.undo().unwrap();
     assert_eq!(d.project().track(audio).unwrap().output, None);
@@ -260,33 +134,17 @@ fn removing_a_return_takes_its_sends_and_undo_restores_them() {
     add_send(&mut d, t0, b);
     add_send(&mut d, t0, a);
     add_send(&mut d, t1, a);
-    d.execute(
-        Command::SetTrackOutput {
-            track: t1,
-            output: Some(a),
-        },
-        Origin::User,
-    )
-    .unwrap();
+    d.execute(Command::SetTrackOutput { track: t1, output: Some(a) }, Origin::User).unwrap();
     let before = d.project().clone();
-    d.execute(Command::RemoveTrack { track: a }, Origin::User)
-        .unwrap();
+    d.execute(Command::RemoveTrack { track: a }, Origin::User).unwrap();
     assert_eq!(d.undo_label(), Some("Delete Track"));
     let p = d.project();
     assert!(p.track(a).is_none());
-    assert_eq!(
-        p.track(t0).unwrap().sends,
-        vec![TrackSend::new(b)],
-        "the send to B stays"
-    );
+    assert_eq!(p.track(t0).unwrap().sends, vec![TrackSend::new(b)], "the send to B stays");
     assert!(p.track(t1).unwrap().sends.is_empty());
     assert_eq!(p.track(t1).unwrap().output, None);
     d.undo().unwrap();
-    assert_eq!(
-        d.project(),
-        &before,
-        "undo restores the return, the sends in order and the output"
-    );
+    assert_eq!(d.project(), &before, "undo restores the return, the sends in order and the output");
     d.redo().unwrap();
     assert!(d.project().track(a).is_none());
 }
@@ -297,26 +155,8 @@ fn routing_round_trips_and_old_projects_load() {
     let r = add_return(&mut d);
     let audio = d.project().tracks[0].id;
     add_send(&mut d, audio, r);
-    d.execute(
-        Command::SetSends {
-            track: audio,
-            sends: vec![TrackSend {
-                level: 0.5,
-                pre_fader: true,
-                target: r,
-            }],
-        },
-        Origin::User,
-    )
-    .unwrap();
-    d.execute(
-        Command::SetTrackOutput {
-            track: audio,
-            output: Some(r),
-        },
-        Origin::User,
-    )
-    .unwrap();
+    d.execute(Command::SetSends { track: audio, sends: vec![TrackSend { level: 0.5, pre_fader: true, target: r }] }, Origin::User).unwrap();
+    d.execute(Command::SetTrackOutput { track: audio, output: Some(r) }, Origin::User).unwrap();
     let dir = std::env::temp_dir().join(format!("dstudio-returns-{}", std::process::id()));
     persist::save(d.project(), &dir).unwrap();
     let loaded = persist::load(&dir).unwrap().project;
@@ -336,29 +176,13 @@ fn damaged_routing_is_repaired_on_load() {
     let mut r = Track::new(rid, TrackKind::Return, "Return A", ColorIndex(9));
     r.sends.push(TrackSend::new(rid));
     p.tracks.insert(0, r); // a return before the ordinary tracks
-    p.tracks[1].sends = vec![
-        TrackSend {
-            level: 9.0,
-            ..TrackSend::new(rid)
-        },
-        TrackSend::new(rid),
-        TrackSend::new(TrackId(999)),
-    ];
+    p.tracks[1].sends = vec![TrackSend { level: 9.0, ..TrackSend::new(rid) }, TrackSend::new(rid), TrackSend::new(TrackId(999))];
     p.tracks[2].output = Some(p.tracks[1].id);
     let dir = tempfile::tempdir().unwrap();
     persist::save(&p, dir.path()).unwrap();
     let p = persist::load(dir.path()).unwrap().project;
-    assert_eq!(
-        p.tracks.iter().map(|t| t.kind).collect::<Vec<_>>(),
-        [TrackKind::Audio, TrackKind::Instrument, TrackKind::Return]
-    );
-    assert_eq!(
-        p.tracks[0].sends,
-        vec![TrackSend {
-            level: TrackSend::MAX_LEVEL,
-            ..TrackSend::new(rid)
-        }]
-    );
+    assert_eq!(p.tracks.iter().map(|t| t.kind).collect::<Vec<_>>(), [TrackKind::Audio, TrackKind::Instrument, TrackKind::Return]);
+    assert_eq!(p.tracks[0].sends, vec![TrackSend { level: TrackSend::MAX_LEVEL, ..TrackSend::new(rid) }]);
     assert_eq!(p.tracks[1].output, None);
     assert!(p.tracks[2].sends.is_empty());
 }
@@ -368,45 +192,14 @@ fn snapshot_carries_routing_and_track_renders_are_dry() {
     let mut d = Document::new(Project::default());
     let r = add_return(&mut d);
     let audio = d.project().tracks[0].id;
-    d.execute(
-        Command::SetSends {
-            track: audio,
-            sends: vec![TrackSend {
-                level: 0.5,
-                pre_fader: true,
-                target: r,
-            }],
-        },
-        Origin::User,
-    )
-    .unwrap();
-    d.execute(
-        Command::SetTrackOutput {
-            track: audio,
-            output: Some(r),
-        },
-        Origin::User,
-    )
-    .unwrap();
+    d.execute(Command::SetSends { track: audio, sends: vec![TrackSend { level: 0.5, pre_fader: true, target: r }] }, Origin::User).unwrap();
+    d.execute(Command::SetTrackOutput { track: audio, output: Some(r) }, Origin::User).unwrap();
     let (s, _) = snapshot::build(d.project(), 48_000.0, &Default::default());
     let t = &s.tracks[0];
     assert_eq!((t.is_return, t.output), (false, Some(r.0)));
-    assert_eq!(
-        t.sends,
-        vec![snapshot::SendSnapshot {
-            target: r.0,
-            gain: 0.5,
-            pre_fader: true
-        }]
-    );
+    assert_eq!(t.sends, vec![snapshot::SendSnapshot { target: r.0, gain: 0.5, pre_fader: true }]);
     assert!(s.tracks[2].is_return);
-    let span = render_plan::ClipSpan {
-        track: audio,
-        kind: TrackKind::Audio,
-        clips: Vec::new(),
-        start: 0,
-        end: PPQ,
-    };
+    let span = render_plan::ClipSpan { track: audio, kind: TrackKind::Audio, clips: Vec::new(), start: 0, end: PPQ };
     let rp = render_plan::render_project(d.project(), &span, render_plan::RenderMode::Stem);
     assert!(rp.track(audio).unwrap().sends.is_empty() && rp.track(audio).unwrap().output.is_none());
 }

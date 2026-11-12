@@ -4,7 +4,7 @@
 
 use crate::controller::{BottomTab, ClipboardItem, Controller, MenuAction, sync_model, track_color};
 use crate::pianoroll::{self, GRID_Y, ROW_H};
-use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, ShapeRow, SeqNum, SeqRow, Studio, YLabel};
+use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, SeqNum, SeqRow, ShapeRow, Studio, YLabel};
 use dstudio_core::midi::{self, MidiClip};
 use dstudio_core::steps::StepPattern;
 use dstudio_core::{ClipId, Command, PPQ, Ticks, TrackKind};
@@ -90,7 +90,15 @@ impl MenuAction {
     fn separated(self) -> bool {
         matches!(
             self,
-            MenuAction::Delete | MenuAction::Disable | MenuAction::Enable | MenuAction::ShowInFinder | MenuAction::Transpose | MenuAction::Ask | MenuAction::SectionRename | MenuAction::SectionDelete | MenuAction::SectionClear
+            MenuAction::Delete
+                | MenuAction::Disable
+                | MenuAction::Enable
+                | MenuAction::ShowInFinder
+                | MenuAction::Transpose
+                | MenuAction::Ask
+                | MenuAction::SectionRename
+                | MenuAction::SectionDelete
+                | MenuAction::SectionClear
         )
     }
     fn submenu(self) -> bool {
@@ -104,7 +112,8 @@ impl MenuAction {
 const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", false)];
 
 /// Transpose submenu: (label, shortcut text, semitones).
-const TRANSPOSE: [(&str, &str, i32); 4] = [("Octave up", "+12", 12), ("Semitone up", "+1", 1), ("Semitone down", "−1", -1), ("Octave down", "−12", -12)];
+const TRANSPOSE: [(&str, &str, i32); 4] =
+    [("Octave up", "+12", 12), ("Semitone up", "+1", 1), ("Semitone down", "−1", -1), ("Octave down", "−12", -12)];
 
 fn layout_items(items: impl Iterator<Item = (String, String, bool, bool, bool)>) -> (Vec<MenuItem>, f32) {
     let mut y = MENU_PAD;
@@ -140,7 +149,11 @@ impl Controller {
         let start = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
         let id = ClipId(p.next_id);
         // On a Drum Rack track the new clip is a one-bar drum pattern.
-        let mut clip = if rack { MidiClip::empty_pattern(start, dstudio_core::steps::StepRows::Pads) } else { MidiClip::empty(start, p.ticks_per_bar()) };
+        let mut clip = if rack {
+            MidiClip::empty_pattern(start, dstudio_core::steps::StepRows::Pads)
+        } else {
+            MidiClip::empty(start, p.ticks_per_bar())
+        };
         clip.id = id;
         if self.execute(Command::AddMidiClip { track, clip }) {
             self.set_bottom_tab(BottomTab::Clip);
@@ -234,7 +247,9 @@ impl Controller {
     pub fn show_clip_in_finder(&mut self) {
         let Some(id) = self.selected_clip else { return };
         let p = self.project();
-        let Some(path) = p.find_clip(id).and_then(|(t, c)| p.asset(p.tracks[t].clips[c].asset)).map(|a| a.absolute_path.clone()) else { return };
+        let Some(path) = p.find_clip(id).and_then(|(t, c)| p.asset(p.tracks[t].clips[c].asset)).map(|a| a.absolute_path.clone()) else {
+            return;
+        };
         if !std::path::Path::new(&path).exists() {
             self.set_status("The audio file is missing", 3);
             return;
@@ -274,7 +289,8 @@ impl Controller {
             ClipboardItem::Audio { track, .. } => (TrackKind::Audio, *track),
             ClipboardItem::Midi { track, .. } => (TrackKind::Instrument, *track),
         };
-        let track = self.selected_track.and_then(|t| p.track(t)).filter(|t| t.kind == kind).map(|t| t.id).or_else(|| p.track(orig).map(|t| t.id));
+        let track =
+            self.selected_track.and_then(|t| p.track(t)).filter(|t| t.kind == kind).map(|t| t.id).or_else(|| p.track(orig).map(|t| t.id));
         let Some(track) = track else {
             self.set_status("Paste: no matching track", 3);
             return;
@@ -302,13 +318,19 @@ impl Controller {
             if c.name == name {
                 return;
             }
-            vec![Command::RemoveMidiClip { clip: id }, Command::AddMidiClip { track: p.tracks[ti].id, clip: MidiClip { name: name.into(), ..c.clone() } }]
+            vec![
+                Command::RemoveMidiClip { clip: id },
+                Command::AddMidiClip { track: p.tracks[ti].id, clip: MidiClip { name: name.into(), ..c.clone() } },
+            ]
         } else if let Some((ti, ci)) = p.find_clip(id) {
             let c = &p.tracks[ti].clips[ci];
             if c.name == name {
                 return;
             }
-            vec![Command::RemoveClip { clip: id }, Command::AddClip { track: p.tracks[ti].id, clip: dstudio_core::Clip { name: name.into(), ..c.clone() } }]
+            vec![
+                Command::RemoveClip { clip: id },
+                Command::AddClip { track: p.tracks[ti].id, clip: dstudio_core::Clip { name: name.into(), ..c.clone() } },
+            ]
         } else {
             return;
         };
@@ -359,10 +381,26 @@ impl Controller {
         let p = self.project();
         let midi = p.find_midi_clip(id).is_some();
         let pattern = p.midi_clip(id).is_some_and(|c| c.pattern.is_some());
-        let disabled = p.find_clip(id).map(|(t, c)| p.tracks[t].clips[c].disabled).or_else(|| p.midi_clip(id).map(|c| c.disabled)).unwrap_or(false);
+        let disabled =
+            p.find_clip(id).map(|(t, c)| p.tracks[t].clips[c].disabled).or_else(|| p.midi_clip(id).map(|c| c.disabled)).unwrap_or(false);
         let splittable = self.can_split(id);
         use MenuAction::*;
-        let mut items = vec![Cut, Copy, Duplicate, Split, Consolidate, Bounce, Delete, if disabled { Enable } else { Disable }, Rename, ShowInFinder, Export, Transpose, Quantize, Humanize];
+        let mut items = vec![
+            Cut,
+            Copy,
+            Duplicate,
+            Split,
+            Consolidate,
+            Bounce,
+            Delete,
+            if disabled { Enable } else { Disable },
+            Rename,
+            ShowInFinder,
+            Export,
+            Transpose,
+            Quantize,
+            Humanize,
+        ];
         if midi {
             items.push(if pattern { ToMidi } else { ToPattern });
         }
@@ -505,7 +543,15 @@ impl Controller {
     /// disabled with Warp off.
     pub fn clip_menu_open(&mut self, menu: i32) {
         let warped = self.ac_clip().is_some_and(|c| c.warp.enabled);
-        self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu) && (menu != 2 || warped) && self.pr.menu != menu && self.clip_menu_shown(menu) { menu } else { -1 };
+        self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu)
+            && (menu != 2 || warped)
+            && self.pr.menu != menu
+            && self.clip_menu_shown(menu)
+        {
+            menu
+        } else {
+            -1
+        };
         self.ui_dirty = true;
     }
 
@@ -525,7 +571,13 @@ impl Controller {
         let warp = self.ac_clip().map(|c| c.warp.clone()).unwrap_or_default();
         match menu {
             0 => dstudio_core::warp::SPEED_PRESETS.iter().position(|s| (s - warp.effective_speed()).abs() < 0.01).map_or(-1, |i| i as i32),
-            1 => if warp.enabled { 0 } else { 1 },
+            1 => {
+                if warp.enabled {
+                    0
+                } else {
+                    1
+                }
+            }
             2 => dstudio_core::WarpMode::ALL.iter().position(|&m| m == warp.mode).map_or(-1, |i| i as i32),
             3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
             6 | 7 => self.seq_menu_active(menu == 7),
@@ -612,7 +664,9 @@ impl Controller {
             .map(|r| PatternRow {
                 name: r.name.into(),
                 playing: r.playing,
-                notes: slint::ModelRc::new(slint::VecModel::from(r.preview.into_iter().map(|(x, y, w)| PreviewNote { x, y, w }).collect::<Vec<_>>())),
+                notes: slint::ModelRc::new(slint::VecModel::from(
+                    r.preview.into_iter().map(|(x, y, w)| PreviewNote { x, y, w }).collect::<Vec<_>>(),
+                )),
             })
             .collect();
         self.composer_row_model.set_vec(rows);
@@ -642,12 +696,41 @@ impl Controller {
         s.set_seq_page(g.page as i32);
         s.set_seq_pages(g.pages as i32);
         s.set_seq_follow(!self.pr.seq.follow_off);
-        sync_model(&self.seq_row_model, v.rows.into_iter().map(|r| SeqRow { y: r.y, number: r.number.into(), name: r.name.into(), muted: r.muted, soloed: r.soloed, audible: r.audible }).collect());
+        sync_model(
+            &self.seq_row_model,
+            v.rows
+                .into_iter()
+                .map(|r| SeqRow {
+                    y: r.y,
+                    number: r.number.into(),
+                    name: r.name.into(),
+                    muted: r.muted,
+                    soloed: r.soloed,
+                    audible: r.audible,
+                })
+                .collect(),
+        );
         sync_model(
             &self.seq_cell_model,
-            v.cells.into_iter().map(|c| SeqCell { x: c.x, y: c.y, w: c.w, state: c.state, lane: c.lane, bar: c.bar, marks: c.marks, label: c.label.into(), dim: c.dim }).collect(),
+            v.cells
+                .into_iter()
+                .map(|c| SeqCell {
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    state: c.state,
+                    lane: c.lane,
+                    bar: c.bar,
+                    marks: c.marks,
+                    label: c.label.into(),
+                    dim: c.dim,
+                })
+                .collect(),
         );
-        sync_model(&self.seq_num_model, v.nums.into_iter().map(|n| SeqNum { x: n.x, text: n.text.into(), beat: n.beat, active: n.active }).collect());
+        sync_model(
+            &self.seq_num_model,
+            v.nums.into_iter().map(|n| SeqNum { x: n.x, text: n.text.into(), beat: n.beat, active: n.active }).collect(),
+        );
     }
 
     pub fn push_clip_editor(&mut self, s: &Studio) {
@@ -767,7 +850,9 @@ impl Controller {
         // Context menu.
         s.set_menu_open(self.menu.open);
         if self.menu.open {
-            let (items, h) = layout_items(self.menu.items.iter().map(|&(a, en)| (a.label().to_string(), a.shortcut().to_string(), en, a.separated(), a.submenu())));
+            let (items, h) = layout_items(
+                self.menu.items.iter().map(|&(a, en)| (a.label().to_string(), a.shortcut().to_string(), en, a.separated(), a.submenu())),
+            );
             let sub_for = self.menu.sub_for.unwrap_or(MenuAction::Transpose);
             let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == sub_for).map(|(m, _)| m.y).unwrap_or(0.0);
             sync_model(&self.menu_model, items);
@@ -843,7 +928,11 @@ mod reverse_tests {
         assert_eq!(reversed_in_clip(&r, 3840, None), notes, "twice is the original");
         let past = reversed_in_clip(&[n(4, 3800, 240)], 3840, None);
         assert_eq!((past[0].start, past[0].length), (0, 40), "a note over the clip end is cut at it, then mirrored");
-        assert_eq!(reversed_in_clip(&[n(5, 3840, 240), n(6, -10, 20)], 3840, None), [n(5, 3840, 240), n(6, -10, 20)], "notes outside the clip stay put");
+        assert_eq!(
+            reversed_in_clip(&[n(5, 3840, 240), n(6, -10, 20)], 3840, None),
+            [n(5, 3840, 240), n(6, -10, 20)],
+            "notes outside the clip stay put"
+        );
         let whole = midi::ClipLoop::whole(3840);
         assert_eq!(reversed_in_clip(&notes, 3840, Some(&whole)), r, "a loop over the whole clip changes nothing");
     }
@@ -884,6 +973,10 @@ mod reverse_tests {
         let r = reversed_in_clip(&notes, 7680, Some(&l));
         assert_eq!(r, [n(1, 900, 240), n(2, 840, 120)]);
         assert_eq!(reversed_in_clip(&r, 7680, Some(&l)), notes, "twice is the original");
-        assert_eq!(l.unroll(&r, 7680).iter().find(|(m, _)| m.id == 1), l.unroll(&notes, 7680).iter().find(|(m, _)| m.id == 1), "it plays as it did");
+        assert_eq!(
+            l.unroll(&r, 7680).iter().find(|(m, _)| m.id == 1),
+            l.unroll(&notes, 7680).iter().find(|(m, _)| m.id == 1),
+            "it plays as it did"
+        );
     }
 }

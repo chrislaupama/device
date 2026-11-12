@@ -204,4 +204,3 @@ fn an_invalid_saved_pattern_loads_as_plain_midi() {
     assert!(m.pattern.is_none());
     assert_eq!(m.notes.len(), 6, "the notes survive");
 }
-

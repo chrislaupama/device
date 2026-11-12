@@ -45,7 +45,14 @@ fn rig(secs: f64) -> Rig {
     let wav = dir.path().join("s.wav");
     write_sine(&wav, secs, 440.0, 0.3);
     let mut doc = Document::new(Project::default());
-    let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: wav.to_string_lossy().into(), sample_rate: RATE, channels: 1, frames: (RATE * secs) as u64 };
+    let asset = Asset {
+        id: AssetId(0),
+        relative_path: None,
+        absolute_path: wav.to_string_lossy().into(),
+        sample_rate: RATE,
+        channels: 1,
+        frames: (RATE * secs) as u64,
+    };
     doc.execute(Command::AddAsset { asset }, Origin::User).unwrap();
     Rig { doc, wav, _dir: dir }
 }
@@ -68,12 +75,25 @@ fn peak(x: &[f32]) -> f32 {
 }
 
 fn audio_clip(asset: AssetId, id: u64, start_beat: i64, secs: f64) -> Clip {
-    Clip { id: ClipId(id), asset, name: format!("c{id}"), start: start_beat * PPQ, source_offset: 0, source_length: (RATE * secs) as u64, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None }
+    Clip {
+        id: ClipId(id),
+        asset,
+        name: format!("c{id}"),
+        start: start_beat * PPQ,
+        source_offset: 0,
+        source_length: (RATE * secs) as u64,
+        gain: 1.0,
+        warp: Default::default(),
+        disabled: false,
+        clip_loop: None,
+    }
 }
 
 fn midi_clip(start_beat: i64, beats: i64, pitch: u8) -> MidiClip {
     let mut c = MidiClip::empty(start_beat * PPQ, beats * PPQ);
-    c.notes = (0..beats * 4).map(|i| Note { id: i as u32 + 1, pitch: pitch + ((i * 5) % 24) as u8, start: i * PPQ / 4, length: PPQ / 2, velocity: 100 }).collect();
+    c.notes = (0..beats * 4)
+        .map(|i| Note { id: i as u32 + 1, pitch: pitch + ((i * 5) % 24) as u8, start: i * PPQ / 4, length: PPQ / 2, velocity: 100 })
+        .collect();
     c
 }
 
@@ -180,7 +200,15 @@ fn a_missing_audio_file_fails_the_render_and_names_the_file() {
 }
 
 fn test_plugin(file: &str, id: &str, name: &str) -> PluginRef {
-    PluginRef { format: PluginFormat::Clap, id: id.into(), path: Some(dstudio_engine::test_plugin_dir().join(file).to_string_lossy().into_owned()), name: name.into(), vendor: "DStudio".into(), version: "1.0.0".into(), kind: PluginKind::Effect }
+    PluginRef {
+        format: PluginFormat::Clap,
+        id: id.into(),
+        path: Some(dstudio_engine::test_plugin_dir().join(file).to_string_lossy().into_owned()),
+        name: name.into(),
+        vendor: "DStudio".into(),
+        version: "1.0.0".into(),
+        kind: PluginKind::Effect,
+    }
 }
 
 fn gain_plugin(gain: Option<f32>) -> Device {
@@ -210,7 +238,10 @@ fn a_plugin_chain_is_rendered_from_its_saved_state_and_equals_the_same_render_on
     // Prepared here (as the app does on the UI thread), rendered on a worker, dropped here.
     let mut session = offline::Session::new(r.job(&span, RenderMode::Bounce, 0.0)).unwrap();
     assert_eq!(session.plugins(), (0, 1));
-    assert_eq!(session.render(&AtomicBool::new(false), &AtomicUsize::new(0)), Err(OfflineError::Failed("the plugins are not ready".into())));
+    assert_eq!(
+        session.render(&AtomicBool::new(false), &AtomicUsize::new(0)),
+        Err(OfflineError::Failed("the plugins are not ready".into()))
+    );
     assert_eq!(session.prepare_next(None).unwrap().as_deref(), Some("DStudio Test Gain"));
     assert_eq!(session.prepare_next(None).unwrap(), None);
     let done = AtomicUsize::new(0);
@@ -251,12 +282,18 @@ fn a_latency_plugin_is_rendered_aligned_to_the_timeline() {
     let dry = without.render(&span, RenderMode::Bounce, 0.0);
     assert_eq!(delayed.len(), dry.len());
     let worst = delayed.iter().zip(&dry).fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
-    assert!(peak(&dry) > 0.2 && worst < 1e-5, "the plugin's {n} frames are compensated: the file equals the dry render, worst difference {worst}");
+    assert!(
+        peak(&dry) > 0.2 && worst < 1e-5,
+        "the plugin's {n} frames are compensated: the file equals the dry render, worst difference {worst}"
+    );
 }
 
 #[test]
 fn a_plugin_that_cannot_be_loaded_fails_the_render_by_name_before_any_audio() {
-    let missing = Device::new(PluginRef { path: Some("/nonexistent/Missing.clap".into()), ..test_plugin("DStudioTestGain.clap", "studio.dstudio.test.gain", "Missing Verb") });
+    let missing = Device::new(PluginRef {
+        path: Some("/nonexistent/Missing.clap".into()),
+        ..test_plugin("DStudioTestGain.clap", "studio.dstudio.test.gain", "Missing Verb")
+    });
     let (r, span) = audio_rig(Some(missing));
     let done = AtomicUsize::new(0);
     match offline::render(r.job(&span, RenderMode::Bounce, 0.0), &AtomicBool::new(false), &done) {
@@ -271,13 +308,20 @@ fn an_instrument_plugin_is_rendered_and_a_plugin_on_another_track_is_left_out() 
     let mut r = rig(1.0);
     let (a, inst) = (r.doc.project().tracks[0].id, r.doc.project().tracks[1].id);
     r.doc.execute(Command::AddDevice { track: a, index: None, device: gain_plugin(None) }, Origin::User).unwrap();
-    let sine = Device::new(PluginRef { kind: PluginKind::Instrument, ..test_plugin("DStudioTestSine.clap", "studio.dstudio.test.sine", "DStudio Test Sine") });
+    let sine = Device::new(PluginRef {
+        kind: PluginKind::Instrument,
+        ..test_plugin("DStudioTestSine.clap", "studio.dstudio.test.sine", "DStudio Test Sine")
+    });
     r.doc.execute(Command::SetInstrumentPlugin { track: inst, device: Some(sine) }, Origin::User).unwrap();
     r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 1, 60) }, Origin::User).unwrap();
     let id = r.doc.project().tracks[1].midi_clips[0].id;
     let span = render_plan::clip_span(r.doc.project(), id).unwrap();
     let session = offline::Session::new(r.job(&span, RenderMode::Bounce, 0.0)).unwrap();
-    assert_eq!(session.plugins(), (0, 1), "only the instrument plugin of the rendered track: the effect on the other track is muted and left out");
+    assert_eq!(
+        session.plugins(),
+        (0, 1),
+        "only the instrument plugin of the rendered track: the effect on the other track is muted and left out"
+    );
     drop(session);
     assert!(peak(&r.render(&span, RenderMode::Bounce, 0.0)) > 0.02, "the plugin instrument sounds");
 }
@@ -297,7 +341,12 @@ fn bench_four_bar_clip_render() {
     r.doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 0, 8.0) }, Origin::User).unwrap();
     r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 16, 48) }, Origin::User).unwrap();
     let midi = r.doc.project().tracks[1].midi_clips[0].id;
-    let cases = [("audio 4 bars, Material (consolidate)", ClipId(101), RenderMode::Material, 0.0), ("audio 4 bars + reverb, Bounce", ClipId(101), RenderMode::Bounce, 2.0), ("MIDI 4 bars, synth + reverb + delay, Bounce", midi, RenderMode::Bounce, 2.0), ("MIDI 4 bars, Stem (export)", midi, RenderMode::Stem, 2.0)];
+    let cases = [
+        ("audio 4 bars, Material (consolidate)", ClipId(101), RenderMode::Material, 0.0),
+        ("audio 4 bars + reverb, Bounce", ClipId(101), RenderMode::Bounce, 2.0),
+        ("MIDI 4 bars, synth + reverb + delay, Bounce", midi, RenderMode::Bounce, 2.0),
+        ("MIDI 4 bars, Stem (export)", midi, RenderMode::Stem, 2.0),
+    ];
     for (name, id, mode, tail) in cases {
         let span = render_plan::clip_span(r.doc.project(), id).unwrap();
         let mut ms: Vec<f64> = (0..9)
@@ -310,7 +359,12 @@ fn bench_four_bar_clip_render() {
             .collect();
         ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let audio = 8.0 + tail;
-        println!("BENCH {name}: median {:.1} ms, min {:.1} ms for {audio:.0} s of audio ({:.0}x real time)", ms[4], ms[0], audio * 1e3 / ms[4]);
+        println!(
+            "BENCH {name}: median {:.1} ms, min {:.1} ms for {audio:.0} s of audio ({:.0}x real time)",
+            ms[4],
+            ms[0],
+            audio * 1e3 / ms[4]
+        );
     }
     // The same clip with a CLAP plugin added to the chain: the main thread's share (prepare + teardown) next to the worker's.
     r.doc.execute(Command::AddDevice { track: a, index: None, device: gain_plugin(Some(0.5)) }, Origin::User).unwrap();
@@ -331,5 +385,8 @@ fn bench_four_bar_clip_render() {
         })
         .collect();
     rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    println!("BENCH audio 4 bars + reverb + CLAP gain, Bounce, plugin path: main thread prepare {:.2} ms, worker {:.1} ms, main thread teardown {:.2} ms (medians of 9)", rows[4].0, rows[4].1, rows[4].2);
+    println!(
+        "BENCH audio 4 bars + reverb + CLAP gain, Bounce, plugin path: main thread prepare {:.2} ms, worker {:.1} ms, main thread teardown {:.2} ms (medians of 9)",
+        rows[4].0, rows[4].1, rows[4].2
+    );
 }

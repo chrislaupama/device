@@ -204,7 +204,13 @@ pub struct AudioLoop {
 impl AudioLoop {
     pub fn validate(&self) -> Result<(), String> {
         if self.start < 0 || self.end - self.start < crate::midi::ClipLoop::MIN_LEN || self.length <= 0 {
-            Err(format!("loop {}..{} (length {}) is shorter than {} ticks or before the clip", self.start, self.end, self.length, crate::midi::ClipLoop::MIN_LEN))
+            Err(format!(
+                "loop {}..{} (length {}) is shorter than {} ticks or before the clip",
+                self.start,
+                self.end,
+                self.length,
+                crate::midi::ClipLoop::MIN_LEN
+            ))
         } else {
             Ok(())
         }
@@ -309,7 +315,28 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0, sends: Vec::new(), output: None }
+        Track {
+            id,
+            kind,
+            name: name.into(),
+            color,
+            gain: 1.0,
+            pan: 0.0,
+            mute: false,
+            solo: false,
+            arm: false,
+            monitor: false,
+            input: None,
+            clips: Vec::new(),
+            midi_clips: Vec::new(),
+            synth: SynthParams::default(),
+            devices: Vec::new(),
+            instrument_plugin: None,
+            automation: Vec::new(),
+            height: 1.0,
+            sends: Vec::new(),
+            output: None,
+        }
     }
 
     /// Row height scale limits (the per-track height scale).
@@ -380,7 +407,8 @@ impl Project {
     /// ordinary track instead, so nothing in the file is lost. Sends and outputs that don't name a
     /// return track and duplicate sends are dropped, levels are clamped. Valid projects are unchanged.
     pub fn sanitize_routing(&mut self) {
-        let (mut ordinary, mut returns): (Vec<Track>, Vec<Track>) = std::mem::take(&mut self.tracks).into_iter().partition(|t| !t.is_return());
+        let (mut ordinary, mut returns): (Vec<Track>, Vec<Track>) =
+            std::mem::take(&mut self.tracks).into_iter().partition(|t| !t.is_return());
         // A return can't hold clips or an instrument, and there are at most MAX_RETURNS. Rather than
         // drop content from a damaged file, such returns load as ordinary tracks at the end of the list.
         let mut kept = Vec::new();
@@ -422,7 +450,10 @@ impl Project {
 
     /// Name for a new return track: "Return A", "Return B", ..., the first letter no return is named after.
     pub fn next_return_name(&self) -> String {
-        (0..26).map(|i| format!("Return {}", return_letter(i))).find(|n| !self.returns().any(|t| &t.name == n)).unwrap_or_else(|| "Return".into())
+        (0..26)
+            .map(|i| format!("Return {}", return_letter(i)))
+            .find(|n| !self.returns().any(|t| &t.name == n))
+            .unwrap_or_else(|| "Return".into())
     }
 
     pub fn track_index(&self, id: TrackId) -> Option<usize> {

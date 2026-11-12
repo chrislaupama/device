@@ -4,7 +4,7 @@
 //!
 //!   cargo bench -p dstudio-core --bench steps
 
-use dstudio_core::steps::{bake_into, StepLane, StepPattern, StepRate, StepRows};
+use dstudio_core::steps::{StepLane, StepPattern, StepRate, StepRows, bake_into};
 use dstudio_core::*;
 use std::collections::HashMap;
 use std::hint::black_box;
@@ -14,7 +14,12 @@ fn pattern(steps: u16, rate: StepRate, every: u16, repeat: i32) -> StepPattern {
     let mut p = StepPattern { rate, steps, ..StepPattern::default() };
     for pad in 0..16u8 {
         for s in (0..steps).filter(|s| (s + pad as u16) % every == 0) {
-            p = p.toggled(36 + pad, s).with_lane(36 + pad, s, StepLane::Repeat, repeat).with_lane(36 + pad, s, StepLane::Velocity, 60 + (s as i32 * 7) % 60);
+            p = p.toggled(36 + pad, s).with_lane(36 + pad, s, StepLane::Repeat, repeat).with_lane(
+                36 + pad,
+                s,
+                StepLane::Velocity,
+                60 + (s as i32 * 7) % 60,
+            );
         }
     }
     p
@@ -55,7 +60,9 @@ fn main() {
         let mut d = Document::new(Project::default());
         let inst = d.project().tracks[1].id;
         for t in 0..tracks {
-            let track = if t == 0 { inst } else {
+            let track = if t == 0 {
+                inst
+            } else {
                 let mut tr = d.project().tracks[1].clone();
                 tr.id = TrackId(0);
                 tr.midi_clips.clear();

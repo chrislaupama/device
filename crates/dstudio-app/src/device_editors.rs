@@ -18,9 +18,9 @@ use crate::controller::Controller;
 use crate::device_panel::{DIAL_Y, Z};
 use crate::devices::{DevMenu, MenuPick};
 use crate::{DeviceCard, PanelCanvas, PanelKnob, PanelPath, PanelText};
+use dstudio_core::builtin::DeviceDef;
 use dstudio_core::builtin::shaper::{self as sh, Point};
 use dstudio_core::builtin::trance_gate as tg;
-use dstudio_core::builtin::DeviceDef;
 use dstudio_core::{Command, Device, DeviceId, PPQ};
 use slint::{Color, ModelRc, SharedString, VecModel};
 use std::collections::HashMap;
@@ -210,7 +210,16 @@ impl PathData {
     }
     fn rrect(self, x: f32, y: f32, w: f32, h: f32, r: f32) -> Self {
         let r = r.min(w / 2.0).min(h / 2.0);
-        self.m(x + r, y).l(x + w - r, y).a(r, false, true, x + w, y + r).l(x + w, y + h - r).a(r, false, true, x + w - r, y + h).l(x + r, y + h).a(r, false, true, x, y + h - r).l(x, y + r).a(r, false, true, x + r, y).z()
+        self.m(x + r, y)
+            .l(x + w - r, y)
+            .a(r, false, true, x + w, y + r)
+            .l(x + w, y + h - r)
+            .a(r, false, true, x + w - r, y + h)
+            .l(x + r, y + h)
+            .a(r, false, true, x, y + h - r)
+            .l(x, y + r)
+            .a(r, false, true, x + r, y)
+            .z()
     }
     fn circle(self, cx: f32, cy: f32, r: f32) -> Self {
         self.m(cx - r, cy).a(r, true, true, cx + r, cy).a(r, true, true, cx - r, cy).z()
@@ -245,7 +254,10 @@ impl Canvas {
     }
     /// A rounded value pill: fill, optional label text, value text, chevron.
     fn pill(&mut self, x: f32, y: f32, w: f32, h: f32, hot: bool) {
-        self.fill(PathData::default().rrect(x, y, w, h, h / 2.0), if hot { rgba(0x33, 0x34, 0x3a, 1.0) } else { rgba(0x2a, 0x2b, 0x30, 1.0) });
+        self.fill(
+            PathData::default().rrect(x, y, w, h, h / 2.0),
+            if hot { rgba(0x33, 0x34, 0x3a, 1.0) } else { rgba(0x2a, 0x2b, 0x30, 1.0) },
+        );
     }
     fn chevron(&mut self, cx: f32, cy: f32, down: bool, c: Color) {
         let s = if down { 1.0 } else { -1.0 };
@@ -477,14 +489,26 @@ fn lane_text(lane: usize, y: f32, depth: f32, quarters: f64, max_beats: f64, low
         1 => {
             let want = (y * depth) as f64 * quarters;
             let b = (want.min(max_beats) * 100.0).round() / 100.0;
-            let text = if b == 0.0 { "Now".to_string() } else if (b - 1.0).abs() < 1e-9 { "1 beat".into() } else { format!("{b} beats") };
+            let text = if b == 0.0 {
+                "Now".to_string()
+            } else if (b - 1.0).abs() < 1e-9 {
+                "1 beat".into()
+            } else {
+                format!("{b} beats")
+            };
             if want > max_beats + 1e-9 { format!("{text} (max)") } else { text }
         }
         2 => format!("{}%", (100.0 * (1.0 + depth * (2.0 * y - 1.0))).round()),
         3 => {
             let v = depth * (2.0 * y - 1.0);
             let n = (100.0 * v.abs()).round();
-            if n == 0.0 { "C".into() } else if v < 0.0 { format!("{n}L") } else { format!("{n}R") }
+            if n == 0.0 {
+                "C".into()
+            } else if v < 0.0 {
+                format!("{n}L")
+            } else {
+                format!("{n}R")
+            }
         }
         4 => {
             let f = low * (high / low).powf(y);
@@ -622,10 +646,31 @@ impl Controller {
         for (k, h) in [(0, Hit::StepMore), (1, Hit::StepFewer)] {
             let enabled = if k == 0 { steps < tg::MAX_STEPS } else { steps > 1 };
             let cy = TG_CY - 18.0 + 14.0 * k as f32;
-            c.chevron(TG_CX + 19.0, cy, k == 1, ink(if !enabled { 0.25 } else if hit == h { 1.0 } else { 0.7 }));
+            c.chevron(
+                TG_CX + 19.0,
+                cy,
+                k == 1,
+                ink(if !enabled {
+                    0.25
+                } else if hit == h {
+                    1.0
+                } else {
+                    0.7
+                }),
+            );
         }
         let rate_hot = hit == Hit::Rate;
-        c.text(TG_CX - 26.0, TG_CY + 5.0, 44.0, 18.0, tg::RATES[rate], if rate_hot { Color::from_rgb_u8(255, 255, 255) } else { accent.brighter(0.2) }, 13.0, 600, 2);
+        c.text(
+            TG_CX - 26.0,
+            TG_CY + 5.0,
+            44.0,
+            18.0,
+            tg::RATES[rate],
+            if rate_hot { Color::from_rgb_u8(255, 255, 255) } else { accent.brighter(0.2) },
+            13.0,
+            600,
+            2,
+        );
         c.chevron(TG_CX + 23.0, TG_CY + 14.0, true, rgba(0xa6, 0xa8, 0xad, 1.0));
 
         // Pattern choice track.
@@ -640,7 +685,13 @@ impl Controller {
             } else if hit == Hit::Pattern(i) {
                 c.fill(PathData::default().rrect(x + 2.0, TG_PAT.1 + 2.0, cell - 4.0, TG_PAT.3 - 4.0, (TG_PAT.3 - 4.0) / 2.0), ink(0.04));
             }
-            let col = if sel { rgba(0x17, 0x18, 0x1b, 1.0) } else if hit == Hit::Pattern(i) { ink(0.85) } else { ink(0.7) };
+            let col = if sel {
+                rgba(0x17, 0x18, 0x1b, 1.0)
+            } else if hit == Hit::Pattern(i) {
+                ink(0.85)
+            } else {
+                ink(0.7)
+            };
             c.text(x, TG_PAT.1, cell, TG_PAT.3, (i + 1).to_string(), col, 11.0, 600, 1);
         }
 
@@ -695,7 +746,8 @@ impl Controller {
         c.stroke(PathData::default().poly(&pts), accent, 1.5);
         let handles = [(Hit::EnvA, env.a, 1.0), (Hit::EnvD, env.a + env.d, env.s), (Hit::EnvR, gate_ms + env.r, 0.0)];
         for (hh, t, l) in handles {
-            let hot = hit == hh || matches!(&self.devices.panel.editors.gesture, Some(Gesture::Env { handle, device, .. }) if *handle == hh && *device == d.id);
+            let hot = hit == hh
+                || matches!(&self.devices.panel.editors.gesture, Some(Gesture::Env { handle, device, .. }) if *handle == hh && *device == d.id);
             let r = if hot { 6.0 } else { 4.5 };
             c.path(
                 PathData::default().circle(tx(t), ly(l), r),
@@ -794,12 +846,24 @@ impl Controller {
             let x = SH_TAB_X[l];
             let sel = l == lane;
             let hot = matches!(hit, Hit::LaneOn(h) | Hit::Lane(h) if h == l);
-            let ring_col = if on { accent } else if hot { ink(0.7) } else { rest_col };
+            let ring_col = if on {
+                accent
+            } else if hot {
+                ink(0.7)
+            } else {
+                rest_col
+            };
             c.stroke(PathData::default().circle(x, SH_TABS_Y, 6.25 * 0.75), ring_col, 1.5);
             if on {
                 c.fill(PathData::default().circle(x, SH_TABS_Y, 3.0 * 0.75), accent);
             }
-            let col = if sel { ink(1.0) } else if hot { ink(0.7) } else { rest_col };
+            let col = if sel {
+                ink(1.0)
+            } else if hot {
+                ink(0.7)
+            } else {
+                rest_col
+            };
             c.text(x + 14.5, SH_TABS_Y - 10.0, 70.0, 20.0, *name, col, 12.5, 600, 0);
         }
 
@@ -820,7 +884,17 @@ impl Controller {
         c.chevron(241.0, y + 9.5, true, ink(0.65 * dim));
         if band != 0 {
             c.fill(PathData::default().m(251.5, y + 3.0).l(251.5, y + 16.0).l(252.0, y + 16.0).l(252.0, y + 3.0).z(), ink(0.08));
-            c.text(252.0, y, 55.5, 19.0, def.params[base + sh::SPLIT].format(values[base + sh::SPLIT]), ink(if hit == Hit::Split { 0.95 } else { 0.7 } * dim), 11.0, 600, 1);
+            c.text(
+                252.0,
+                y,
+                55.5,
+                19.0,
+                def.params[base + sh::SPLIT].format(values[base + sh::SPLIT]),
+                ink(if hit == Hit::Split { 0.95 } else { 0.7 } * dim),
+                11.0,
+                600,
+                1,
+            );
         }
         let mut x = 196.5 + band_w + 16.0;
         if lane == 4 {
@@ -829,8 +903,21 @@ impl Controller {
             c.pill(x, y, 128.0, 19.0, matches!(hit, Hit::FilterType | Hit::Resonance));
             c.text(x + 8.0, y, 64.0, 19.0, def.params[5].format(values[5]), ink(0.95 * dim), 11.5, 600, 0);
             c.chevron(x + 70.0, y + 9.5, true, ink(0.65 * dim));
-            c.fill(PathData::default().m(x + 79.5, y + 3.0).l(x + 79.5, y + 16.0).l(x + 80.0, y + 16.0).l(x + 80.0, y + 3.0).z(), ink(0.08));
-            c.text(x + 80.0, y, 48.0, 19.0, def.params[6].format(values[6]), ink(if hit == Hit::Resonance { 0.95 } else { 0.7 } * dim), 11.0, 600, 1);
+            c.fill(
+                PathData::default().m(x + 79.5, y + 3.0).l(x + 79.5, y + 16.0).l(x + 80.0, y + 16.0).l(x + 80.0, y + 3.0).z(),
+                ink(0.08),
+            );
+            c.text(
+                x + 80.0,
+                y,
+                48.0,
+                19.0,
+                def.params[6].format(values[6]),
+                ink(if hit == Hit::Resonance { 0.95 } else { 0.7 } * dim),
+                11.0,
+                600,
+                1,
+            );
         } else if lane == 5 {
             let r = crush_row(x, band != 0);
             c.text(r.bits_label, y, r.bits_pill.0 - r.bits_label, 19.0, "Bits", ink(0.4 * dim), r.font, 500, 0);
@@ -858,7 +945,10 @@ impl Controller {
         let quarters = sh::DIVISION_QUARTERS[(values[base + sh::RATE].round() as usize).min(sh::DIVISIONS.len() - 1)];
         let rulers: Vec<(f32, String)> = match lane {
             0 => vec![(1.0, "100".into()), (0.5, fmt_num(100.0 * (1.0 - depth / 2.0))), (0.0, fmt_num(100.0 * (1.0 - depth)))],
-            1 => vec![(1.0, if depth as f64 * quarters > self.time_max_beats() { "Max".into() } else { "Cycle".into() }), (0.0, "Now".into())],
+            1 => vec![
+                (1.0, if depth as f64 * quarters > self.time_max_beats() { "Max".into() } else { "Cycle".into() }),
+                (0.0, "Now".into()),
+            ],
             2 => vec![(1.0, "Wide".into()), (0.5, "As is".into()), (0.0, "Mono".into())],
             3 => vec![(1.0, "R".into()), (0.5, "C".into()), (0.0, "L".into())],
             5 => vec![(1.0, "Full".into()), (0.0, "Clean".into())],
@@ -903,10 +993,12 @@ impl Controller {
 
         let curve_alpha = if lane_on { 1.0 } else { 0.4 };
         let n = 240;
-        let line: Vec<(f32, f32)> = (0..=n).map(|i| {
-            let x = i as f32 / n as f32;
-            (sh_px(x), sh_py(sh::eval(&pts, x)))
-        }).collect();
+        let line: Vec<(f32, f32)> = (0..=n)
+            .map(|i| {
+                let x = i as f32 / n as f32;
+                (sh_px(x), sh_py(sh::eval(&pts, x)))
+            })
+            .collect();
         // Vertical jumps (two points at one x) are drawn as steps.
         let mut line = line;
         for w in pts.windows(2) {
@@ -933,7 +1025,12 @@ impl Controller {
                 let mx = 0.5 * (w[0].x + w[1].x);
                 let hot = hit == Hit::Mid(k) || gesture == Some((k, true));
                 let r = if hot { 4.5 } else { 3.5 };
-                c.path(PathData::default().circle(sh_px(mx), sh_py(sh::eval(&pts, mx)), r), if hot { accent } else { ink(0.6) }, 1.2, rgba(0x17, 0x18, 0x1b, 1.0));
+                c.path(
+                    PathData::default().circle(sh_px(mx), sh_py(sh::eval(&pts, mx)), r),
+                    if hot { accent } else { ink(0.6) },
+                    1.2,
+                    rgba(0x17, 0x18, 0x1b, 1.0),
+                );
             }
         }
         for (k, p) in pts.iter().enumerate() {
@@ -974,7 +1071,10 @@ impl Controller {
                 let w = 38.0;
                 let px = SH_WELL.0 + SH_WELL.2 - w - 6.0;
                 let py = if i == 0 { SH_WELL.1 + 6.0 } else { SH_WELL.1 + SH_WELL.3 - 6.0 - 16.0 };
-                c.fill(PathData::default().rrect(px, py, w, 16.0, 8.0), if hit == h { rgba(0x29, 0x2a, 0x30, 1.0) } else { rgba(0x22, 0x23, 0x28, 1.0) });
+                c.fill(
+                    PathData::default().rrect(px, py, w, 16.0, 8.0),
+                    if hit == h { rgba(0x29, 0x2a, 0x30, 1.0) } else { rgba(0x22, 0x23, 0x28, 1.0) },
+                );
                 c.text(px, py, w, 16.0, short_hz(values[idx]), accent.brighter(if hit == h { 0.35 } else { 0.2 }), 10.0, 650, 1);
             }
         }
@@ -993,7 +1093,15 @@ impl Controller {
         };
         c.text(tx + 8.0, ty, SH_TRIGGER_SPLIT - 24.0, th, source, ink(0.95), 11.5, 600, 0);
         c.chevron(tx + SH_TRIGGER_SPLIT - 11.0, ty + th / 2.0, true, ink(0.65));
-        c.fill(PathData::default().m(tx + SH_TRIGGER_SPLIT, ty + 3.0).l(tx + SH_TRIGGER_SPLIT, ty + th - 3.0).l(tx + SH_TRIGGER_SPLIT + 0.5, ty + th - 3.0).l(tx + SH_TRIGGER_SPLIT + 0.5, ty + 3.0).z(), ink(0.08));
+        c.fill(
+            PathData::default()
+                .m(tx + SH_TRIGGER_SPLIT, ty + 3.0)
+                .l(tx + SH_TRIGGER_SPLIT, ty + th - 3.0)
+                .l(tx + SH_TRIGGER_SPLIT + 0.5, ty + th - 3.0)
+                .l(tx + SH_TRIGGER_SPLIT + 0.5, ty + 3.0)
+                .z(),
+            ink(0.08),
+        );
         let thr_alpha = if audio { if hit == Hit::Threshold { 0.95 } else { 0.75 } } else { 0.35 };
         c.text(tx + SH_TRIGGER_SPLIT, ty, tw - SH_TRIGGER_SPLIT, th, def.params[1].format(values[1]), ink(thr_alpha), 11.0, 600, 1);
         c.text(tx, 284.5, tw, 14.0, "Trigger", rgba(0xe5, 0xe5, 0xe8, 1.0), 11.0, 600, 1);
@@ -1006,7 +1114,11 @@ impl Controller {
             Hit::LaneOn(_) | Hit::Lane(_) | Hit::Shape | Hit::Band | Hit::FilterType | Hit::Trigger => CURSOR_POINTER,
             Hit::Split | Hit::Resonance | Hit::Bits | Hit::Decimate | Hit::Threshold | Hit::FilterHigh | Hit::FilterLow => CURSOR_NS,
             Hit::CurvePoint(k) => {
-                if k == 0 || k + 1 == pts.len() { CURSOR_NS } else { CURSOR_MOVE }
+                if k == 0 || k + 1 == pts.len() {
+                    CURSOR_NS
+                } else {
+                    CURSOR_MOVE
+                }
             }
             Hit::Mid(_) => CURSOR_NS,
             Hit::Plot if pts.len() < sh::MAX_POINTS => CURSOR_CROSSHAIR,
@@ -1109,13 +1221,15 @@ impl Controller {
 
     /// Commit a gesture's live values as one undo step.
     fn live_commit(&mut self, device: DeviceId, label: &str) {
-        let live: Vec<(usize, f32)> = self.devices.panel.editors.live.iter().filter(|((d, _), _)| *d == device).map(|((_, i), v)| (*i, *v)).collect();
+        let live: Vec<(usize, f32)> =
+            self.devices.panel.editors.live.iter().filter(|((d, _), _)| *d == device).map(|((_, i), v)| (*i, *v)).collect();
         self.devices.panel.editors.live.retain(|(d, _), _| *d != device);
         self.ui_dirty = true;
         let Some((d, def)) = self.panel_def(device) else { return };
         let mut changed: Vec<(usize, f32)> = live.into_iter().filter(|(i, v)| (def.value(d, &def.params[*i]) - v).abs() > 0.0).collect();
         changed.sort_by_key(|(i, _)| *i);
-        let mut commands: Vec<Command> = changed.iter().map(|(i, v)| Command::SetDeviceParam { device, param: def.params[*i].id.to_string(), value: *v }).collect();
+        let mut commands: Vec<Command> =
+            changed.iter().map(|(i, v)| Command::SetDeviceParam { device, param: def.params[*i].id.to_string(), value: *v }).collect();
         match commands.len() {
             0 => {}
             1 => {
@@ -1225,7 +1339,11 @@ impl Controller {
                 // Every step crossed since the last event, the short way round the ring.
                 let n = steps as usize;
                 let (fwd, back) = ((k + n - last) % n, (last + n - k) % n);
-                let crossed: Vec<usize> = if fwd <= back { (1..=fwd).map(|s| (last + s) % n).collect() } else { (1..=back).map(|s| (last + n - s) % n).collect() };
+                let crossed: Vec<usize> = if fwd <= back {
+                    (1..=fwd).map(|s| (last + s) % n).collect()
+                } else {
+                    (1..=back).map(|s| (last + n - s) % n).collect()
+                };
                 for s in crossed {
                     self.tg_paint(device, def, s, on);
                 }
@@ -1401,7 +1519,8 @@ impl Controller {
                     return;
                 }
                 let q = pts[k];
-                self.devices.panel.editors.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts, raw: (sh_px(q.x), sh_py(q.y)), last: p });
+                self.devices.panel.editors.gesture =
+                    Some(Gesture::Curve { device, lane, k, mid: false, pts, raw: (sh_px(q.x), sh_py(q.y)), last: p });
                 self.ui_dirty = true;
             }
             (DOWN, Hit::Mid(k)) => {
@@ -1420,7 +1539,8 @@ impl Controller {
                 let mut next = pts;
                 next.insert(k, Point { x, y, tension: 0.0 });
                 self.sh_write_live(device, def, lane, &next);
-                self.devices.panel.editors.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts: next, raw: (sh_px(x), sh_py(y)), last: p });
+                self.devices.panel.editors.gesture =
+                    Some(Gesture::Curve { device, lane, k, mid: false, pts: next, raw: (sh_px(x), sh_py(y)), last: p });
             }
             (RIGHT | DOUBLE, Hit::CurvePoint(k)) if k > 0 && k + 1 < pts.len() => {
                 let mut next = pts;
@@ -1469,7 +1589,13 @@ impl Controller {
         match which {
             MENU_PATTERN => {
                 let clip = self.devices.panel.editors.pattern_clip.is_some();
-                for (label, code) in [("Clear", TG_CLEAR), ("Fill", TG_FILL), ("Invert", TG_INVERT), ("Rotate Left", TG_ROT_LEFT), ("Rotate Right", TG_ROT_RIGHT)] {
+                for (label, code) in [
+                    ("Clear", TG_CLEAR),
+                    ("Fill", TG_FILL),
+                    ("Invert", TG_INVERT),
+                    ("Rotate Left", TG_ROT_LEFT),
+                    ("Rotate Right", TG_ROT_RIGHT),
+                ] {
                     rows.push((label.into(), String::new(), pick(code), false));
                 }
                 rows.push(("Copy Pattern".into(), String::new(), pick(TG_COPY), true));
@@ -1502,8 +1628,19 @@ impl Controller {
                 rows.push(("This track".into(), check(audio && side.is_none()), pick(SH_TRIGGER_SELF), false));
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
                 let mut first = true;
-                for (ti, t) in self.project().tracks.iter().enumerate().filter(|(_, t)| Some(t.id) != own && (d.sidechain == Some(t.id) || !self.sidechain_feeds_back(device, t.id))) {
-                    rows.push((t.name.clone(), check(audio && side == Some(t.id)), pick(SH_TRIGGER_TRACK + ti as i32), std::mem::take(&mut first)));
+                for (ti, t) in self
+                    .project()
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| Some(t.id) != own && (d.sidechain == Some(t.id) || !self.sidechain_feeds_back(device, t.id)))
+                {
+                    rows.push((
+                        t.name.clone(),
+                        check(audio && side == Some(t.id)),
+                        pick(SH_TRIGGER_TRACK + ti as i32),
+                        std::mem::take(&mut first),
+                    ));
                 }
                 w = 200.0;
             }

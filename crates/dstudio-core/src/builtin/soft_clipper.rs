@@ -14,11 +14,16 @@ pub static SOFT_CLIPPER: DeviceDef = DeviceDef {
     category: "Distortion",
     purpose: "Rounds off peaks above a ceiling so a part gets louder without hard digital clipping.",
     params: &[
-        ParamDef::new("input", "Input", -12.0, 24.0, 0.0, LINEAR, "dB", Format::Db).help("Gain into the clipper: more input, more clipping."),
-        ParamDef::new("ceiling", "Ceiling", -12.0, 0.0, 0.0, LINEAR, "dB", Format::DbNoPlus).help("Highest level the clipper lets through."),
-        ParamDef::new("softness", "Softness", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent0).help("How gradually the clipping sets in below the ceiling."),
-        ParamDef::choice("shape", "Shape", SHAPES, 0).help("Curve: Smooth is symmetric, Warm rounds the negative half sooner (even harmonics), Hard is a tight polynomial knee."),
-        ParamDef::choice("gain_match", "Gain Match", OFF_ON, 0).help("Compensates the input gain so the level stays the same while you push into the clipper."),
+        ParamDef::new("input", "Input", -12.0, 24.0, 0.0, LINEAR, "dB", Format::Db)
+            .help("Gain into the clipper: more input, more clipping."),
+        ParamDef::new("ceiling", "Ceiling", -12.0, 0.0, 0.0, LINEAR, "dB", Format::DbNoPlus)
+            .help("Highest level the clipper lets through."),
+        ParamDef::new("softness", "Softness", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent0)
+            .help("How gradually the clipping sets in below the ceiling."),
+        ParamDef::choice("shape", "Shape", SHAPES, 0)
+            .help("Curve: Smooth is symmetric, Warm rounds the negative half sooner (even harmonics), Hard is a tight polynomial knee."),
+        ParamDef::choice("gain_match", "Gain Match", OFF_ON, 0)
+            .help("Compensates the input gain so the level stays the same while you push into the clipper."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent0).help("Blend of clipped and dry signal."),
         ParamDef::new("output_gain", "Output", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).help("Output level."),
     ],
@@ -36,7 +41,10 @@ pub static SOFT_CLIPPER: DeviceDef = DeviceDef {
     factory: &[
         FactoryPreset { name: "Peak Shave", values: &[("input", 3.0), ("ceiling", -0.5), ("softness", 30.0)] },
         FactoryPreset { name: "Round Edges", values: &[("input", 5.0), ("softness", 85.0), ("output_gain", -2.5)] },
-        FactoryPreset { name: "Transient Trim", values: &[("input", 8.0), ("ceiling", -4.0), ("softness", 15.0), ("shape", 2.0), ("output_gain", -2.0)] },
+        FactoryPreset {
+            name: "Transient Trim",
+            values: &[("input", 8.0), ("ceiling", -4.0), ("softness", 15.0), ("shape", 2.0), ("output_gain", -2.0)],
+        },
         FactoryPreset { name: "Even Glow", values: &[("input", 10.0), ("softness", 75.0), ("shape", 1.0), ("gain_match", 1.0)] },
         FactoryPreset { name: "Brickwall-ish", values: &[("input", 2.0), ("ceiling", -0.3), ("softness", 2.0), ("shape", 2.0)] },
         FactoryPreset { name: "Loud and Proud", values: &[("input", 7.0), ("ceiling", -0.8), ("softness", 40.0), ("gain_match", 0.0)] },
@@ -75,7 +83,16 @@ pub fn clip_curve(shape: u32, u: f32, s: f32) -> f32 {
 }
 
 /// Drawn transfer: (x (1 - mix) + c clip(x a / c) m mix) o.
-pub fn clipper_transfer(x: f32, input_db: f32, ceiling_db: f32, softness: f32, shape: u32, gain_match: bool, mix: f32, output_db: f32) -> f32 {
+pub fn clipper_transfer(
+    x: f32,
+    input_db: f32,
+    ceiling_db: f32,
+    softness: f32,
+    shape: u32,
+    gain_match: bool,
+    mix: f32,
+    output_db: f32,
+) -> f32 {
     let a = 10f32.powf(input_db / 20.0);
     let c = 10f32.powf(ceiling_db / 20.0);
     let m = if gain_match { 1.0 / a } else { 1.0 };

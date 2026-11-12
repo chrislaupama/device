@@ -41,7 +41,22 @@ impl Chord {
 
 fn normalize_key(k: &str) -> Option<String> {
     let named = [
-        "space", "enter", "delete", "backspace", "escape", "tab", "up", "down", "left", "right", "pageup", "pagedown", "home", "end", "comma", "period",
+        "space",
+        "enter",
+        "delete",
+        "backspace",
+        "escape",
+        "tab",
+        "up",
+        "down",
+        "left",
+        "right",
+        "pageup",
+        "pagedown",
+        "home",
+        "end",
+        "comma",
+        "period",
     ];
     if k.chars().count() == 1 {
         return Some(k.to_ascii_uppercase());
@@ -146,7 +161,11 @@ impl Condition {
         match self {
             Condition::Always => 0,
             Condition::TrackSelected | Condition::MixerOpen | Condition::ClipOrDevicesFocused => 1,
-            Condition::TrackHeaderSelected | Condition::ClipsSelected | Condition::ClipOrSectionSelected | Condition::CatalogFocused | Condition::ChatFocused => 2,
+            Condition::TrackHeaderSelected
+            | Condition::ClipsSelected
+            | Condition::ClipOrSectionSelected
+            | Condition::CatalogFocused
+            | Condition::ChatFocused => 2,
             Condition::ClipSelected | Condition::SectionSelected | Condition::FxSlotSelected | Condition::MidiEditorFocused => 3,
             Condition::RangeSelected | Condition::MidiClipSelected => 4,
         }
@@ -253,8 +272,8 @@ impl Keymap {
                 b("file.export_audio", &["primary+shift+e"], Always),
                 b("app.settings", &["primary+comma"], Always), // (tooltip)
                 b("view.zoom_in", &["primary+period"], Always),
-                b("view.musical_typing", &["k"], Always), // (tooltip K / ⇧K)
-                b("draw_mode.toggle", &["b"], Always), // (tooltip "Draw mode (B)")
+                b("view.musical_typing", &["k"], Always),          // (tooltip K / ⇧K)
+                b("draw_mode.toggle", &["b"], Always),             // (tooltip "Draw mode (B)")
                 b("assistant.ask", &["primary+k"], ClipsSelected), // (context menu "Ask ⌘K")
             ],
         }

@@ -233,7 +233,13 @@ impl Controller {
             return;
         }
         comp.genre = index as u8;
-        self.execute(Command::SetComposer { clip: c.id, edit: ComposerEdit::Genre, composer: Some(comp), notes: c.notes.clone(), pattern: c.pattern.clone() });
+        self.execute(Command::SetComposer {
+            clip: c.id,
+            edit: ComposerEdit::Genre,
+            composer: Some(comp),
+            notes: c.notes.clone(),
+            pattern: c.pattern.clone(),
+        });
         self.ui_dirty = true;
     }
 

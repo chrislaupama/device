@@ -6,7 +6,7 @@
 //! index, crate::modulation). The panel is the custom "chain" view (macro
 //! grid, name editor, targets and the Map pill).
 
-use super::{DeviceDef, FactoryPreset, Format, Layout, ParamDef, View, LINEAR};
+use super::{DeviceDef, FactoryPreset, Format, LINEAR, Layout, ParamDef, View};
 use crate::device::PluginKind;
 
 /// Number of macros on a chain head.
@@ -39,7 +39,17 @@ pub static RACK: DeviceDef = DeviceDef {
     category: "Utility",
     purpose: "Groups effects into one chain with a shared power switch and eight macros.",
     params: PARAMS,
-    layout: Layout { picker: &[], view: Some(View::Custom("chain")), sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], fixed_width: 0.0, ..Layout::EMPTY },
+    layout: Layout {
+        picker: &[],
+        view: Some(View::Custom("chain")),
+        sliders: &[],
+        clusters: &[],
+        faces: &[],
+        min_height: 0.0,
+        shown_when: &[],
+        fixed_width: 0.0,
+        ..Layout::EMPTY
+    },
     factory: FACTORY,
     sidechain: false,
     samples: 0,

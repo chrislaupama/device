@@ -12,25 +12,10 @@ use std::rc::Rc;
 use std::time::Instant;
 
 /// Pitch-class names for the key picker and the readout (sharps, as elsewhere in the app).
-pub const KEY_NAMES: [&str; 12] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-];
+pub const KEY_NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 /// Time signatures the Sig menu offers, simple then compound.
-pub const SIGNATURES: [(u8, u8); 12] = [
-    (2, 4),
-    (3, 4),
-    (4, 4),
-    (5, 4),
-    (6, 4),
-    (7, 4),
-    (3, 8),
-    (5, 8),
-    (6, 8),
-    (7, 8),
-    (9, 8),
-    (12, 8),
-];
+pub const SIGNATURES: [(u8, u8); 12] = [(2, 4), (3, 4), (4, 4), (5, 4), (6, 4), (7, 4), (3, 8), (5, 8), (6, 8), (7, 8), (9, 8), (12, 8)];
 /// Index of the first x/8 entry (a rule goes before it).
 const FIRST_EIGHTH: usize = 6;
 
@@ -123,13 +108,7 @@ pub fn parse_bpm(text: &str) -> Option<f64> {
 
 /// The key readout: "C", "F#m"; empty when the project has no key.
 pub fn key_text(key: Option<ProjectKey>) -> String {
-    key.map_or(String::new(), |k| {
-        format!(
-            "{}{}",
-            KEY_NAMES[k.root as usize % 12],
-            if k.minor { "m" } else { "" }
-        )
-    })
+    key.map_or(String::new(), |k| format!("{}{}", KEY_NAMES[k.root as usize % 12], if k.minor { "m" } else { "" }))
 }
 
 /// Add a tap at `t` seconds to `taps` and return the series' tempo (whole BPM) once it has two
@@ -174,13 +153,7 @@ pub fn sig_rows(current: (u8, u8)) -> (Vec<ChoiceItem>, f32, f32) {
             rule = y + RULE_GAP / 2.0;
             y += RULE_GAP;
         }
-        rows.push(ChoiceItem {
-            label: format!("{}/{}", s.0, s.1).into(),
-            checked: *s == current,
-            hint: false,
-            y,
-            h: ROW_H,
-        });
+        rows.push(ChoiceItem { label: format!("{}/{}", s.0, s.1).into(), checked: *s == current, hint: false, y, h: ROW_H });
         y += ROW_H;
     }
     (rows, y + PAD, rule)
@@ -257,10 +230,7 @@ impl Controller {
                     self.doc.seal_coalescing();
                 }
             }
-            None => self.set_status(
-                format!("Tempo: type a number from {MIN_BPM} to {MAX_BPM}"),
-                3,
-            ),
+            None => self.set_status(format!("Tempo: type a number from {MIN_BPM} to {MAX_BPM}"), 3),
         }
         self.ui_dirty = true;
     }
@@ -301,19 +271,12 @@ impl Controller {
         self.tf.sig_menu = false;
         self.ui_dirty = true;
         let Some(r) = rows.get(i) else { return };
-        let Some((n, d)) = r
-            .label
-            .split_once('/')
-            .and_then(|(n, d)| Some((n.parse().ok()?, d.parse().ok()?)))
-        else {
+        let Some((n, d)) = r.label.split_once('/').and_then(|(n, d)| Some((n.parse().ok()?, d.parse().ok()?))) else {
             return;
         };
         if (n, d) != cur {
             self.doc.seal_coalescing();
-            self.execute(Command::SetTimeSignature {
-                numerator: n,
-                denominator: d,
-            });
+            self.execute(Command::SetTimeSignature { numerator: n, denominator: d });
         }
     }
 
@@ -367,10 +330,7 @@ impl Controller {
 
     /// Key picker: a root (0 = C .. 11 = B) in the picker's mode. Leaves the picker open.
     pub fn key_pick(&mut self, root: u8) {
-        let key = Some(ProjectKey {
-            root: root % 12,
-            minor: self.tf.key_minor,
-        });
+        let key = Some(ProjectKey { root: root % 12, minor: self.tf.key_minor });
         self.set_project_key(key);
     }
 
@@ -490,13 +450,7 @@ mod tests {
     fn sig_menu_checks_current_and_lists_unknown_first() {
         let (rows, h, rule) = sig_rows((4, 4));
         assert_eq!(rows.len(), SIGNATURES.len());
-        assert_eq!(
-            rows.iter()
-                .filter(|r| r.checked)
-                .map(|r| r.label.as_str())
-                .collect::<Vec<_>>(),
-            ["4/4"]
-        );
+        assert_eq!(rows.iter().filter(|r| r.checked).map(|r| r.label.as_str()).collect::<Vec<_>>(), ["4/4"]);
         assert!(rule > rows[FIRST_EIGHTH - 1].y + ROW_H && rule < rows[FIRST_EIGHTH].y);
         assert!(h > rows.last().unwrap().y + ROW_H);
         let (rows, _, _) = sig_rows((11, 16));
@@ -507,19 +461,7 @@ mod tests {
     #[test]
     fn key_readout() {
         assert_eq!(key_text(None), "");
-        assert_eq!(
-            key_text(Some(ProjectKey {
-                root: 0,
-                minor: false
-            })),
-            "C"
-        );
-        assert_eq!(
-            key_text(Some(ProjectKey {
-                root: 6,
-                minor: true
-            })),
-            "F#m"
-        );
+        assert_eq!(key_text(Some(ProjectKey { root: 0, minor: false })), "C");
+        assert_eq!(key_text(Some(ProjectKey { root: 6, minor: true })), "F#m");
     }
 }

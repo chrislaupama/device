@@ -51,7 +51,8 @@ fn a_parameter_takes_three_sources() {
     for s in [lfo, lfo2, lfo3] {
         d.execute(Command::AddModLink { source: s, index: None, link: link(comp, "ratio", 0, -0.1, 0.1) }, Origin::User).unwrap();
     }
-    let err = d.execute(Command::AddModLink { source: lfo4, index: None, link: link(comp, "ratio", 0, -0.1, 0.1) }, Origin::User).unwrap_err();
+    let err =
+        d.execute(Command::AddModLink { source: lfo4, index: None, link: link(comp, "ratio", 0, -0.1, 0.1) }, Origin::User).unwrap_err();
     assert!(err.to_string().contains("at most 3"), "{err}");
     // The same source twice on one parameter is refused, other parameters are fine.
     assert!(d.execute(Command::AddModLink { source: lfo, index: None, link: link(comp, "ratio", 0, 0.0, 0.1) }, Origin::User).is_err());
@@ -77,7 +78,9 @@ fn chains_group_bypass_and_keep_members_together() {
     assert!(d.execute(Command::SetDeviceChain { device: lfo_id, chain: Some(head) }, Origin::User).is_err());
     // Macro links stay inside the chain.
     d.execute(Command::AddModLink { source: head, index: None, link: link(m2, "threshold", 3, 0.2, 0.9) }, Origin::User).unwrap();
-    assert!(d.execute(Command::AddModLink { source: head, index: None, link: link(comp, "threshold", 9, 0.2, 0.9) }, Origin::User).is_err());
+    assert!(
+        d.execute(Command::AddModLink { source: head, index: None, link: link(comp, "threshold", 9, 0.2, 0.9) }, Origin::User).is_err()
+    );
     // The head's switch bypasses every member in the engine snapshot.
     d.execute(Command::SetDeviceEnabled { device: head, enabled: false }, Origin::User).unwrap();
     let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());

@@ -5,9 +5,9 @@
 //!
 //!   cargo bench -p dstudio-core --bench library
 
+use dstudio_core::PPQ;
 use dstudio_core::library::{self, PartType};
 use dstudio_core::shape::{self, Curve, Shape, ShapeKey};
-use dstudio_core::PPQ;
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -42,7 +42,11 @@ fn main() {
     let clip = 16 * PPQ;
     let curve = |k: ShapeKey| Curve { key: k, points: (0..shape::curve_len(clip)).map(|i| ((i % 4) as f32 - 1.5) / 4.0).collect() };
     for (name, part, f) in [
-        ("Chords: octave, density, length", PartType::Chords, (|s: Shape| Shape { octave: 1, density: 0.6, length: 0.3, ..s }) as fn(Shape) -> Shape),
+        (
+            "Chords: octave, density, length",
+            PartType::Chords,
+            (|s: Shape| Shape { octave: 1, density: 0.6, length: 0.3, ..s }) as fn(Shape) -> Shape,
+        ),
         ("Chords: repeat 16", PartType::Chords, |s| Shape { repeat: 3, ..s }),
         ("Chords: arp 1/16", PartType::Chords, |s| Shape { arp: 3, ..s }),
         ("Chords: air, sub, tension, spread", PartType::Chords, |s| Shape { air: 0.67, sub: 0.34, tension: 0.4, spread: 0.5, ..s }),
@@ -58,7 +62,9 @@ fn main() {
     }
     let notes = library::create_set(PartType::Chords, 3, None, 1, clip, 4 * PPQ).remove(0).notes;
     let curves = Shape {
-        curves: [ShapeKey::Velocity, ShapeKey::Density, ShapeKey::Length, ShapeKey::Nudge, ShapeKey::Air, ShapeKey::Tension].map(curve).to_vec(),
+        curves: [ShapeKey::Velocity, ShapeKey::Density, ShapeKey::Length, ShapeKey::Nudge, ShapeKey::Air, ShapeKey::Tension]
+            .map(curve)
+            .to_vec(),
         ..Shape::neutral(Some(PartType::Chords))
     };
     for (name, s) in [("Chords: six drawn curves", curves.clone()), ("Chords: six curves, arp 1/16", Shape { arp: 3, ..curves })] {

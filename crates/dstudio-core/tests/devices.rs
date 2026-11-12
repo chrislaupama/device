@@ -2,7 +2,15 @@ use dstudio_core::*;
 use std::collections::HashMap;
 
 fn plug(name: &str, kind: PluginKind) -> PluginRef {
-    PluginRef { format: PluginFormat::AudioUnit, id: format!("aufx {name} test"), path: None, name: name.into(), vendor: "Test".into(), version: "1".into(), kind }
+    PluginRef {
+        format: PluginFormat::AudioUnit,
+        id: format!("aufx {name} test"),
+        path: None,
+        name: name.into(),
+        vendor: "Test".into(),
+        version: "1".into(),
+        kind,
+    }
 }
 
 #[test]
@@ -10,7 +18,8 @@ fn insert_chain_add_move_bypass_remove_with_undo() {
     let mut d = Document::new(Project::default());
     let (a, i) = (d.project().tracks[0].id, d.project().tracks[1].id);
     d.execute(Command::AddDevice { track: a, index: None, device: Device::new(plug("dely", PluginKind::Effect)) }, Origin::User).unwrap();
-    d.execute(Command::AddDevice { track: a, index: Some(0), device: Device::new(plug("filt", PluginKind::Effect)) }, Origin::User).unwrap();
+    d.execute(Command::AddDevice { track: a, index: Some(0), device: Device::new(plug("filt", PluginKind::Effect)) }, Origin::User)
+        .unwrap();
     let names = |d: &Document, t: TrackId| d.project().track(t).unwrap().devices.iter().map(|x| x.plugin.name.clone()).collect::<Vec<_>>();
     assert_eq!(names(&d, a), ["filt", "dely"]);
     assert_eq!(d.undo_label(), Some("Add filt"));
@@ -34,10 +43,20 @@ fn insert_chain_add_move_bypass_remove_with_undo() {
 fn kinds_and_tracks_are_validated() {
     let mut d = Document::new(Project::default());
     let (a, i) = (d.project().tracks[0].id, d.project().tracks[1].id);
-    assert!(d.execute(Command::AddDevice { track: a, index: None, device: Device::new(plug("samp", PluginKind::Instrument)) }, Origin::User).is_err());
-    assert!(d.execute(Command::SetInstrumentPlugin { track: a, device: Some(Device::new(plug("samp", PluginKind::Instrument))) }, Origin::User).is_err());
-    assert!(d.execute(Command::SetInstrumentPlugin { track: i, device: Some(Device::new(plug("dely", PluginKind::Effect))) }, Origin::User).is_err());
-    d.execute(Command::SetInstrumentPlugin { track: i, device: Some(Device::new(plug("samp", PluginKind::Instrument))) }, Origin::User).unwrap();
+    assert!(
+        d.execute(Command::AddDevice { track: a, index: None, device: Device::new(plug("samp", PluginKind::Instrument)) }, Origin::User)
+            .is_err()
+    );
+    assert!(
+        d.execute(Command::SetInstrumentPlugin { track: a, device: Some(Device::new(plug("samp", PluginKind::Instrument))) }, Origin::User)
+            .is_err()
+    );
+    assert!(
+        d.execute(Command::SetInstrumentPlugin { track: i, device: Some(Device::new(plug("dely", PluginKind::Effect))) }, Origin::User)
+            .is_err()
+    );
+    d.execute(Command::SetInstrumentPlugin { track: i, device: Some(Device::new(plug("samp", PluginKind::Instrument))) }, Origin::User)
+        .unwrap();
     let inst = d.project().track(i).unwrap().instrument_plugin.clone().unwrap();
     assert_eq!(d.undo_label(), Some("Load samp"));
     // Removing the instrument plugin restores the built-in synth; undo brings it back.
@@ -60,14 +79,17 @@ fn states_sync_without_history_and_persist() {
     assert_eq!(d.project().device(id).unwrap().state.as_deref(), Some(blob.as_str()));
     let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
     assert_eq!(snap.tracks[0].devices[0].state.as_deref(), Some(blob.as_str()));
-    assert_eq!(snap.tracks[1].instrument_plugin.as_ref().map(|d| d.plugin.id.as_str()), Some("synth-v2"), "instrument tracks play the built-in Synth");
+    assert_eq!(
+        snap.tracks[1].instrument_plugin.as_ref().map(|d| d.plugin.id.as_str()),
+        Some("synth-v2"),
+        "instrument tracks play the built-in Synth"
+    );
 
     let dir = tempfile::tempdir().unwrap();
     persist::save(d.project(), dir.path()).unwrap();
     let l = persist::load(dir.path()).unwrap();
     assert_eq!(l.project.device(id).unwrap(), d.project().device(id).unwrap());
 }
-
 
 // ---------------------------------------------------------------- built-in devices
 
@@ -90,7 +112,11 @@ fn builtin_params_are_validated_undoable_and_coalesced() {
 
     let t0 = std::time::Instant::now();
     for (i, v) in [-25.0, -27.5, -30.0].into_iter().enumerate() {
-        d.execute_at(Command::SetDeviceParam { device: id, param: "threshold".into(), value: v }, t0 + std::time::Duration::from_millis(100 * i as u64)).unwrap();
+        d.execute_at(
+            Command::SetDeviceParam { device: id, param: "threshold".into(), value: v },
+            t0 + std::time::Duration::from_millis(100 * i as u64),
+        )
+        .unwrap();
     }
     assert_eq!(d.project().device(id).unwrap().params["threshold"], -30.0);
     assert_eq!(d.undo_label(), Some("Device Parameter Change"));
@@ -119,7 +145,8 @@ fn presets_load_in_one_step_and_name_the_card() {
     let a = d.project().tracks[0].id;
     let id = add_comp(&mut d, a);
     let preset = builtin::DevicePreset::factory(comp(), &comp().factory[0]);
-    d.execute(Command::SetDeviceParams { device: id, params: preset.load_values(comp()), preset: Some(preset.name.clone()) }, Origin::User).unwrap();
+    d.execute(Command::SetDeviceParams { device: id, params: preset.load_values(comp()), preset: Some(preset.name.clone()) }, Origin::User)
+        .unwrap();
     let dev = d.project().device(id).unwrap().clone();
     assert_eq!(dev.preset.as_deref(), Some(comp().factory[0].name));
     assert_eq!(dev.params, preset.values);
@@ -185,9 +212,19 @@ fn builtin_automation_targets_use_plain_values() {
     lane.points = vec![AutoPoint { time: 0, value: 1.0, curve: 0.0 }, AutoPoint { time: 960, value: 100.0, curve: 0.0 }];
     assert!((lane.value_at(480).unwrap() - 10.0).abs() < 1e-3, "geometric interpolation");
     d.execute(Command::SetAutomationLane { track: Some(a), target: target.clone(), lane: Some(lane.clone()) }, Origin::User).unwrap();
-    assert!(d.execute(Command::SetAutomationLane { track: Some(i), target: target.clone(), lane: Some(lane.clone()) }, Origin::User).is_err(), "other track");
+    assert!(
+        d.execute(Command::SetAutomationLane { track: Some(i), target: target.clone(), lane: Some(lane.clone()) }, Origin::User).is_err(),
+        "other track"
+    );
     let hidden = AutomationTarget::Builtin { device: id, device_type: "compressor".into(), param: "sidechainEnable".into() };
-    assert!(d.execute(Command::SetAutomationLane { track: Some(a), target: hidden.clone(), lane: Some(AutomationLane::new(hidden)) }, Origin::User).is_err(), "not automatable");
+    assert!(
+        d.execute(
+            Command::SetAutomationLane { track: Some(a), target: hidden.clone(), lane: Some(AutomationLane::new(hidden)) },
+            Origin::User
+        )
+        .is_err(),
+        "not automatable"
+    );
     let mut wrong = lane;
     wrong.points[0].value = 5000.0;
     assert!(d.execute(Command::SetAutomationLane { track: Some(a), target, lane: Some(wrong) }, Origin::User).is_err(), "out of range");
@@ -325,7 +362,12 @@ fn reverb_dials_follow_the_mode() {
     let shown = |mode: f32| {
         let mut d = def.instantiate();
         d.params.insert("mode2".into(), mode);
-        def.layout.clusters.iter().map(|c| c.iter().filter_map(|c| c.param()).filter(|p| def.is_shown(&d, p)).count()).filter(|n| *n > 0).collect::<Vec<_>>()
+        def.layout
+            .clusters
+            .iter()
+            .map(|c| c.iter().filter_map(|c| c.param()).filter(|p| def.is_shown(&d, p)).count())
+            .filter(|n| *n > 0)
+            .collect::<Vec<_>>()
     };
     assert_eq!(shown(1.0), [3, 3, 1], "Hall");
     assert_eq!(shown(4.0), [1, 2, 3, 1], "Shimmer");
@@ -362,12 +404,14 @@ fn echo_picture_follows_the_machine_model() {
     assert!((builtin::echo::picture(def, &cart, 120.0).heads[0].ms - builtin::echo::cartridge_ms(0.0)).abs() < 0.01);
     let mut synced = d.clone();
     synced.params.insert("sync".into(), 1.0);
-    let first = builtin::echo::picture(def, &synced, 120.0).heads.iter().filter(|h| h.on && h.pan <= 0.0).map(|h| h.ms).fold(f32::MAX, f32::min);
+    let first =
+        builtin::echo::picture(def, &synced, 120.0).heads.iter().filter(|h| h.on && h.pan <= 0.0).map(|h| h.ms).fold(f32::MAX, f32::min);
     assert!((first - 500.0).abs() < 0.5, "Note L 1/4 at 120 BPM: {first}");
     // A note slower than the motor allows still lands exactly (speed clamped before the scale).
     synced.params.insert("machine".into(), 1.0);
     synced.params.insert("note_l".into(), 0.0);
-    let slow = builtin::echo::picture(def, &synced, 60.0).heads.iter().filter(|h| h.on && h.pan <= 0.0).map(|h| h.ms).fold(f32::MAX, f32::min);
+    let slow =
+        builtin::echo::picture(def, &synced, 60.0).heads.iter().filter(|h| h.on && h.pan <= 0.0).map(|h| h.ms).fold(f32::MAX, f32::min);
     assert!((slow - 12000.0).abs() < 2.0, "Note L 2/1. at 60 BPM: {slow}");
 }
 
@@ -401,4 +445,3 @@ fn mix_lock_keeps_mix_across_presets() {
     assert_ne!(def.preset_load_values(&d, &preset)["mix"], 12.0);
     assert!(time_fx("echo").param("throw").unwrap().momentary);
 }
-

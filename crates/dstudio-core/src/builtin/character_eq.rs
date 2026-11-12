@@ -16,16 +16,30 @@ const BUTTERWORTH_Q: f32 = 0.7071;
 const OFF_ON: &[&str] = &["Off", "On"];
 const TYPES: &[&str] = &["Bell", "Low Shelf", "High Shelf", "High Pass", "Low Pass", "Notch", "Dual Low"];
 const SLOPES: &[&str] = &["6", "12", "18", "24", "36", "48"];
-const BANKS: &[&str] = &["Free", "Passive Valve", "Inductor Broad", "Transistor Desk", "Discrete Op-Amp", "Class A Bell", "Class A Shelf", "Inductor Fine", "Broadcast Fixed", "Passive Mid"];
+const BANKS: &[&str] = &[
+    "Free",
+    "Passive Valve",
+    "Inductor Broad",
+    "Transistor Desk",
+    "Discrete Op-Amp",
+    "Class A Bell",
+    "Class A Shelf",
+    "Inductor Fine",
+    "Broadcast Fixed",
+    "Passive Mid",
+];
 const WARMTH_SLOPES: &[&str] = &["6", "12"];
 const OVERSAMPLING: &[&str] = &["2x", "4x"];
 const LISTEN: &[&str] = &["Off", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
 
 const fn freq(id: &'static str, name: &'static str, default: f32) -> ParamDef {
-    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Linear { skew: 0.25 }, "Hz", Format::Freq).label("Freq").help("Centre or corner frequency.")
+    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Linear { skew: 0.25 }, "Hz", Format::Freq)
+        .label("Freq")
+        .help("Centre or corner frequency.")
 }
 const fn width(id: &'static str, name: &'static str, default: f32) -> ParamDef {
-    ParamDef::new(id, name, 0.1, 12.0, default, Taper::Linear { skew: 0.35 }, "", Format::Plain(2)).help("Width of a bell or notch; resonance of a shelf or pass filter.")
+    ParamDef::new(id, name, 0.1, 12.0, default, Taper::Linear { skew: 0.35 }, "", Format::Plain(2))
+        .help("Width of a bell or notch; resonance of a shelf or pass filter.")
 }
 const fn db(id: &'static str, name: &'static str, min: f32, max: f32, default: f32) -> ParamDef {
     ParamDef::new(id, name, min, max, default, LINEAR, "dB", Format::Db).step(0.1)
@@ -55,18 +69,162 @@ const fn band(n: &'static [&'static str; 11]) -> EqBand {
 
 static VIEW: EqView = EqView {
     bands: &[
-        band(&["band1_enabled", "band1_type", "band1_freq", "band1_gain", "band1_q", "band1_slope", "band1_propq", "band1_overshoot", "band1_low_atten", "band1_dyn", "band1_dyn_range"]),
-        band(&["band2_enabled", "band2_type", "band2_freq", "band2_gain", "band2_q", "band2_slope", "band2_propq", "band2_overshoot", "band2_low_atten", "band2_dyn", "band2_dyn_range"]),
-        band(&["band3_enabled", "band3_type", "band3_freq", "band3_gain", "band3_q", "band3_slope", "band3_propq", "band3_overshoot", "band3_low_atten", "band3_dyn", "band3_dyn_range"]),
-        band(&["band4_enabled", "band4_type", "band4_freq", "band4_gain", "band4_q", "band4_slope", "band4_propq", "band4_overshoot", "band4_low_atten", "band4_dyn", "band4_dyn_range"]),
-        band(&["band5_enabled", "band5_type", "band5_freq", "band5_gain", "band5_q", "band5_slope", "band5_propq", "band5_overshoot", "band5_low_atten", "band5_dyn", "band5_dyn_range"]),
-        band(&["band6_enabled", "band6_type", "band6_freq", "band6_gain", "band6_q", "band6_slope", "band6_propq", "band6_overshoot", "band6_low_atten", "band6_dyn", "band6_dyn_range"]),
-        band(&["band7_enabled", "band7_type", "band7_freq", "band7_gain", "band7_q", "band7_slope", "band7_propq", "band7_overshoot", "band7_low_atten", "band7_dyn", "band7_dyn_range"]),
-        band(&["band8_enabled", "band8_type", "band8_freq", "band8_gain", "band8_q", "band8_slope", "band8_propq", "band8_overshoot", "band8_low_atten", "band8_dyn", "band8_dyn_range"]),
-        band(&["band9_enabled", "band9_type", "band9_freq", "band9_gain", "band9_q", "band9_slope", "band9_propq", "band9_overshoot", "band9_low_atten", "band9_dyn", "band9_dyn_range"]),
-        band(&["band10_enabled", "band10_type", "band10_freq", "band10_gain", "band10_q", "band10_slope", "band10_propq", "band10_overshoot", "band10_low_atten", "band10_dyn", "band10_dyn_range"]),
-        band(&["band11_enabled", "band11_type", "band11_freq", "band11_gain", "band11_q", "band11_slope", "band11_propq", "band11_overshoot", "band11_low_atten", "band11_dyn", "band11_dyn_range"]),
-        band(&["band12_enabled", "band12_type", "band12_freq", "band12_gain", "band12_q", "band12_slope", "band12_propq", "band12_overshoot", "band12_low_atten", "band12_dyn", "band12_dyn_range"]),
+        band(&[
+            "band1_enabled",
+            "band1_type",
+            "band1_freq",
+            "band1_gain",
+            "band1_q",
+            "band1_slope",
+            "band1_propq",
+            "band1_overshoot",
+            "band1_low_atten",
+            "band1_dyn",
+            "band1_dyn_range",
+        ]),
+        band(&[
+            "band2_enabled",
+            "band2_type",
+            "band2_freq",
+            "band2_gain",
+            "band2_q",
+            "band2_slope",
+            "band2_propq",
+            "band2_overshoot",
+            "band2_low_atten",
+            "band2_dyn",
+            "band2_dyn_range",
+        ]),
+        band(&[
+            "band3_enabled",
+            "band3_type",
+            "band3_freq",
+            "band3_gain",
+            "band3_q",
+            "band3_slope",
+            "band3_propq",
+            "band3_overshoot",
+            "band3_low_atten",
+            "band3_dyn",
+            "band3_dyn_range",
+        ]),
+        band(&[
+            "band4_enabled",
+            "band4_type",
+            "band4_freq",
+            "band4_gain",
+            "band4_q",
+            "band4_slope",
+            "band4_propq",
+            "band4_overshoot",
+            "band4_low_atten",
+            "band4_dyn",
+            "band4_dyn_range",
+        ]),
+        band(&[
+            "band5_enabled",
+            "band5_type",
+            "band5_freq",
+            "band5_gain",
+            "band5_q",
+            "band5_slope",
+            "band5_propq",
+            "band5_overshoot",
+            "band5_low_atten",
+            "band5_dyn",
+            "band5_dyn_range",
+        ]),
+        band(&[
+            "band6_enabled",
+            "band6_type",
+            "band6_freq",
+            "band6_gain",
+            "band6_q",
+            "band6_slope",
+            "band6_propq",
+            "band6_overshoot",
+            "band6_low_atten",
+            "band6_dyn",
+            "band6_dyn_range",
+        ]),
+        band(&[
+            "band7_enabled",
+            "band7_type",
+            "band7_freq",
+            "band7_gain",
+            "band7_q",
+            "band7_slope",
+            "band7_propq",
+            "band7_overshoot",
+            "band7_low_atten",
+            "band7_dyn",
+            "band7_dyn_range",
+        ]),
+        band(&[
+            "band8_enabled",
+            "band8_type",
+            "band8_freq",
+            "band8_gain",
+            "band8_q",
+            "band8_slope",
+            "band8_propq",
+            "band8_overshoot",
+            "band8_low_atten",
+            "band8_dyn",
+            "band8_dyn_range",
+        ]),
+        band(&[
+            "band9_enabled",
+            "band9_type",
+            "band9_freq",
+            "band9_gain",
+            "band9_q",
+            "band9_slope",
+            "band9_propq",
+            "band9_overshoot",
+            "band9_low_atten",
+            "band9_dyn",
+            "band9_dyn_range",
+        ]),
+        band(&[
+            "band10_enabled",
+            "band10_type",
+            "band10_freq",
+            "band10_gain",
+            "band10_q",
+            "band10_slope",
+            "band10_propq",
+            "band10_overshoot",
+            "band10_low_atten",
+            "band10_dyn",
+            "band10_dyn_range",
+        ]),
+        band(&[
+            "band11_enabled",
+            "band11_type",
+            "band11_freq",
+            "band11_gain",
+            "band11_q",
+            "band11_slope",
+            "band11_propq",
+            "band11_overshoot",
+            "band11_low_atten",
+            "band11_dyn",
+            "band11_dyn_range",
+        ]),
+        band(&[
+            "band12_enabled",
+            "band12_type",
+            "band12_freq",
+            "band12_gain",
+            "band12_q",
+            "band12_slope",
+            "band12_propq",
+            "band12_overshoot",
+            "band12_low_atten",
+            "band12_dyn",
+            "band12_dyn_range",
+        ]),
     ],
     shapes: &[Shape::Bell, Shape::LowShelf, Shape::HighShelf, Shape::HighPass, Shape::LowPass, Shape::Notch, Shape::DualLow],
     picker_order: &[Shape::HighPass, Shape::LowShelf, Shape::DualLow, Shape::Bell, Shape::Notch, Shape::HighShelf, Shape::LowPass],
@@ -99,120 +257,208 @@ pub static CHARACTER_EQ: DeviceDef = DeviceDef {
         freq("band1_freq", "B1 Freq", 1000.0),
         db("band1_gain", "B1 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band1_q", "B1 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band1_slope", "B1 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band1_slope", "B1 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band1_propq", "B1 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band1_overshoot", "B1 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band1_low_atten", "B1 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band1_overshoot", "B1 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band1_low_atten", "B1 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band2_enabled", "B2 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band2_type", "B2 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band2_freq", "B2 Freq", 1000.0),
         db("band2_gain", "B2 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band2_q", "B2 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band2_slope", "B2 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band2_slope", "B2 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band2_propq", "B2 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band2_overshoot", "B2 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band2_low_atten", "B2 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band2_overshoot", "B2 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band2_low_atten", "B2 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band3_enabled", "B3 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band3_type", "B3 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band3_freq", "B3 Freq", 1000.0),
         db("band3_gain", "B3 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band3_q", "B3 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band3_slope", "B3 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band3_slope", "B3 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band3_propq", "B3 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band3_overshoot", "B3 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band3_low_atten", "B3 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band3_overshoot", "B3 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band3_low_atten", "B3 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band4_enabled", "B4 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band4_type", "B4 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band4_freq", "B4 Freq", 1000.0),
         db("band4_gain", "B4 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band4_q", "B4 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band4_slope", "B4 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band4_slope", "B4 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band4_propq", "B4 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band4_overshoot", "B4 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band4_low_atten", "B4 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band4_overshoot", "B4 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band4_low_atten", "B4 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band5_enabled", "B5 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band5_type", "B5 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band5_freq", "B5 Freq", 1000.0),
         db("band5_gain", "B5 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band5_q", "B5 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band5_slope", "B5 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band5_slope", "B5 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band5_propq", "B5 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band5_overshoot", "B5 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band5_low_atten", "B5 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band5_overshoot", "B5 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band5_low_atten", "B5 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band6_enabled", "B6 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band6_type", "B6 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band6_freq", "B6 Freq", 1000.0),
         db("band6_gain", "B6 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band6_q", "B6 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band6_slope", "B6 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band6_slope", "B6 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band6_propq", "B6 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band6_overshoot", "B6 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band6_low_atten", "B6 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band6_overshoot", "B6 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band6_low_atten", "B6 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band7_enabled", "B7 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band7_type", "B7 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band7_freq", "B7 Freq", 1000.0),
         db("band7_gain", "B7 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band7_q", "B7 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band7_slope", "B7 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band7_slope", "B7 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band7_propq", "B7 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band7_overshoot", "B7 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band7_low_atten", "B7 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band7_overshoot", "B7 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band7_low_atten", "B7 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band8_enabled", "B8 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band8_type", "B8 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band8_freq", "B8 Freq", 1000.0),
         db("band8_gain", "B8 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band8_q", "B8 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band8_slope", "B8 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band8_slope", "B8 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band8_propq", "B8 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band8_overshoot", "B8 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band8_low_atten", "B8 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band8_overshoot", "B8 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band8_low_atten", "B8 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band9_enabled", "B9 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band9_type", "B9 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band9_freq", "B9 Freq", 1000.0),
         db("band9_gain", "B9 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band9_q", "B9 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band9_slope", "B9 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band9_slope", "B9 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band9_propq", "B9 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band9_overshoot", "B9 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band9_low_atten", "B9 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band9_overshoot", "B9 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band9_low_atten", "B9 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band10_enabled", "B10 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band10_type", "B10 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band10_freq", "B10 Freq", 1000.0),
         db("band10_gain", "B10 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band10_q", "B10 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band10_slope", "B10 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band10_slope", "B10 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band10_propq", "B10 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band10_overshoot", "B10 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band10_low_atten", "B10 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band10_overshoot", "B10 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band10_low_atten", "B10 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band11_enabled", "B11 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band11_type", "B11 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band11_freq", "B11 Freq", 1000.0),
         db("band11_gain", "B11 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band11_q", "B11 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band11_slope", "B11 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band11_slope", "B11 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band11_propq", "B11 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band11_overshoot", "B11 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band11_low_atten", "B11 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        pct("band11_overshoot", "B11 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band11_low_atten", "B11 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
         ParamDef::choice("band12_enabled", "B12 Enabled", OFF_ON, 0).label("On").help("Switches the band in or out."),
         ParamDef::choice("band12_type", "B12 Type", TYPES, 0).label("Type").help("Filter shape of the band."),
         freq("band12_freq", "B12 Freq", 1000.0),
         db("band12_gain", "B12 Gain", -24.0, 24.0, 0.0).label("Gain").help("Boost or cut of the band; for Dual Low, the low boost."),
         width("band12_q", "B12 Q", BUTTERWORTH_Q).label("Q"),
-        ParamDef::choice("band12_slope", "B12 Slope", SLOPES, 1).label("Slope").help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
+        ParamDef::choice("band12_slope", "B12 Slope", SLOPES, 1)
+            .label("Slope")
+            .help("Steepness of a pass filter (6 to 48 dB/oct) or a shelf (6 to 24 dB/oct)."),
         ParamDef::choice("band12_propq", "B12 PropQ", OFF_ON, 0).label("PropQ").help("Narrows a bell as its gain grows."),
-        pct("band12_overshoot", "B12 Overshoot", 0.0).label("Overshoot").help("Shelves dip back past their corner; pass filters bump at the cutoff."),
-        ParamDef::new("band12_low_atten", "B12 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1)).step(0.1).label("Cut").help("Dual Low: how far the lowest lows are cut while the band boosts."),
-        ParamDef::choice("bank", "Bank", BANKS, 0).help("Voicing and frequency steps of a classic EQ design; Free is unstepped and neutral."),
+        pct("band12_overshoot", "B12 Overshoot", 0.0)
+            .label("Overshoot")
+            .help("Shelves dip back past their corner; pass filters bump at the cutoff."),
+        ParamDef::new("band12_low_atten", "B12 Low Atten", 0.0, 18.0, 0.0, LINEAR, "dB", Format::Plain(1))
+            .step(0.1)
+            .label("Cut")
+            .help("Dual Low: how far the lowest lows are cut while the band boosts."),
+        ParamDef::choice("bank", "Bank", BANKS, 0)
+            .help("Voicing and frequency steps of a classic EQ design; Free is unstepped and neutral."),
         pct("warmth_amount", "Warmth", 0.0).help("Gentle saturation of the low end below the Warmth Tail."),
         ParamDef::choice("warmth_slope", "Warmth Slope", WARMTH_SLOPES, 1).help("Steepness of the split below which Warmth works."),
-        ParamDef::new("warmth_tail", "Warmth Tail", 100.0, 1200.0, 300.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Freq).help("Frequency below which Warmth works."),
+        ParamDef::new("warmth_tail", "Warmth Tail", 100.0, 1200.0, 300.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Freq)
+            .help("Frequency below which Warmth works."),
         ParamDef::choice("valve_enabled", "Valve", OFF_ON, 0).help("Runs the output through a valve stage (oversampled)."),
-        ParamDef::new("valve_trim", "Valve Trim", 0.0, 2.0, 1.0, LINEAR, "", Format::Plain(2)).help("Level into the valve stage: more trim, more harmonics."),
+        ParamDef::new("valve_trim", "Valve Trim", 0.0, 2.0, 1.0, LINEAR, "", Format::Plain(2))
+            .help("Level into the valve stage: more trim, more harmonics."),
         pct("valve_mix", "Valve Mix", 100.0).help("Blend of the valve stage with the clean signal."),
         ParamDef::choice("oversampling", "Oversampling", OVERSAMPLING, 0).help("Oversampling of the valve stage."),
         db("output_trim", "Output", -24.0, 24.0, 0.0).help("Level after the EQ."),
         ParamDef::choice("bypass", "Bypass", OFF_ON, 0).not_automatable().help("Passes the signal through unchanged (latency kept)."),
-        ParamDef::choice("auto_gain", "Auto Gain", OFF_ON, 0).help("Levels the output so the EQ's average boost or cut does not change loudness."),
+        ParamDef::choice("auto_gain", "Auto Gain", OFF_ON, 0)
+            .help("Levels the output so the EQ's average boost or cut does not change loudness."),
         ParamDef::choice("band1_dyn", "B1 Dyn", OFF_ON, 0).help("Makes the band react to the level in its region."),
         db("band1_dyn_range", "B1 Dyn Range", -24.0, 24.0, 0.0).help("Gain the band adds at full reaction (negative = dynamic cut)."),
         ParamDef::choice("band1_dyn_auto", "B1 Dyn Auto", OFF_ON, 1).help("Threshold follows the band's average level."),
@@ -315,7 +561,10 @@ pub static CHARACTER_EQ: DeviceDef = DeviceDef {
         pct("band10_drive", "B10 Drive", 0.0).help("Saturates what the band adds, for harmonics in its region."),
         pct("band11_drive", "B11 Drive", 0.0).help("Saturates what the band adds, for harmonics in its region."),
         pct("band12_drive", "B12 Drive", 0.0).help("Saturates what the band adds, for harmonics in its region."),
-        ParamDef::choice("listen_band", "Listen Band", LISTEN, 0).not_automatable().reset_on_load().help("Solos the region one band works on."),
+        ParamDef::choice("listen_band", "Listen Band", LISTEN, 0)
+            .not_automatable()
+            .reset_on_load()
+            .help("Solos the region one band works on."),
     ],
     layout: Layout {
         picker: &[],
@@ -329,23 +578,237 @@ pub static CHARACTER_EQ: DeviceDef = DeviceDef {
         ..Layout::EMPTY
     },
     factory: &[
-        FactoryPreset { name: "Clean Lift", values: &[("band1_enabled", 1.0), ("band1_type", 0.0), ("band1_freq", 250.0), ("band1_gain", -1.5), ("band1_q", 1.0), ("band2_enabled", 1.0), ("band2_type", 2.0), ("band2_freq", 10_000.0), ("band2_gain", 2.0), ("band2_q", 0.7)] },
-        FactoryPreset { name: "Low Bump and Dip", values: &[("bank", 1.0), ("band1_enabled", 1.0), ("band1_type", 6.0), ("band1_freq", 60.0), ("band1_gain", 6.0), ("band1_low_atten", 4.0), ("band1_q", BUTTERWORTH_Q)] },
-        FactoryPreset { name: "Presence Push", values: &[("band1_enabled", 1.0), ("band1_type", 3.0), ("band1_freq", 80.0), ("band1_slope", 3.0), ("band2_enabled", 1.0), ("band2_freq", 2800.0), ("band2_gain", 2.5), ("band2_q", 1.2)] },
-        FactoryPreset { name: "Sibilance Soften", values: &[("band1_enabled", 1.0), ("band1_freq", 6500.0), ("band1_q", 3.0), ("band1_dyn", 1.0), ("band1_dyn_range", -6.0), ("band1_dyn_attack", 2.0), ("band1_dyn_release", 80.0)] },
-        FactoryPreset { name: "Warm Console", values: &[("bank", 3.0), ("warmth_amount", 30.0), ("band1_enabled", 1.0), ("band1_type", 1.0), ("band1_freq", 120.0), ("band1_gain", 1.5), ("band2_enabled", 1.0), ("band2_type", 2.0), ("band2_freq", 8000.0), ("band2_gain", 1.5)] },
-        FactoryPreset { name: "Valve Glow", values: &[("valve_enabled", 1.0), ("valve_trim", 1.2), ("valve_mix", 60.0), ("band1_enabled", 1.0), ("band1_freq", 3000.0), ("band1_gain", 1.0), ("band1_q", 0.8)] },
-        FactoryPreset { name: "Iron Bass", values: &[("bank", 2.0), ("band1_enabled", 1.0), ("band1_type", 1.0), ("band1_freq", 60.0), ("band1_gain", 3.0), ("band1_overshoot", 25.0), ("band2_enabled", 1.0), ("band2_freq", 700.0), ("band2_gain", -2.0), ("band2_q", 1.2)] },
-        FactoryPreset { name: "Tight Kick", values: &[("band1_enabled", 1.0), ("band1_type", 3.0), ("band1_freq", 30.0), ("band1_slope", 3.0), ("band2_enabled", 1.0), ("band2_freq", 65.0), ("band2_gain", 3.0), ("band2_q", 1.3), ("band3_enabled", 1.0), ("band3_freq", 420.0), ("band3_gain", -3.0), ("band3_q", 1.5), ("output_trim", -1.5)] },
-        FactoryPreset { name: "Bright Snare", values: &[("band1_enabled", 1.0), ("band1_freq", 220.0), ("band1_gain", 2.0), ("band1_q", 1.2), ("band2_enabled", 1.0), ("band2_type", 2.0), ("band2_freq", 6000.0), ("band2_gain", 3.0), ("band2_overshoot", 15.0), ("output_trim", -1.0)] },
-        FactoryPreset { name: "Guitar Carve", values: &[("band1_enabled", 1.0), ("band1_type", 3.0), ("band1_freq", 100.0), ("band1_slope", 2.0), ("band2_enabled", 1.0), ("band2_freq", 400.0), ("band2_gain", -2.5), ("band2_q", 1.4), ("band3_enabled", 1.0), ("band3_freq", 3200.0), ("band3_gain", 2.0), ("band3_q", 1.0)] },
-        FactoryPreset { name: "Keys Space", values: &[("band1_enabled", 1.0), ("band1_type", 3.0), ("band1_freq", 70.0), ("band2_enabled", 1.0), ("band2_freq", 500.0), ("band2_gain", -2.0), ("band2_q", 1.0), ("band3_enabled", 1.0), ("band3_type", 2.0), ("band3_freq", 11_000.0), ("band3_gain", 1.5), ("band3_q", 0.7)] },
-        FactoryPreset { name: "Mix Bus Sweeten", values: &[("auto_gain", 1.0), ("warmth_amount", 15.0), ("band1_enabled", 1.0), ("band1_type", 1.0), ("band1_freq", 60.0), ("band1_gain", 1.0), ("band2_enabled", 1.0), ("band2_type", 2.0), ("band2_freq", 14_000.0), ("band2_gain", 1.5), ("band2_overshoot", 10.0)] },
-        FactoryPreset { name: "Resonance Tamer", values: &[("tame_enabled", 1.0), ("tame_amount", 60.0), ("tame2_enabled", 1.0), ("tame2_freq", 2500.0), ("tame2_q", 2.0), ("tame3_enabled", 1.0), ("tame3_freq", 4500.0), ("tame3_q", 2.0)] },
-        FactoryPreset { name: "Broadcast Desk", values: &[("bank", 8.0), ("band1_enabled", 1.0), ("band1_type", 3.0), ("band1_freq", 80.0), ("band1_slope", 3.0), ("band2_enabled", 1.0), ("band2_freq", 2500.0), ("band2_gain", 2.0), ("band2_q", 1.0)] },
-        FactoryPreset { name: "Mid Honk Fix", values: &[("bank", 9.0), ("band1_enabled", 1.0), ("band1_freq", 1000.0), ("band1_gain", -3.0), ("band1_q", 1.0)] },
-        FactoryPreset { name: "Phone Speaker", values: &[("band1_enabled", 1.0), ("band1_type", 3.0), ("band1_freq", 350.0), ("band1_slope", 3.0), ("band2_enabled", 1.0), ("band2_type", 4.0), ("band2_freq", 3500.0), ("band2_slope", 3.0), ("band3_enabled", 1.0), ("band3_freq", 1500.0), ("band3_gain", 4.0), ("band3_q", 1.2), ("band3_drive", 20.0), ("output_trim", 2.0)] },
-        FactoryPreset { name: "Dynamic Mud Control", values: &[("band1_enabled", 1.0), ("band1_freq", 300.0), ("band1_q", 1.2), ("band1_dyn", 1.0), ("band1_dyn_range", -5.0)] },
+        FactoryPreset {
+            name: "Clean Lift",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_type", 0.0),
+                ("band1_freq", 250.0),
+                ("band1_gain", -1.5),
+                ("band1_q", 1.0),
+                ("band2_enabled", 1.0),
+                ("band2_type", 2.0),
+                ("band2_freq", 10_000.0),
+                ("band2_gain", 2.0),
+                ("band2_q", 0.7),
+            ],
+        },
+        FactoryPreset {
+            name: "Low Bump and Dip",
+            values: &[
+                ("bank", 1.0),
+                ("band1_enabled", 1.0),
+                ("band1_type", 6.0),
+                ("band1_freq", 60.0),
+                ("band1_gain", 6.0),
+                ("band1_low_atten", 4.0),
+                ("band1_q", BUTTERWORTH_Q),
+            ],
+        },
+        FactoryPreset {
+            name: "Presence Push",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_type", 3.0),
+                ("band1_freq", 80.0),
+                ("band1_slope", 3.0),
+                ("band2_enabled", 1.0),
+                ("band2_freq", 2800.0),
+                ("band2_gain", 2.5),
+                ("band2_q", 1.2),
+            ],
+        },
+        FactoryPreset {
+            name: "Sibilance Soften",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_freq", 6500.0),
+                ("band1_q", 3.0),
+                ("band1_dyn", 1.0),
+                ("band1_dyn_range", -6.0),
+                ("band1_dyn_attack", 2.0),
+                ("band1_dyn_release", 80.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Warm Console",
+            values: &[
+                ("bank", 3.0),
+                ("warmth_amount", 30.0),
+                ("band1_enabled", 1.0),
+                ("band1_type", 1.0),
+                ("band1_freq", 120.0),
+                ("band1_gain", 1.5),
+                ("band2_enabled", 1.0),
+                ("band2_type", 2.0),
+                ("band2_freq", 8000.0),
+                ("band2_gain", 1.5),
+            ],
+        },
+        FactoryPreset {
+            name: "Valve Glow",
+            values: &[
+                ("valve_enabled", 1.0),
+                ("valve_trim", 1.2),
+                ("valve_mix", 60.0),
+                ("band1_enabled", 1.0),
+                ("band1_freq", 3000.0),
+                ("band1_gain", 1.0),
+                ("band1_q", 0.8),
+            ],
+        },
+        FactoryPreset {
+            name: "Iron Bass",
+            values: &[
+                ("bank", 2.0),
+                ("band1_enabled", 1.0),
+                ("band1_type", 1.0),
+                ("band1_freq", 60.0),
+                ("band1_gain", 3.0),
+                ("band1_overshoot", 25.0),
+                ("band2_enabled", 1.0),
+                ("band2_freq", 700.0),
+                ("band2_gain", -2.0),
+                ("band2_q", 1.2),
+            ],
+        },
+        FactoryPreset {
+            name: "Tight Kick",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_type", 3.0),
+                ("band1_freq", 30.0),
+                ("band1_slope", 3.0),
+                ("band2_enabled", 1.0),
+                ("band2_freq", 65.0),
+                ("band2_gain", 3.0),
+                ("band2_q", 1.3),
+                ("band3_enabled", 1.0),
+                ("band3_freq", 420.0),
+                ("band3_gain", -3.0),
+                ("band3_q", 1.5),
+                ("output_trim", -1.5),
+            ],
+        },
+        FactoryPreset {
+            name: "Bright Snare",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_freq", 220.0),
+                ("band1_gain", 2.0),
+                ("band1_q", 1.2),
+                ("band2_enabled", 1.0),
+                ("band2_type", 2.0),
+                ("band2_freq", 6000.0),
+                ("band2_gain", 3.0),
+                ("band2_overshoot", 15.0),
+                ("output_trim", -1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Guitar Carve",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_type", 3.0),
+                ("band1_freq", 100.0),
+                ("band1_slope", 2.0),
+                ("band2_enabled", 1.0),
+                ("band2_freq", 400.0),
+                ("band2_gain", -2.5),
+                ("band2_q", 1.4),
+                ("band3_enabled", 1.0),
+                ("band3_freq", 3200.0),
+                ("band3_gain", 2.0),
+                ("band3_q", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Keys Space",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_type", 3.0),
+                ("band1_freq", 70.0),
+                ("band2_enabled", 1.0),
+                ("band2_freq", 500.0),
+                ("band2_gain", -2.0),
+                ("band2_q", 1.0),
+                ("band3_enabled", 1.0),
+                ("band3_type", 2.0),
+                ("band3_freq", 11_000.0),
+                ("band3_gain", 1.5),
+                ("band3_q", 0.7),
+            ],
+        },
+        FactoryPreset {
+            name: "Mix Bus Sweeten",
+            values: &[
+                ("auto_gain", 1.0),
+                ("warmth_amount", 15.0),
+                ("band1_enabled", 1.0),
+                ("band1_type", 1.0),
+                ("band1_freq", 60.0),
+                ("band1_gain", 1.0),
+                ("band2_enabled", 1.0),
+                ("band2_type", 2.0),
+                ("band2_freq", 14_000.0),
+                ("band2_gain", 1.5),
+                ("band2_overshoot", 10.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Resonance Tamer",
+            values: &[
+                ("tame_enabled", 1.0),
+                ("tame_amount", 60.0),
+                ("tame2_enabled", 1.0),
+                ("tame2_freq", 2500.0),
+                ("tame2_q", 2.0),
+                ("tame3_enabled", 1.0),
+                ("tame3_freq", 4500.0),
+                ("tame3_q", 2.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Broadcast Desk",
+            values: &[
+                ("bank", 8.0),
+                ("band1_enabled", 1.0),
+                ("band1_type", 3.0),
+                ("band1_freq", 80.0),
+                ("band1_slope", 3.0),
+                ("band2_enabled", 1.0),
+                ("band2_freq", 2500.0),
+                ("band2_gain", 2.0),
+                ("band2_q", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Mid Honk Fix",
+            values: &[("bank", 9.0), ("band1_enabled", 1.0), ("band1_freq", 1000.0), ("band1_gain", -3.0), ("band1_q", 1.0)],
+        },
+        FactoryPreset {
+            name: "Phone Speaker",
+            values: &[
+                ("band1_enabled", 1.0),
+                ("band1_type", 3.0),
+                ("band1_freq", 350.0),
+                ("band1_slope", 3.0),
+                ("band2_enabled", 1.0),
+                ("band2_type", 4.0),
+                ("band2_freq", 3500.0),
+                ("band2_slope", 3.0),
+                ("band3_enabled", 1.0),
+                ("band3_freq", 1500.0),
+                ("band3_gain", 4.0),
+                ("band3_q", 1.2),
+                ("band3_drive", 20.0),
+                ("output_trim", 2.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Dynamic Mud Control",
+            values: &[("band1_enabled", 1.0), ("band1_freq", 300.0), ("band1_q", 1.2), ("band1_dyn", 1.0), ("band1_dyn_range", -5.0)],
+        },
     ],
     sidechain: false,
 };

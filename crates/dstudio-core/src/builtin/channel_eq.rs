@@ -13,13 +13,17 @@ const SLOPES: &[&str] = &["12 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct"];
 const LISTEN: &[&str] = &["Off", "Band 1", "Band 2", "Band 3", "Band 4", "Band 5", "Band 6", "Band 7", "Band 8"];
 
 const fn freq(id: &'static str, name: &'static str, default: f32) -> ParamDef {
-    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Log, "Hz", Format::Freq).label("Freq").help("Centre or corner frequency of the band.")
+    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Log, "Hz", Format::Freq)
+        .label("Freq")
+        .help("Centre or corner frequency of the band.")
 }
 const fn gain(id: &'static str, name: &'static str) -> ParamDef {
     ParamDef::new(id, name, -48.0, 30.0, 0.0, LINEAR, "dB", Format::Db).label("Gain").help("Boost or cut of the band (bells and shelves).")
 }
 const fn q(id: &'static str, name: &'static str, default: f32) -> ParamDef {
-    ParamDef::new(id, name, 0.1, 20.0, default, Taper::Log, "", Format::Plain(2)).label("Q").help("Width of a bell or notch; resonance of a shelf or pass filter.")
+    ParamDef::new(id, name, 0.1, 20.0, default, Taper::Log, "", Format::Plain(2))
+        .label("Q")
+        .help("Width of a bell or notch; resonance of a shelf or pass filter.")
 }
 const fn on(id: &'static str, name: &'static str, default: u32) -> ParamDef {
     ParamDef::choice(id, name, OFF_ON, default).label("On").help("Switches the band in or out.")
@@ -112,7 +116,9 @@ pub static CHANNEL_EQ: DeviceDef = DeviceDef {
         kind("band7_type", "LP Type", 5),
         ParamDef::choice("hp_slope", "HP Slope", SLOPES, 0).label("Slope").help("Steepness of every high-pass band."),
         ParamDef::choice("lp_slope", "LP Slope", SLOPES, 0).label("Slope").help("Steepness of every low-pass band."),
-        ParamDef::choice("listen", "Listen", LISTEN, 0).reset_on_load().help("Solos the region one band works on, to find what to cut or boost."),
+        ParamDef::choice("listen", "Listen", LISTEN, 0)
+            .reset_on_load()
+            .help("Solos the region one band works on, to find what to cut or boost."),
     ],
     layout: Layout {
         picker: &[],
@@ -127,17 +133,108 @@ pub static CHANNEL_EQ: DeviceDef = DeviceDef {
     },
     factory: &[
         FactoryPreset { name: "Rumble Guard", values: &[("band0_enabled", 1.0), ("band0_freq", 60.0), ("hp_slope", 1.0)] },
-        FactoryPreset { name: "Mud Scoop", values: &[("band3_freq", 280.0), ("band3_gain2", -3.5), ("band3_q", 1.1), ("output_gain", 1.0)] },
+        FactoryPreset {
+            name: "Mud Scoop",
+            values: &[("band3_freq", 280.0), ("band3_gain2", -3.5), ("band3_q", 1.1), ("output_gain", 1.0)],
+        },
         FactoryPreset { name: "Nasal Dip", values: &[("band4_freq", 900.0), ("band4_gain2", -3.0), ("band4_q", 2.0)] },
         FactoryPreset { name: "Sheen", values: &[("band6_freq", 9000.0), ("band6_gain2", 3.0), ("band6_q", 0.8), ("output_gain", -0.5)] },
-        FactoryPreset { name: "Dialog Clean", values: &[("band0_enabled", 1.0), ("band0_freq", 100.0), ("band3_freq", 220.0), ("band3_gain2", -2.0), ("band3_q", 1.4), ("band5_freq", 3200.0), ("band5_gain2", 2.0), ("band5_q", 1.0)] },
-        FactoryPreset { name: "Kick Weight", values: &[("band2_freq", 55.0), ("band2_gain2", 3.5), ("band2_q", 1.4), ("band4_freq", 350.0), ("band4_gain2", -3.0), ("band4_q", 1.6), ("band5_freq", 3500.0), ("band5_gain2", 2.0), ("band5_q", 1.2), ("output_gain", -1.0)] },
-        FactoryPreset { name: "Snare Body", values: &[("band3_freq", 180.0), ("band3_gain2", 2.5), ("band3_q", 1.2), ("band5_freq", 5000.0), ("band5_gain2", 2.0), ("band5_q", 1.0), ("output_gain", -1.0)] },
-        FactoryPreset { name: "Bass Focus", values: &[("band0_enabled", 1.0), ("band0_freq", 30.0), ("hp_slope", 1.0), ("band1_freq", 90.0), ("band1_gain2", 2.0), ("band1_q", 0.8), ("band3_freq", 300.0), ("band3_gain2", -2.5), ("band3_q", 1.2)] },
-        FactoryPreset { name: "Lo-Fi Band", values: &[("band0_enabled", 1.0), ("band0_freq", 500.0), ("hp_slope", 1.0), ("band7_enabled", 1.0), ("band7_freq", 2800.0), ("lp_slope", 1.0), ("band4_freq", 1200.0), ("band4_gain2", 3.0), ("band4_q", 0.9), ("output_gain", 2.0)] },
+        FactoryPreset {
+            name: "Dialog Clean",
+            values: &[
+                ("band0_enabled", 1.0),
+                ("band0_freq", 100.0),
+                ("band3_freq", 220.0),
+                ("band3_gain2", -2.0),
+                ("band3_q", 1.4),
+                ("band5_freq", 3200.0),
+                ("band5_gain2", 2.0),
+                ("band5_q", 1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Kick Weight",
+            values: &[
+                ("band2_freq", 55.0),
+                ("band2_gain2", 3.5),
+                ("band2_q", 1.4),
+                ("band4_freq", 350.0),
+                ("band4_gain2", -3.0),
+                ("band4_q", 1.6),
+                ("band5_freq", 3500.0),
+                ("band5_gain2", 2.0),
+                ("band5_q", 1.2),
+                ("output_gain", -1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Snare Body",
+            values: &[
+                ("band3_freq", 180.0),
+                ("band3_gain2", 2.5),
+                ("band3_q", 1.2),
+                ("band5_freq", 5000.0),
+                ("band5_gain2", 2.0),
+                ("band5_q", 1.0),
+                ("output_gain", -1.0),
+            ],
+        },
+        FactoryPreset {
+            name: "Bass Focus",
+            values: &[
+                ("band0_enabled", 1.0),
+                ("band0_freq", 30.0),
+                ("hp_slope", 1.0),
+                ("band1_freq", 90.0),
+                ("band1_gain2", 2.0),
+                ("band1_q", 0.8),
+                ("band3_freq", 300.0),
+                ("band3_gain2", -2.5),
+                ("band3_q", 1.2),
+            ],
+        },
+        FactoryPreset {
+            name: "Lo-Fi Band",
+            values: &[
+                ("band0_enabled", 1.0),
+                ("band0_freq", 500.0),
+                ("hp_slope", 1.0),
+                ("band7_enabled", 1.0),
+                ("band7_freq", 2800.0),
+                ("lp_slope", 1.0),
+                ("band4_freq", 1200.0),
+                ("band4_gain2", 3.0),
+                ("band4_q", 0.9),
+                ("output_gain", 2.0),
+            ],
+        },
         FactoryPreset { name: "Air Lift", values: &[("band6_freq", 12_000.0), ("band6_gain2", 3.5), ("band6_q", 0.7)] },
-        FactoryPreset { name: "Tilt Dark", values: &[("band1_freq", 150.0), ("band1_gain2", 2.0), ("band1_q", 0.7), ("band6_freq", 4000.0), ("band6_gain2", -3.0), ("band6_q", 0.7)] },
-        FactoryPreset { name: "Gentle Smile", values: &[("band1_freq", 80.0), ("band1_gain2", 2.5), ("band1_q", 0.7), ("band4_freq", 1000.0), ("band4_gain2", -1.0), ("band4_q", 0.6), ("band6_freq", 10_000.0), ("band6_gain2", 2.5), ("band6_q", 0.7), ("output_gain", -1.5)] },
+        FactoryPreset {
+            name: "Tilt Dark",
+            values: &[
+                ("band1_freq", 150.0),
+                ("band1_gain2", 2.0),
+                ("band1_q", 0.7),
+                ("band6_freq", 4000.0),
+                ("band6_gain2", -3.0),
+                ("band6_q", 0.7),
+            ],
+        },
+        FactoryPreset {
+            name: "Gentle Smile",
+            values: &[
+                ("band1_freq", 80.0),
+                ("band1_gain2", 2.5),
+                ("band1_q", 0.7),
+                ("band4_freq", 1000.0),
+                ("band4_gain2", -1.0),
+                ("band4_q", 0.6),
+                ("band6_freq", 10_000.0),
+                ("band6_gain2", 2.5),
+                ("band6_q", 0.7),
+                ("output_gain", -1.5),
+            ],
+        },
     ],
     sidechain: false,
 };

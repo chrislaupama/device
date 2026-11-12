@@ -54,13 +54,26 @@ struct Rig {
 
 impl Rig {
     fn new(project: Project) -> Self {
-        Rig { engine: Engine::new(Config { sample_rate: 48_000.0, max_block_size: 512 }).unwrap(), doc: Document::new(project), map: HashMap::new() }
+        Rig {
+            engine: Engine::new(Config { sample_rate: 48_000.0, max_block_size: 512 }).unwrap(),
+            doc: Document::new(project),
+            map: HashMap::new(),
+        }
     }
     fn import(&mut self, path: &Path) -> AssetId {
         let info = self.engine.load_file(path).unwrap();
         self.doc
             .execute(
-                Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: path.to_string_lossy().into(), sample_rate: 48_000.0, channels: 2, frames: info.frames } },
+                Command::AddAsset {
+                    asset: Asset {
+                        id: AssetId(0),
+                        relative_path: None,
+                        absolute_path: path.to_string_lossy().into(),
+                        sample_rate: 48_000.0,
+                        channels: 2,
+                        frames: info.frames,
+                    },
+                },
                 Origin::User,
             )
             .unwrap();
@@ -101,7 +114,26 @@ fn clap_gain_from_the_model_halves_the_signal_and_survives_undo_and_persist() {
     let mut rig = Rig::new(Project::default());
     let asset = rig.import(&wav);
     let track = rig.doc.project().tracks[0].id;
-    rig.doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 9600, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } }, Origin::User).unwrap();
+    rig.doc
+        .execute(
+            Command::AddClip {
+                track,
+                clip: Clip {
+                    id: ClipId(0),
+                    asset,
+                    name: "dc".into(),
+                    start: 0,
+                    source_offset: 0,
+                    source_length: 9600,
+                    gain: 1.0,
+                    warp: Default::default(),
+                    disabled: false,
+                    clip_loop: None,
+                },
+            },
+            Origin::User,
+        )
+        .unwrap();
     rig.publish();
     let dry = rig.render_left(4800);
     assert!((dry[100] - 0.5 * PAN_C).abs() < 1e-4, "dry {}", dry[100]);
@@ -253,8 +285,18 @@ fn scanner_searches_custom_folders() {
     let cache = cache_dir.path().join("plugins.json");
     let missing = custom.path().join("not-there");
     let report = dstudio_engine::scan_plugins_in(&cache, false, &[missing, custom.path().to_path_buf()], &mut |_| {}).unwrap();
-    let found = |r: &dstudio_engine::ScanReport| r.plugins.iter().any(|p| p.plugin.id == "studio.dstudio.test.gain" && p.plugin.path.as_deref().is_some_and(|q| std::path::Path::new(q).starts_with(custom.path())));
-    assert!(found(&report), "gain plugin from {} not found: {:?}", bundle.display(), report.plugins.iter().map(|p| &p.plugin.path).collect::<Vec<_>>());
+    let found = |r: &dstudio_engine::ScanReport| {
+        r.plugins.iter().any(|p| {
+            p.plugin.id == "studio.dstudio.test.gain"
+                && p.plugin.path.as_deref().is_some_and(|q| std::path::Path::new(q).starts_with(custom.path()))
+        })
+    };
+    assert!(
+        found(&report),
+        "gain plugin from {} not found: {:?}",
+        bundle.display(),
+        report.plugins.iter().map(|p| &p.plugin.path).collect::<Vec<_>>()
+    );
     // Without the folder, a check for new plugins drops what it held.
     let again = dstudio_engine::scan_plugins_in(&cache, false, &[], &mut |_| {}).unwrap();
     assert!(!found(&again));
