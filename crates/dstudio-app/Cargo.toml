@@ -35,6 +35,8 @@ flate2 = "1.1"
 # Already in the tree; local date and time for Edit › Undo History.
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 roxmltree = "0.21"
+# MP3 export: LAME (LGPL), built from source; see engine/third_party_licenses.md.
+mp3lame-encoder = "=0.3.0"
 serde_json.workspace = true
 serde.workspace = true
 

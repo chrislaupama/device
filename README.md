@@ -70,8 +70,8 @@ wgpu.
   power switch and choose Automate. Draw lanes with points, curves or freehand, or record your moves with
   touch-write. Lanes read in the parameter's own units (Hz, dB, ms, choice names, On/Off), and mute, mono and device
   on/off lanes switch exactly on their points.
-- **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
-  (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
+- **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV or 192 or 320 kbps
+  MP3 at 44.1 or 48 kHz (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
   seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
@@ -163,7 +163,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Mixer | ✅ | |
 | Automation | ✅ | |
 | Delay compensation | ✅ | |
-| Export | 🚧 | MP3 |
+| Export | ✅ | |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
 | Releases and branding | 🚧 | Packages are built (unsigned); code signing, original icons, a first tagged release |
@@ -293,6 +293,7 @@ network, you must offer them the modified source too.
 
 Third-party code keeps its own license. The engine's dependencies, the VST3 SDK, CLAP headers and Signalsmith libraries
 (MIT), dr_libs (public domain or MIT-0) and stb_vorbis (public domain or MIT), are fetched at build time and listed in
-[engine/third_party_licenses.md](engine/third_party_licenses.md). The app uses Slint under its
+[engine/third_party_licenses.md](engine/third_party_licenses.md). MP3 export uses the LAME encoder (LGPL), built from
+source by the `mp3lame-sys` crate and listed there too. The app uses Slint under its
 [GPL-3.0 licence](https://github.com/slint-ui/slint/blob/master/LICENSE.md) (compatible with the AGPL), and the bundled
 Inter font is under the SIL Open Font License.

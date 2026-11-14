@@ -52,7 +52,8 @@ component RowLabel inherits Text {
 
 // Export (File › Export…, ⇧⌘E). Mixdown and Stems render to WAV, Project writes an Ableton
 // Live set (Open in + Effects rows in place of Range + Format; Effects is always Render, Convert
-// is a PLACEHOLDER). MP3 is a PLACEHOLDER (status line); 44.1 / 48 kHz sets the file's rate
+// is a PLACEHOLDER). WAV or MP3 (the second segments are the bit depth for WAV, the bitrate
+// for MP3); 44.1 / 48 kHz sets the file's rate
 // (converted from the engine's). Range is the full project (plus a tail) or the loop region
 // (exactly, so the file loops). Stems adds
 // the Tracks row above Range (one form row, 30.6px: 24 pt rows 12 pt apart); the
@@ -121,8 +122,11 @@ export component ExportModal inherits Rectangle {
         Text { x: parent.width + 8.5px; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
     }
     if Studio.export-recipe != 2: RowLabel { x: 17px; y: 136px + root.dy; text: "Format"; }
-    if Studio.export-recipe != 2: Segments { x: 71.4px; y: 136.85px + root.dy; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: 0; picked(i) => { if (i == 1) { Studio.chat-placeholder("MP3 export"); } } }
-    if Studio.export-recipe != 2: Segments { x: 71.4px + 91.8px; y: 136.85px + root.dy; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
+    if Studio.export-recipe != 2: Segments { x: 71.4px; y: 136.85px + root.dy; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: Studio.export-mp3 ? 1 : 0; picked(i) => { Studio.export-format(i == 1); } }
+    if Studio.export-recipe != 2: Segments { x: 71.4px + 91.8px; y: 136.85px + root.dy; width: 97.3px; a: Studio.export-mp3 ? "192k" : "16-bit"; b: Studio.export-mp3 ? "320k" : "24-bit"; a-w: 48.4px;
+        index: (Studio.export-mp3 ? Studio.export-kbps-high : Studio.export-bits24) ? 1 : 0;
+        picked(i) => { if (Studio.export-mp3) { Studio.export-kbps(i == 1); } else { Studio.export-bits(i == 1); } }
+    }
     if Studio.export-recipe != 2: Segments {
         x: 71.4px + 197.7px; y: 136.85px + root.dy; width: 117.3px; a: "44.1 kHz"; b: "48 kHz"; a-w: 56.3px; index: Studio.export-rate48 ? 1 : 0;
         picked(i) => { Studio.export-rate(i == 1); }
