@@ -1163,6 +1163,11 @@ export component AppWindow inherits Window {
             MenuItem { title: "Zoom In"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "="); activated => { Studio.menu-key("=", true, false); } }
             MenuItem { title: "Zoom Out"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "-"); activated => { Studio.menu-key("-", true, false); } }
             MenuItem { title: "Reset Zoom"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "0"); activated => { Studio.menu-key("0", true, false); } }
+            MenuSeparator { }
+            // No menu shortcut for the bare W / H: a menu shortcut takes the key even while a
+            // text field has the focus. The keymap handles them (src/fit.rs).
+            MenuItem { title: "Zoom to Fit Width (W)"; enabled: !Studio.menu-replay; activated => { Studio.menu-key("w", false, false); } }
+            MenuItem { title: "Zoom to Fit Height (H)"; enabled: !Studio.menu-replay; activated => { Studio.menu-key("h", false, false); } }
         }
         Menu {
             title: "Options";
