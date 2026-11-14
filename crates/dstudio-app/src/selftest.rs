@@ -5164,6 +5164,7 @@ fn recording_steps() -> Vec<Step> {
         ),
     ];
     v.extend(midi_recording_steps());
+    v.extend(count_in_steps());
     v
 }
 
@@ -5383,6 +5384,170 @@ fn midi_recording_steps() -> Vec<Step> {
             "midi rec: stop the transport, disarm the Instrument track",
             Box::new(|_, ctl| {
                 let mut c = ctl.borrow_mut();
+                let _ = c.engine.stop();
+                if let Some(t) = inst(&c).filter(|t| t.arm).map(|t| t.id) {
+                    c.toggle_arm(t);
+                }
+            }),
+        ),
+    ]
+}
+
+/// Count-in (src/count_in.rs): the record button's menu, one bar of click before a MIDI pass,
+/// and the notes played during the count-in left out of the take.
+fn count_in_steps() -> Vec<Step> {
+    use Step::*;
+    fn offline(c: &Controller) -> bool {
+        !c.engine.device_running()
+    }
+    fn inst(c: &Controller) -> Option<&dstudio_core::Track> {
+        c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument)
+    }
+    fn render(c: &Controller, frames: usize) {
+        let mut out = vec![0f32; 2 * frames];
+        let _ = c.engine.render_offline(&mut out);
+    }
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        dispatch(w, WindowEvent::PointerMoved { position: p });
+        dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    fn menu_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let s = a.global::<Studio>();
+        let items = s.get_menu_items();
+        (0..items.row_count())
+            .filter_map(|i| items.row_data(i))
+            .find(|m| m.label == label)
+            .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0))
+    }
+    let clips = Rc::new(Cell::new(0usize));
+    let (k1, k2) = (clips.clone(), clips.clone());
+    vec![
+        Do("count-in: right-click the record button", Box::new(|a| right_click(a, record_btn().0, record_btn().1))),
+        Check(
+            "count-in: the menu lists no count-in (ticked), 1 bar and 2 bars",
+            Box::new(|c, a| {
+                let items = a.global::<Studio>().get_menu_items();
+                let rows: Vec<(String, String)> = (0..items.row_count())
+                    .filter_map(|i| items.row_data(i))
+                    .map(|m| (m.label.to_string(), m.shortcut.to_string()))
+                    .collect();
+                let want = [("No count-in", "✓"), ("Count-in: 1 bar", ""), ("Count-in: 2 bars", "")];
+                (c.menu.open && rows.iter().map(|(l, s)| (l.as_str(), s.as_str())).eq(want.iter().copied()))
+                    .then_some(())
+                    .ok_or(format!("open {} rows {rows:?}", c.menu.open))
+            }),
+        ),
+        Do(
+            "count-in: choose 1 bar",
+            Box::new(|a| {
+                if let Some((x, y)) = menu_row(a, "Count-in: 1 bar") {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        DoC(
+            "count-in: arm the Instrument track, metronome off, playhead at beat 8",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.metronome_on {
+                    c.toggle_metronome();
+                }
+                if let Some((t, armed, n)) = inst(&c).map(|t| (t.id, t.arm, t.midi_clips.len())) {
+                    if !armed {
+                        c.toggle_arm(t);
+                    }
+                    c.select_track(t);
+                    k1.set(n);
+                }
+                let _ = c.engine.stop();
+                c.seek_beats(8.0);
+                c.midi_tick();
+            }),
+        ),
+        Check(
+            "count-in: set to 1 bar and saved in the preferences, menu closed",
+            Box::new(|c, _| {
+                (c.count_in_bars() == 1 && c.settings.prefs.count_in_bars == 1 && !c.menu.open).then_some(()).ok_or(format!(
+                    "bars {} open {}",
+                    c.count_in_bars(),
+                    c.menu.open
+                ))
+            }),
+        ),
+        Do("count-in: press R", Box::new(|a| key(a, "r", false, false))),
+        Check(
+            "count-in: counting in from beat 4 (a bar early), clicking with the metronome off",
+            Box::new(|c, a| {
+                if !offline(c) {
+                    return Ok(());
+                }
+                let beat = 24_000; // 120 bpm at 48 kHz
+                let pos = c.engine.transport().position;
+                (c.counting_in()
+                    && c.rec.recording
+                    && c.rec.count_in == Some(8 * beat)
+                    && (pos - 4 * beat).abs() < 2 * 4096
+                    && !c.metronome_on
+                    && a.global::<Studio>().get_counting_in())
+                .then_some(())
+                .ok_or(format!("counting {} punch {:?} pos {pos}", c.counting_in(), c.rec.count_in))
+            }),
+        ),
+        DoC(
+            "count-in: play D4 during the count-in, then render past the punch-in point and play G4",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if !offline(&c) || !c.rec.recording {
+                    return;
+                }
+                let _ = c.engine.midi_inject(0x90, 62, 100);
+                render(&c, 24_000);
+                let _ = c.engine.midi_inject(0x80, 62, 0);
+                c.midi_tick();
+                render(&c, 3 * 24_000);
+                c.midi_tick();
+                let _ = c.engine.midi_inject(0x90, 67, 90);
+                render(&c, 24_000);
+                let _ = c.engine.midi_inject(0x80, 67, 0);
+                render(&c, 1_000);
+                c.midi_tick();
+            }),
+        ),
+        Check(
+            "count-in: past the punch-in point the click stops and the pass records",
+            Box::new(|c, _| {
+                if !offline(c) {
+                    return Ok(());
+                }
+                (!c.counting_in() && c.rec.recording).then_some(()).ok_or(format!("counting {}", c.counting_in()))
+            }),
+        ),
+        Do("count-in: press R (stop)", Box::new(|a| key(a, "r", false, false))),
+        Check(
+            "count-in: the take starts at bar 3 and holds G4 only (D4 was in the count-in)",
+            Box::new(move |c, _| {
+                if !offline(c) {
+                    return Ok(());
+                }
+                let t = inst(c).ok_or("no instrument track")?;
+                let clip = t.midi_clips.iter().max_by_key(|cl| cl.id.0).ok_or("no clip")?;
+                let got: Vec<_> = clip.notes.iter().map(|n| (n.pitch, n.start)).collect();
+                (t.midi_clips.len() == k2.get() + 1 && clip.start == 8 * PPQ && got.len() == 1 && got[0].0 == 67)
+                    .then_some(())
+                    .ok_or(format!("{} clips (was {}), newest at {} notes {got:?}", t.midi_clips.len(), k2.get(), clip.start))
+            }),
+        ),
+        DoC(
+            "count-in: undo the take, count-in off, stop, disarm",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.doc.undo_label() == Some("Record") {
+                    c.undo();
+                }
+                c.set_count_in_bars(0);
                 let _ = c.engine.stop();
                 if let Some(t) = inst(&c).filter(|t| t.arm).map(|t| t.id) {
                     c.toggle_arm(t);

@@ -82,8 +82,9 @@ component Header inherits Rectangle {
         // Record (R): start/stop recording armed audio tracks. Dim when nothing is armed,
         // icon grey when ready, recording red while recording.
         IconButton { x: 423px; y: 38px; width: 28px; height: 28px; icon: Icons.record; filled: true; icon-size: 23px;
-            ink: Studio.recording ? Tokens.record-red : Studio.record-ready ? #63656c : #303136;
-            tooltip: "Record (R)"; active: false; clicked => { Studio.record(); } }
+            ink: Studio.counting-in ? Tokens.record-red.with-alpha(0.45) : Studio.recording ? Tokens.record-red : Studio.record-ready ? #63656c : #303136;
+            tooltip: "Record (R). Right-click for count-in"; active: false; clicked => { Studio.record(); }
+            right-pressed(x, y) => { Studio.record-menu(x, y - Studio.menu-dy); } }
 
         // Transport capsule 464.5..1008.5 x 34.85..68.85 (40 CSS px high)
         // Inset well: 2 px dark top lip, short inner shadow, light bottom lip.

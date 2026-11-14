@@ -51,6 +51,10 @@ pub struct RecState {
     pub last_pass: Option<String>,
     /// The engine is recording audio takes in this pass (MIDI-only passes don't).
     pub audio: bool,
+    /// Counting in: the frame the recording starts at, while the playhead is still before it.
+    pub count_in: Option<i64>,
+    /// The pass's punch-in frame after a count-in: what was recorded before it is dropped.
+    pub punch: Option<i64>,
 }
 
 /// Rows of the "In" selector: "None", then "Input k (Mono)" per device input
@@ -247,6 +251,8 @@ impl Controller {
             let why = self.engine.input_error().map(|e| format!(" ({e})")).unwrap_or_default();
             audio_err = Some(format!("no audio input device{why}. Choose one in Settings › Audio"));
         }
+        // Count-in: back up the playhead and click until the recording point.
+        self.rec.punch = self.count_in_begin();
         let mut audio_started = false;
         if audio && audio_err.is_none() {
             let dir = self.recording_dir();
@@ -262,6 +268,7 @@ impl Controller {
         if let Some(e) = &audio_err
             && !midi
         {
+            self.count_in_cancel();
             self.set_status(format!("Can't record: {e}"), 6);
             self.ui_dirty = true;
             return;
@@ -269,6 +276,7 @@ impl Controller {
         if midi {
             // The engine starts the transport for audio takes; a MIDI-only pass starts it here.
             if !audio_started && let Err(e) = self.engine.play() {
+                self.count_in_cancel();
                 self.set_status(format!("Can't record: {e}"), 6);
                 return;
             }
@@ -278,6 +286,7 @@ impl Controller {
         self.rec.audio = audio_started;
         match audio_err {
             Some(e) => self.set_status(format!("Recording MIDI only: {e}"), 6),
+            None if self.rec.count_in.is_some() => self.set_status("Counting in…", 2),
             None => self.set_status("Recording…", 2),
         }
         self.ui_dirty = true;
@@ -285,9 +294,12 @@ impl Controller {
 
     pub fn stop_recording(&mut self) {
         self.rec.recording = false;
+        let punch = self.rec.punch;
+        self.count_in_cancel();
         self.rec.live_vis.clear();
         self.ui_dirty = true;
         let midi = self.midi_pass_finish();
+        self.rec.punch = None;
         if !std::mem::take(&mut self.rec.audio) {
             self.finish_midi_only(midi, &[]);
             return;
@@ -326,7 +338,7 @@ impl Controller {
                         (t, r)
                     })
                     .collect();
-                let _ = tx.send(JobResult::Recorded { doc_epoch: epoch, takes, midi });
+                let _ = tx.send(JobResult::Recorded { doc_epoch: epoch, takes, midi, punch });
             })
             .expect("spawn take loader");
         self.set_status("Loading recording…", 30);
@@ -357,6 +369,7 @@ impl Controller {
         doc_epoch: u64,
         takes: Vec<(RecordedTake, Result<(AssetInfo, Pyramid), String>)>,
         midi: Vec<Command>,
+        punch: Option<i64>,
     ) {
         if doc_epoch != self.doc_epoch {
             for (_, r) in takes {
@@ -396,8 +409,10 @@ impl Controller {
                 let _ = self.engine.release_asset(info.asset_id);
                 continue;
             }
-            // Latency compensation can put the first sample before 0: trim it off.
-            let skip = (-take.start_frame).max(0) as u64;
+            // Latency compensation can put the first sample before 0, and a count-in records
+            // before the punch-in point: trim those off.
+            let first = crate::count_in::first_kept_frame(take.start_frame, punch);
+            let skip = ((first - take.start_frame) as f64 * rate / self.rate).round().max(0.0) as u64;
             if skip >= frames {
                 let _ = self.engine.release_asset(info.asset_id);
                 continue;
@@ -411,7 +426,7 @@ impl Controller {
                 channels: take.channels.max(1),
                 frames,
             };
-            let start = self.project().frames_to_ticks(take.start_frame.max(0), rate);
+            let start = self.project().frames_to_ticks(first, self.rate);
             let clip = Clip {
                 id: ClipId(alloc()),
                 asset: asset_id,

@@ -39,6 +39,7 @@ mod clip_render;
 mod clipedit;
 mod composer;
 mod controller;
+mod count_in;
 mod device_canvas;
 mod device_editors;
 mod device_fields;
@@ -198,6 +199,8 @@ struct Args {
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
+    /// review-count-in-menu: count-in set to 1 bar, the record button's count-in menu open.
+    count_in_menu_review: bool,
     /// review-track-menu: track 1's header menu open with its Color submenu.
     /// review-track-drag: track 1's header dragged below track 2, the drop line showing.
     track_menu_review: u8,
@@ -567,6 +570,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.snap_menu_review = true;
                 }
+                "review-count-in-menu" => {
+                    a.reference_default = true;
+                    a.count_in_menu_review = true;
+                }
                 "review-clip-selection" => {
                     a.reference_default = true;
                     a.clip_selection_review = true;
@@ -621,7 +628,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1932,6 +1939,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.snap.pick(5);
         c.snap_menu_toggle(1211.0, 98.0);
     }
+    if args.count_in_menu_review {
+        // Opened just below the record button of the default 1440 x 820 window (layout anchors are not
+        // measured yet at this point).
+        let mut c = ctl.borrow_mut();
+        c.set_count_in_bars(1);
+        c.open_count_in_menu(306.0, 51.0);
+    }
     if args.devices_minimap_review {
         // Review and benchmark: the Instrument track's Synth followed by ten built-in effects, so the chain is
         // several panels wide.
@@ -2365,6 +2379,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_add_track, |c| c.add_audio_track());
     on!(on_select_track, |c, id: i32| c.select_track(TrackId(id as u64)));
     on!(on_track_menu, |c, id: i32, x: f32, y: f32| c.open_track_menu(TrackId(id as u64), x, y));
+    on!(on_record_menu, |c, x: f32, y: f32| c.open_count_in_menu(x, y));
     on!(on_track_drag, |c, id: i32, phase: i32, y: f32| c.track_drag(TrackId(id as u64), phase, y));
     on!(on_track_mute, |c, id: i32| c.toggle_mute(TrackId(id as u64)));
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));

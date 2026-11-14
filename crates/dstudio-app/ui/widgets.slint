@@ -199,11 +199,20 @@ export component IconButton inherits Rectangle {
     /// Toggle state: drawn in the accent colour when on.
     in property <bool> active: false;
     callback clicked;
+    /// Right press, at window (x, y).
+    callback right-pressed(length, length);
     accessible-role: button;
     accessible-label: tooltip;
     accessible-checked: active;
     Icon { d: root.icon; width: root.icon-size; height: root.icon-size; ink: root.active ? Tokens.accent : (ta.has-hover ? Tokens.text-primary : root.ink); filled: root.filled; }
-    ta := TouchArea { clicked => { root.clicked(); } }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                root.right-pressed(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
 }
 
 // Tiny M/S/R/I button (11x11 in track headers, 19x18 in the inspector).
