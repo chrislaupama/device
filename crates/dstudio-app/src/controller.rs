@@ -324,6 +324,8 @@ pub enum MenuAction {
     ToMidi,
     Ask,
     Paste,
+    /// Empty-lane menu: a new one-bar MIDI clip where the menu was opened.
+    InsertMidiClip,
     SectionRename,
     SectionColor,
     SectionInsert,
@@ -337,6 +339,8 @@ pub struct MenuState {
     pub pos: (f32, f32),
     pub clip: Option<ClipId>,
     pub section: Option<dstudio_core::SectionId>,
+    /// Empty-lane menu: the track and timeline position (ticks) it was opened at.
+    pub lane: Option<(TrackId, Ticks)>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
@@ -435,6 +439,15 @@ pub struct Controller {
     /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
     /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
     pub press_epoch: i32,
+    /// The last press in the arrangement lanes (time, x, y), for double-clicks (src/clipedit.rs).
+    pub(crate) lane_last_down: Option<(std::time::Instant, f32, f32)>,
+    /// Where the playhead was before that press moved it (stopped transport only) and the clip
+    /// selected before it, put back when the press turns out to start a double-click that made or
+    /// renamed something (src/clipedit.rs `lane_press_double`).
+    pub(crate) lane_playhead_before: Option<PlayheadState>,
+    pub(crate) lane_clip_before: Option<ClipId>,
+    /// The press under way completed a double-click: its moves and release do nothing else.
+    pub(crate) lane_press_used: bool,
     /// Text typed in an open track name field (Studio.track-rename-draft), committed when the
     /// panel holding the field changes before the field commits itself.
     pub rename_draft: Option<(TrackId, String)>,
@@ -584,6 +597,10 @@ impl Controller {
             rename: None,
             rename_section: None,
             press_epoch: 0,
+            lane_last_down: None,
+            lane_playhead_before: None,
+            lane_clip_before: None,
+            lane_press_used: false,
             rename_draft: None,
             rename_panel: None,
             rename_open_epoch: 0,
@@ -1007,6 +1024,19 @@ impl Controller {
         self.project().frames_to_ticks(self.audible_frames(), self.rate)
     }
 
+    /// The stopped transport's position and cue, to put back with [`Controller::restore_playhead`]
+    /// (`None` while playing: the playhead moves on by itself).
+    pub(crate) fn playhead_state(&self) -> Option<PlayheadState> {
+        (!self.engine.transport().playing).then(|| PlayheadState { frame: self.audible_frames(), paused: self.paused, cue: self.cue })
+    }
+
+    pub(crate) fn restore_playhead(&mut self, st: PlayheadState) {
+        if self.engine.transport().playing || self.engine.seek(st.frame).is_err() {
+            return;
+        }
+        (self.paused, self.cue) = (st.paused, st.cue);
+    }
+
     pub fn seek_beats(&mut self, beats: f64) {
         let ticks = (beats.max(0.0) * PPQ as f64).round() as Ticks;
         let frame = self.project().ticks_to_frames(ticks, self.rate);
@@ -1111,6 +1141,10 @@ impl Controller {
     pub fn toggle_mute(&mut self, id: TrackId) {
         if let Some(t) = self.project().track(id) {
             let mute = !t.mute;
+            // An active Mute lane decides (written while armed and playing).
+            if self.auto_switch(Some(id), dstudio_core::AutomationTarget::Mute, t.mute) {
+                return;
+            }
             self.execute(Command::SetTrackMute { track: id, mute });
         }
     }
@@ -1204,6 +1238,9 @@ impl Controller {
     pub fn set_track_trim(&mut self, id: TrackId, db: f32) -> bool {
         let (lo, hi) = dstudio_core::Track::TRIM_RANGE_DB;
         let db = (db.clamp(lo, hi) * 10.0).round() / 10.0;
+        if self.auto_intercept(Some(id), dstudio_core::AutomationTarget::Trim, db) {
+            return false;
+        }
         if self.project().track(id).is_none_or(|t| t.trim_db == db) {
             return false;
         }
@@ -1218,6 +1255,9 @@ impl Controller {
     pub fn set_track_width(&mut self, id: TrackId, width: f32) -> bool {
         let (lo, hi) = dstudio_core::Track::WIDTH_RANGE;
         let width = (width.clamp(lo, hi) * 100.0).round() / 100.0;
+        if self.auto_intercept(Some(id), dstudio_core::AutomationTarget::Width, width) {
+            return false;
+        }
         if self.project().track(id).is_none_or(|t| t.width == width) {
             return false;
         }
@@ -1229,12 +1269,16 @@ impl Controller {
     }
 
     pub fn toggle_track_mono(&mut self, id: TrackId) -> bool {
-        let Some(mono) = self.project().track(id).map(|t| !t.mono) else { return false };
-        self.execute(Command::SetTrackMono { track: id, mono })
+        let Some(old) = self.project().track(id).map(|t| t.mono) else { return false };
+        if self.auto_switch(Some(id), dstudio_core::AutomationTarget::Mono, old) {
+            return false;
+        }
+        self.execute(Command::SetTrackMono { track: id, mono: !old })
     }
 
     /// A trim or width knob was released: the next drag is a new undo step.
     pub fn strip_gesture_end(&mut self) {
+        self.auto_write_end(|w| matches!(w.target, dstudio_core::AutomationTarget::Trim | dstudio_core::AutomationTarget::Width));
         self.doc.seal_coalescing();
     }
 
@@ -1458,6 +1502,9 @@ impl Controller {
         self.doc.sync_device_states(&states);
         let bases = self.mod_bases_now();
         self.doc.sync_mod_bases(&bases);
+        if let Some(name) = project_name_of(dir) {
+            self.doc.set_project_name(&name);
+        }
         match persist::save(self.project(), dir) {
             Ok(()) => {
                 self.doc.mark_saved();
@@ -2131,7 +2178,10 @@ impl Controller {
         } else {
             self.tracks_model.set_vec(rows);
         }
-        s.set_project_name(p.name.clone().into());
+        // The folder's name once saved (a project folder renamed in the Finder shows its new name).
+        let name = self.project_dir.as_deref().and_then(project_name_of).unwrap_or_else(|| p.name.clone());
+        s.set_project_name(name.into());
+        s.set_project_edited(self.doc.is_dirty());
         let sentence = dstudio_core::history::sentence_case;
         s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {}", sentence(l))).into());
         s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {}", sentence(l))).into());
@@ -2150,15 +2200,16 @@ impl Controller {
             s.set_sel_name(t.name.clone().into());
             s.set_sel_instrument(t.kind == TrackKind::Instrument);
             s.set_sel_color(slint_color(track_color(t.color)));
-            s.set_sel_mute(t.mute);
+            s.set_sel_mute(self.switch_now(Some(t.id), &dstudio_core::AutomationTarget::Mute, t.mute));
             s.set_sel_solo(t.solo);
             s.set_sel_pan(t.pan);
             s.set_sel_pan_text(fmt_pan(t.pan).into());
-            s.set_sel_trim(t.trim_db);
-            s.set_sel_trim_text(fmt_trim(t.trim_db).into());
-            s.set_sel_width(t.width);
-            s.set_sel_width_text(fmt_width(t.width).into());
-            s.set_sel_mono(t.mono);
+            let (trim, width, mono) = self.strip_now(t.id);
+            s.set_sel_trim(trim);
+            s.set_sel_trim_text(fmt_trim(trim).into());
+            s.set_sel_width(width);
+            s.set_sel_width_text(fmt_width(width).into());
+            s.set_sel_mono(mono);
             let db = gain_to_db(t.gain);
             s.set_sel_fader(fader_from_db(db));
             s.set_sel_db_text(fmt_db(db).into());
@@ -2189,7 +2240,7 @@ impl Controller {
                 group_start: t.is_return() && i == first_return,
                 color: slint_color(track_color(t.color)),
                 selected: Some(t.id) == self.selected_track,
-                mute: t.mute,
+                mute: self.switch_now(Some(t.id), &dstudio_core::AutomationTarget::Mute, t.mute),
                 solo: t.solo,
                 pan: t.pan,
                 pan_text: mixer::fmt_strip_pan(t.pan).into(),
@@ -2336,6 +2387,19 @@ pub(crate) fn mini_notes(notes: &[(dstudio_core::Note, bool)], shift: Ticks, len
 /// unless the playhead was moved since it stopped; Stop in place resumes where it stopped.
 /// Where Play starts: a position the user chose since the last pause, else the last playback's
 /// start after a pause (Return to start), else wherever the transport is (None).
+/// The project's name for its folder `dir` (`Song.dsproj` is "Song").
+fn project_name_of(dir: &Path) -> Option<String> {
+    dir.file_stem().and_then(|s| s.to_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from)
+}
+
+/// A stopped transport's playhead (see [`Controller::playhead_state`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlayheadState {
+    frame: i64,
+    paused: bool,
+    cue: Option<i64>,
+}
+
 fn play_from(stop_in_place: bool, play_start: Option<i64>, paused: bool, cue: Option<i64>) -> Option<i64> {
     cue.or(play_start.filter(|_| paused && !stop_in_place))
 }

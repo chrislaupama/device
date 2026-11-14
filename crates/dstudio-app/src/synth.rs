@@ -151,6 +151,8 @@ enum MenuAction {
     Preset(usize),
     Set(Vec<(usize, f32)>),
     Page(usize),
+    /// Show (or create) the automation lane of this parameter.
+    Automate(usize),
 }
 
 /// Values heard by the engine during a gesture, not yet a command:
@@ -2409,6 +2411,12 @@ impl Controller {
     pub fn synth_bypass(&mut self) {
         let Some(d) = self.synth_device().and_then(|id| self.project().device(id)) else { return };
         let (device, enabled) = (d.id, !d.enabled);
+        if let Some((t, target)) = self.device_on_target(device)
+            && self.auto_switch(Some(t), target, d.enabled)
+        {
+            self.ui_dirty = true;
+            return;
+        }
         self.doc.seal_coalescing();
         self.execute(Command::SetDeviceEnabled { device, enabled });
         self.ui_dirty = true;
@@ -2614,12 +2622,32 @@ impl Controller {
         self.synth_open(target, x, y, w, rows);
     }
 
-    /// Right click on a control: reset, macro mappings and modulation sources.
+    /// Right press on a pill: the menu of the parameter it shows (choices, switches,
+    /// effect types, route sources and targets); pills without one do nothing.
+    pub fn synth_pill_menu(&mut self, action: i32, arg: usize, x: f32, y: f32) {
+        let param = match action {
+            act::CHOICE | act::TOGGLE | act::TIMEBASE => Some(arg),
+            act::FX_TAB => (1..=4).contains(&arg).then(|| ix(&sv::fx_param(arg, "type"))),
+            act::ROUTE_SOURCE | act::ROUTE_TARGET if (1..=sv::MOD_SLOTS).contains(&arg) => {
+                Some(ix("mod1_source") + 4 * (arg - 1) + usize::from(action == act::ROUTE_TARGET))
+            }
+            _ => None,
+        };
+        if let Some(i) = param {
+            self.synth_knob_menu(i, x, y);
+        }
+    }
+
+    /// Right click on a control: Automate, reset, macro mappings and modulation sources.
     pub fn synth_knob_menu(&mut self, i: usize, x: f32, y: f32) {
         let Some((_, v)) = self.synth_values() else { return };
         let Some(p) = SYNTH_V2.params.get(i) else { return };
         let fx = fx_types(&v);
-        let mut rows: Vec<Row> = vec![("Reset to default".into(), p.format(p.default), Some(MenuAction::Set(vec![(i, p.default)])))];
+        let mut rows: Vec<Row> = Vec::new();
+        if p.automatable {
+            rows.push((format!("Automate {}", p.name), String::new(), Some(MenuAction::Automate(i))));
+        }
+        rows.push(("Reset to default".into(), p.format(p.default), Some(MenuAction::Set(vec![(i, p.default)]))));
         if sv::macro_mappable(i) {
             rows.push(heading("Macros"));
             let mapped = mappings(&v).into_iter().find(|m| m.2 == i);
@@ -2667,6 +2695,11 @@ impl Controller {
                 self.synth_commit(device, changes);
             }
             Some(MenuAction::Page(p)) => self.synth_page(p),
+            Some(MenuAction::Automate(i)) => {
+                if let Some(p) = SYNTH_V2.params.get(i) {
+                    self.mod_automate(device, dstudio_core::ModParam::Builtin(p.id.to_string()));
+                }
+            }
             _ => {}
         }
     }
@@ -2876,7 +2909,7 @@ impl Controller {
         };
         self.synth.fx_slot = self.synth.fx_slot.clamp(1, 4);
         let Some(d) = self.project().device(device) else { return };
-        let (enabled, preset) = (d.enabled, d.preset.clone());
+        let (enabled, preset) = (self.device_on_now(d), d.preset.clone());
         let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| card_color(self.project().tracks[ti].color));
         let bpm = self.project().transport.bpm as f32;
         // The dials' rings follow the live modulation, so it is part of what the page is built from.

@@ -64,7 +64,7 @@ static_assert(sizeof(se_auto_lane_desc) == 32 && alignof(se_auto_lane_desc) == 8
 static_assert(offsetof(se_auto_lane_desc, logarithmic) == 1 && offsetof(se_auto_lane_desc, synth_param) == 2 &&
               offsetof(se_auto_lane_desc, param_id) == 4 && offsetof(se_auto_lane_desc, device_id) == 8 &&
               offsetof(se_auto_lane_desc, points) == 16 && offsetof(se_auto_lane_desc, point_count) == 24 &&
-              offsetof(se_auto_lane_desc, _pad) == 28);
+              offsetof(se_auto_lane_desc, flags) == 28);
 static_assert(sizeof(se_track_desc_v6) == 104 && alignof(se_track_desc_v6) == 8);
 static_assert(offsetof(se_track_desc_v6, lanes) == 88 && offsetof(se_track_desc_v6, lane_count) == 96 &&
               offsetof(se_track_desc_v6, _pad3) == 100);
@@ -510,7 +510,8 @@ int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames,
     std::vector<dstudio::AutoPoint> pts(lane->point_count);
     for (size_t i = 0; i < lane->point_count; ++i)
         pts[i] = dstudio::AutoPoint{lane->points[i].frame, lane->points[i].value, lane->points[i].curve};
-    const dstudio::LaneView v{pts.data(), lane->point_count, lane->logarithmic != 0};
+    const dstudio::LaneView v{pts.data(), lane->point_count, lane->logarithmic != 0,
+                              (lane->flags & SE_AUTO_FLAG_STEPPED) != 0};
     for (size_t i = 0; i < count; ++i) out_values[i] = dstudio::auto_eval(v, frames[i]);
     return SE_OK;
 }

@@ -48,6 +48,19 @@ void kernel_strip(float* __restrict l, float* __restrict r, float a, float b, ui
     }
 }
 
+void kernel_strip_varying(float* __restrict l, float* __restrict r, const float* __restrict trim,
+                          const float* __restrict width, uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) {
+        // strip_matrix per sample.
+        const float a = trim[i] * 0.5f * (1.0f + width[i]);
+        const float b = trim[i] * 0.5f * (1.0f - width[i]);
+        const float x = l[i];
+        const float y = r[i];
+        l[i] = a * x + b * y;
+        r[i] = b * x + a * y;
+    }
+}
+
 void kernel_scale(float* __restrict buf, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) buf[i] *= gain;
 }
@@ -272,6 +285,22 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         else
             linear_pieces(position, playing, frames, delay, f);
     };
+    // Value of a lane at the block start (the first timeline piece), for
+    // switches applied per block (SE_AUTO_DEVICE_ON).
+    const auto block_value = [&](const AutoLane& lane, uint32_t delay) -> float {
+        float v = 0.0f;
+        bool first = true;
+        pieces(delay, [&](uint32_t, uint32_t, int64_t tl0, bool) {
+            if (first) v = auto_eval(lane_view(*graph, lane), tl0);
+            first = false;
+        });
+        return v;
+    };
+    // A device's power this block: its on lane, else the static switch.
+    const auto slot_on = [&](const FxSlot& s, uint32_t delay) -> bool {
+        if (s.on_lane < 0) return s.enabled;
+        return block_value(graph->lanes[static_cast<uint32_t>(s.on_lane)], delay) >= 0.5f;
+    };
     // dst[i] = map(lane value) for the block (ramps, see auto_fill).
     const auto fill_lane = [&](const AutoLane& lane, uint32_t delay, auto&& map, float* dst) {
         const LaneView v = lane_view(*graph, lane);
@@ -358,7 +387,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         for (uint32_t ri = t.route_begin; ri < t.route_begin + t.route_count; ++ri) {
             const ModRoute& r = graph->mod_routes[ri];
             const FxSlot& s = graph->fx[r.src];
-            BuiltinInstance* const b = s.enabled && s.inst != nullptr ? s.inst->as_builtin() : nullptr;
+            BuiltinInstance* const b = s.inst != nullptr && slot_on(s, 0) ? s.inst->as_builtin() : nullptr;
             if (b == nullptr || r.slot >= b->mod_outputs()) continue;
             const float span = r.max - r.min;
             for (uint32_t k = 0; k < mod_points; ++k) {
@@ -470,7 +499,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         Synth* const synth = track.instrument && !track.has_instrument_plugin && inst.synths != nullptr
                                  ? inst.synths[t]
                                  : nullptr;
-        PluginInstance* const iplug = plugins_on && track.instrument_plugin_enabled ? track.instrument_plugin : nullptr;
+        bool iplug_on = track.instrument_plugin_enabled;
+        if (track.switch_lanes && track.iplug_on_lane >= 0) [[unlikely]]
+            iplug_on = block_value(graph->lanes[static_cast<uint32_t>(track.iplug_on_lane)], 0) >= 0.5f;
+        PluginInstance* const iplug = plugins_on && iplug_on ? track.instrument_plugin : nullptr;
         const bool track_plugins = plugins_on && (track.fx_count > 0 || iplug != nullptr);
         const bool routed = live_input && track.input_mode != SE_INPUT_NONE && (track.monitor || track.arm);
         // MIDI input (live path): this block's events when the track receives
@@ -510,7 +542,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         if (plugins_on)
             for (uint32_t k2 = track.msrc_begin; k2 < track.msrc_begin + track.msrc_count; ++k2) {
                 const FxSlot& s = graph->fx[graph->mod_sources[k2]];
-                BuiltinInstance* const b = s.enabled && s.inst != nullptr ? s.inst->as_builtin() : nullptr;
+                BuiltinInstance* const b = s.inst != nullptr && slot_on(s, 0) ? s.inst->as_builtin() : nullptr;
                 if (b == nullptr) continue;
                 const uint32_t np = s.lane_count > 0 ? plugin_events(s.lane_begin, s.lane_count, 0) : 0;
                 b->run_modulation(frames, *inst.transport, ctx.param_events(), np);
@@ -699,7 +731,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 DelayLine* const bypass = lines != nullptr && slot->pdc_bypass_delay != 0
                                               ? lines[graph->pdc.slot_index(track_count, track.fx_begin + i)]
                                               : nullptr;
-                if (slot->enabled && slot->inst != nullptr) {
+                if (slot->inst != nullptr && slot_on(*slot, lines != nullptr ? slot->auto_delay : 0)) {
                     if (slot->sc_wanted)
                         if (BuiltinInstance* b = slot->inst->as_builtin()) {
                             const auto k2 = static_cast<uint32_t>(slot->sc_tap);
@@ -737,7 +769,45 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             if (!plain) router.discard_edges(track, t);
             continue;
         }
-        if (track.strip_on) kernel_strip(tl, tr, track.strip_a, track.strip_b, frames);
+        if (track.switch_lanes && (track.trim_lane >= 0 || track.width_lane >= 0 || track.mono_lane >= 0)) [[unlikely]] {
+            // Automated strip: per-sample trim gain and width (the gain
+            // buffers are free here; the fader fills them afresh below).
+            const uint32_t d = lines != nullptr ? track.auto_delay : 0;
+            float* const trim = ctx.gain_l();
+            float* const width = ctx.gain_r();
+            if (track.trim_lane >= 0) {
+                fill_lane(graph->lanes[static_cast<uint32_t>(track.trim_lane)], d,
+                          [](float db) { return std::pow(10.0f, std::clamp(db, -24.0f, 24.0f) / 20.0f); }, trim);
+            } else {
+                std::fill(trim, trim + frames, track.strip_trim);
+            }
+            if (track.width_lane >= 0) {
+                fill_lane(graph->lanes[static_cast<uint32_t>(track.width_lane)], d,
+                          [](float w) { return std::clamp(w, 0.0f, 2.0f); }, width);
+            } else {
+                std::fill(width, width + frames, track.strip_width);
+            }
+            if (track.mono_lane >= 0) {
+                float* const keep = ctx.auto_a();
+                fill_lane(graph->lanes[static_cast<uint32_t>(track.mono_lane)], d,
+                          [](float v) { return v >= 0.5f ? 0.0f : 1.0f; }, keep);
+                kernel_mul(width, keep, frames);
+            } else if (track.strip_mono) {
+                std::fill(width, width + frames, 0.0f);
+            }
+            kernel_strip_varying(tl, tr, trim, width, frames);
+        } else if (track.strip_on) {
+            kernel_strip(tl, tr, track.strip_a, track.strip_b, frames);
+        }
+        // Mute lane (SE_AUTO_MUTE): silences the track's signal before the
+        // fader, its sends and its meter, like the static mute.
+        if (track.switch_lanes && track.mute_lane >= 0) [[unlikely]] {
+            float* const mg = ctx.auto_a();
+            fill_lane(graph->lanes[static_cast<uint32_t>(track.mute_lane)], lines != nullptr ? track.auto_delay : 0,
+                      [](float v) { return v >= 0.5f ? 0.0f : 1.0f; }, mg);
+            kernel_mul(tl, mg, frames);
+            kernel_mul(tr, mg, frames);
+        }
 
         const bool automated = track.vol_lane >= 0 || track.pan_lane >= 0;
         float* const gl = ctx.gain_l();

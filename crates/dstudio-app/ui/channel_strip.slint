@@ -24,6 +24,8 @@ export component StripCanvas inherits Rectangle {
     callback moved(float);
     callback released();
     callback reset();
+    // Right press: the control menu (absolute window position; callers subtract the menu bar).
+    callback context(length, length);
     property <length> u: StripMetrics.u;
     property <length> rail-y: 6 * root.u;
     property <length> rail-h: max(40 * root.u, root.height - 8 * root.u);
@@ -87,6 +89,7 @@ export component StripCanvas inherits Rectangle {
         enabled: root.enabled;
         mouse-cursor: ns-resize;
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 root.moved(max(0, min(1, (self.mouse-y + self.y - root.top) / root.travel)));
             }
@@ -124,6 +127,8 @@ export component StripButton inherits Rectangle {
     in property <int> kind;   // 0 mute, 1 solo, 2 record, 3 input
     in property <bool> big;
     callback clicked();
+    // Right press: the control menu (absolute window position; callers subtract the menu bar).
+    callback context(length, length);
     property <length> u: StripMetrics.u;
     property <color> on-bg: root.kind == 0 ? #1253ff : root.kind == 1 ? #f1f607 : root.kind == 2 ? #e81d01 : #f5950a;
     property <color> on-ink: root.kind == 0 || root.kind == 2 ? #ffffff : #1a1a1a;
@@ -135,5 +140,8 @@ export component StripButton inherits Rectangle {
         text: root.text; color: root.on ? root.on-ink : ta.has-hover ? #ffffff : #ffffff99;
         font-size: (root.big ? 10 : 8.5) * root.u; font-weight: 700; horizontal-alignment: center; vertical-alignment: center;
     }
-    ta := TouchArea { clicked => { root.clicked(); } }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+        pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); } }
+    }
 }

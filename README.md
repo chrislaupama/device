@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<h1><img alt="Device. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%"></h1>
+<h1><img alt="Device. Your studio. No subscription. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%"></h1>
 
 <p>
   <a href="https://github.com/devicedaw/device/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/devicedaw/device/actions/workflows/ci.yml/badge.svg?branch=main"></a>
@@ -41,7 +41,8 @@ wgpu.
 
 ## Features
 
-- **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Set the tempo in the
+- **Timeline.** Double-click an empty spot on an instrument track to make a MIDI clip there (or right-click it, or
+  use Create › MIDI Clip), import audio, move and trim clips, loop a range, and play against a metronome. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
@@ -65,8 +66,10 @@ wgpu.
   plugin folders, Settings › Plugins scans any folders you add.
 - **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
   can be switched off.
-- **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
-  record your moves with touch-write.
+- **Automation.** Right-click any device control, the channel's volume, pan, mute, trim, width or mono, or a device's
+  power switch and choose Automate. Draw lanes with points, curves or freehand, or record your moves with
+  touch-write. Lanes read in the parameter's own units (Hz, dB, ms, choice names, On/Off), and mute, mono and device
+  on/off lanes switch exactly on their points.
 - **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
   (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
   seamlessly), or export the project as an Ableton Live set that keeps its return tracks and sends.

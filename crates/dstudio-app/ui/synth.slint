@@ -62,6 +62,9 @@ component Pill inherits Rectangle {
     in property <bool> chevron: true;
     callback open(length, length, length);
     callback ring-clicked;
+    // Right press on the pill or its ring (window coordinates): the control menu.
+    callback context(length, length);
+    callback ring-context(length, length);
     height: 20px;
     border-radius: 10px;
     background: SynthStyle.control;
@@ -72,13 +75,17 @@ component Pill inherits Rectangle {
     property <length> lead: root.ring >= 0 ? 24px : root.glyph > 0 ? 25px : 7.5px;
     Rectangle { x: 6px; y: 0; width: parent.width - 12px; height: 0.5px; background: SynthStyle.control-edge; }
     TouchArea {
+        pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
         clicked => { root.open(root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy) + root.height + 2px, root.width); }
     }
     if root.ring >= 0: Rectangle {
         x: 6px; y: 3px; width: 14px; height: 14px; border-radius: 7px;
         border-width: 1.2px; border-color: root.ring == 1 ? Studio.synth-card.accent : #8a8b90;
         if root.ring == 1: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.synth-card.accent; }
-        TouchArea { clicked => { root.ring-clicked(); } }
+        TouchArea {
+            pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { root.ring-context(self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+            clicked => { root.ring-clicked(); }
+        }
     }
     if root.glyph > 0: SourceGlyph { x: 7px; y: 3.5px; src: root.glyph; }
     label-text := Text { x: root.lead; y: 0; height: 20px; text: root.label; color: SynthStyle.label; font-size: 7.6px; font-weight: 500; vertical-alignment: center; }
@@ -239,7 +246,10 @@ component Segmented inherits Rectangle {
             text: o; color: i == root.s.sel ? SynthStyle.ink-on-accent : SynthStyle.value;
             font-size: 8.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
         }
-        TouchArea { clicked => { Studio.synth-set(root.s.idx, root.s.first + i); } }
+        TouchArea {
+            pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.synth-knob-menu(root.s.idx, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+            clicked => { Studio.synth-set(root.s.idx, root.s.first + i); }
+        }
     }
 }
 
@@ -318,7 +328,10 @@ component Latch inherits Rectangle {
         x: 17.5px; y: 10.5px; width: 25px; height: 17px; border-radius: 8.5px;
         background: root.l.on ? Studio.synth-card.accent : SynthStyle.control;
         Text { text: root.l.on ? "On" : "Off"; color: root.l.on ? SynthStyle.ink-on-accent : SynthStyle.dim; font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-        TouchArea { clicked => { Studio.synth-toggle(root.l.idx); } }
+        TouchArea {
+            pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.synth-knob-menu(root.l.idx, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+            clicked => { Studio.synth-toggle(root.l.idx); }
+        }
     }
     Text { x: -8px; y: 53px; width: root.width + 16px; height: 14px; text: root.l.label; color: SynthStyle.caption; font-size: 10.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
 }
@@ -383,6 +396,8 @@ export component SynthDevice inherits Rectangle {
         x: p.x; y: p.y; width: p.w; label: p.label; value: p.value; ring: p.ring; outline: p.outline; chevron: p.chevron;
         open(x, y, w) => { Studio.synth-pill(p.action, p.arg, x, y, w); }
         ring-clicked => { Studio.synth-toggle(p.ring-idx); }
+        context(x, y) => { Studio.synth-pill-menu(p.action, p.arg, x, y); }
+        ring-context(x, y) => { Studio.synth-knob-menu(p.ring-idx, x, y); }
     }
 
     // ---- Modulation page: route rows ----
@@ -399,11 +414,15 @@ export component SynthDevice inherits Rectangle {
                 x: 27px; y: 3px; width: 14px; height: 14px; border-radius: 7px;
                 border-width: 1.2px; border-color: r.on ? Studio.synth-card.accent : #8a8b90;
                 if r.on: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.synth-card.accent; }
-                TouchArea { clicked => { Studio.synth-toggle(r.on-idx); } }
+                TouchArea {
+                    pointer-event(e) => { if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.synth-knob-menu(r.on-idx, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); } }
+                    clicked => { Studio.synth-toggle(r.on-idx); }
+                }
             }
             Pill {
                 x: 51px; width: 104px; glyph: r.source; value: r.source-text;
                 open(x, y, w) => { Studio.synth-pill(6, r.slot, x, y, w); }
+                context(x, y) => { Studio.synth-pill-menu(6, r.slot, x, y); }
             }
             Path {
                 x: 166px; y: 4px; width: 14px; height: 12px;
@@ -414,6 +433,7 @@ export component SynthDevice inherits Rectangle {
             Pill {
                 x: 189px; width: 118px; value: r.target-text;
                 open(x, y, w) => { Studio.synth-pill(7, r.slot, x, y, w); }
+                context(x, y) => { Studio.synth-pill-menu(7, r.slot, x, y); }
             }
             Rectangle { x: parent.bar-x; y: 9.25px; width: parent.bar-w; height: 1.5px; background: #3a3b40; }
             Rectangle { x: parent.bar-x + parent.bar-w / 2 - 0.25px; y: 5px; width: 0.5px; height: 10px; background: #6a6b70; }
@@ -423,7 +443,10 @@ export component SynthDevice inherits Rectangle {
             }
             TouchArea {
                 x: parent.bar-x - 4px; width: parent.bar-w + 8px; mouse-cursor: ew-resize;
-                pointer-event(e) => { if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.synth-param-end(r.amount-idx, true); } }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) { Studio.synth-knob-menu(r.amount-idx, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.synth-param-end(r.amount-idx, true); }
+                }
                 moved => { if (self.pressed) { Studio.synth-param(r.amount-idx, max(0, min(1, (self.mouse-x - 4px) / parent.bar-w))); } }
                 double-clicked => { Studio.synth-param-reset(r.amount-idx); }
             }
@@ -479,6 +502,9 @@ export component SynthDevice inherits Rectangle {
                         TouchArea {
                             mouse-cursor: ew-resize;
                             pointer-event(ev) => {
+                                if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.right) {
+                                    Studio.synth-knob-menu(e.idx, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
+                                }
                                 if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) { parent.start = e.v; }
                                 if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) { Studio.synth-param-end(e.idx, true); }
                             }

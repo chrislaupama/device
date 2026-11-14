@@ -520,6 +520,33 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - `live_set::validate` checks one send per return on every track, levels in range, returns last and the pre/post
   list. Not yet opened in Live itself (spec 006, T5).
 
+### 2026-11-12: making MIDI clips from the timeline
+
+- Double-click an empty spot on an instrument track's lane: a one-bar MIDI clip in that bar (on the beat while snapping
+  is off or bypassed), moved past a clip it would start inside and cut short rather than running into the next one.
+  It is selected and opens in the piano roll, so notes can be drawn straight away. A double-click on a clip opens it
+  in the Clip tab. Double-clicks in the lanes are timed by the app (500 ms from the first click's release), not by
+  Slint, because the first click often selects a track and rebuilding the panels for it can outlast Slint's window.
+- Right-click on an empty spot: Insert MIDI clip (instrument tracks) and Paste (when the copied clip fits the track),
+  both acting at that spot.
+- ⌘⇧M now opens the new clip in the piano roll (the Clip tab used to say "No clip selected").
+- New Create menu in the menu bar: Audio Track (⌘T), Instrument Track (⇧⌘T), MIDI Clip (⇧⌘M).
+- Tests: `double_click_on_an_empty_instrument_lane_makes_a_clip_ready_for_notes`,
+  `a_new_clip_fits_between_its_neighbours`, `the_empty_lane_menu_inserts_and_pastes_where_it_was_opened`.
+- From a hand walkthrough on a Mac (new project, clips, notes, play, sections, save and reopen):
+  - The piano roll showed only the first of several notes added one after another until the panel was switched
+    away and back. The bottom panel's rounded corners make Slint keep it as a cached picture (a layer) that it redraws
+    only when a property it read changes, and drawing new notes into our own texture changed none. The renderer now
+    hands its texture to Slint again whenever the picture changed (a new `Image`, which Slint never treats as equal),
+    and skips drawing when nothing changed; the timeline gets the same. Self-test section `note_redraw_steps` checks
+    the screen itself (a snapshot through Slint's caches): before the fix only the first of three notes showed.
+  - ⇧⌘M and Create › MIDI Clip with the playhead inside a clip stacked a second clip exactly on top of it. The new
+    clip now goes after the clips at the playhead and stops at the next one (`insert_at_the_playhead_never_stacks_clips`).
+  - A double-click that makes a clip or renames a section no longer moves the playhead (the first click's seek is
+    taken back), and renaming a section keeps the clip open in the Clip tab.
+  - Saving names the project after its folder (the title and `project.json` used to stay "Untitled"), and the window
+    title says "Edited" while there are unsaved changes.
+
 ### 2026-11-12: return tracks and sends read as one pair
 
 - A return track is the shared effect track ("Return A"); a send is how much of one track goes into it. Every
@@ -537,3 +564,30 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `returns_pill_and_out_menu`, and the self-test's returns section rewritten for the new flow.
 - Not yet: sends from one return track into another (needs engine routing and solo rules), and return rows in the
   timeline without a pan knob.
+
+### 2026-11-12: automate any device control, mute and device on/off
+
+- Every device control's right-click menu starts with "Automate <parameter>": built-in device knobs, buttons, choice
+  switches and menus, plugin cards, and every Synth control (knobs, faders, pills, switches, mod matrix). A device's
+  power switch offers "Automate On"; the channel's volume, pan and M (track header, inspector, mixer) and the
+  inspector's trim, width and mono offer "Automate <name>". Choosing one shows the lanes with that parameter.
+- New lane targets: Track › Mute, Trim, Width, Mono and <device> › On (listed last under each device in the lane
+  picker). Mute, Mono and On are stepped: a value holds until the next point. Built-in choice parameters are stepped
+  too. The M button, the inspector's trim, width and mono, and power switches follow an active lane; clicking a switch
+  while armed and playing writes one step at the playhead. Bounce to new track now carries the strip's trim, width and
+  mono (and their lanes) over to the new track, since the render is taken before them.
+- Lane labels read in the parameter's own units, taken from the device's own text (Hz, dB, ms, ct, choice names,
+  On/Off, the Synth's legacy parameters in Hz, ct, dB, ms and %), and a hovered or dragged point shows its value.
+- Engine: `se_auto_lane_desc.flags` (was padding) with `SE_AUTO_FLAG_STEPPED`; `SE_AUTO_MUTE` (per-sample gain before
+  the fader, replaces the static mute), `SE_AUTO_DEVICE_ON` (per block, replaces `enabled`, with a bypass delay line
+  so switching keeps delay compensation) and `SE_AUTO_TRIM/WIDTH/MONO` (per sample, replace the strip settings).
+  Tests: four engine tests in `test_automation.cpp`, core `switch_lanes_*`, app `automation::tests` (units, picker,
+  right-click menus, switches and strip controls following lanes).
+
+### 2026-11-13: Fine Signal public artwork
+
+Applied the selected fine blue dot material to the public README, feature and sharing artwork.
+The source texture and exact generation prompt live in `docs/art/textures/`; the HTML renderer
+uses it at lower strength behind feature and architecture cards. App source, screenshots,
+installation identities and settings are unchanged. The website uses compressed versions of
+the same material in its own repository.

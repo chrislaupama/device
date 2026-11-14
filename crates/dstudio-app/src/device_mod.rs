@@ -19,6 +19,9 @@ use slint::{ModelRc, SharedString, VecModel};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// `param` of a control menu request that names the device's power switch.
+pub const POWER_PARAM: i32 = -2;
+
 /// LFO card (pt at 100%): width, left block, wave picture.
 const LFO_W: f32 = 440.0;
 const LFO_LEFT_W: f32 = 276.0;
@@ -745,12 +748,19 @@ impl Controller {
     }
 
     /// Right-click on a control: Automate, Modulators (New LFO, the track's
-    /// LFOs, Remove), Macros (inside a chain).
+    /// LFOs, Remove), Macros (inside a chain). On a modulation source (LFO,
+    /// chain head) only Automate. `param` POWER_PARAM is the device's power
+    /// switch: Automate On.
     pub fn mod_menu(&mut self, device: DeviceId, param: i32, x: f32, y: f32) {
         let Some(d) = self.project().device(device) else {
             return;
         };
-        if modu::outputs(d) > 0 {
+        if param == POWER_PARAM {
+            if self.track_of(device).is_some() {
+                let rows: MenuRows = vec![("Automate On".to_string(), String::new(), Some(MenuPick::AutomateOn(device)), false)];
+                self.devices.menu = Some(DevMenu { pos: (x, y), w: 200.0, rows });
+                self.ui_dirty = true;
+            }
             return;
         }
         let Some(mp) = self.mod_param(device, param) else {
@@ -764,6 +774,12 @@ impl Controller {
             ModParam::Plugin(id) => self.plugin_param_info(device, *id).map_or_else(|| format!("Parameter {id}"), |i| i.name),
         };
         let mut rows: MenuRows = vec![(format!("Automate {pname}"), String::new(), Some(MenuPick::Automate(device, mp.clone())), false)];
+        if modu::outputs(d) > 0 {
+            // Sources are not modulation targets themselves.
+            self.devices.menu = Some(DevMenu { pos: (x, y), w: 200.0, rows });
+            self.ui_dirty = true;
+            return;
+        }
         rows.push(("Modulators".to_string(), String::new(), None, true));
         rows.push(("New LFO".to_string(), String::new(), Some(MenuPick::NewLfo(device, mp.clone())), false));
         let linked = |s: &Device, slot: u8| s.links.iter().position(|l| l.slot == slot && l.target == device && l.param == mp);
@@ -870,6 +886,38 @@ impl Controller {
             }
         };
         self.auto_choose(Some(track), target);
+    }
+
+    /// Power switch menu > Automate On: the device's on/off lane.
+    pub(crate) fn mod_automate_on(&mut self, device: DeviceId) {
+        let Some((track, target)) = self.device_on_target(device) else {
+            return;
+        };
+        self.auto_choose(Some(track), target);
+    }
+
+    /// Right press on a channel control (track header, inspector, mixer strip): `kind` 0
+    /// volume, 1 pan, 2 mute, 3 trim, 4 width, 5 mono; `track` < 0 is the master (volume only).
+    pub fn strip_menu(&mut self, track: i32, kind: i32, x: f32, y: f32) {
+        use dstudio_core::AutomationTarget as T;
+        let key = if track < 0 { None } else { Some(TrackId(track as u64)) };
+        if let Some(t) = key
+            && self.project().track(t).is_none()
+        {
+            return;
+        }
+        let (label, target) = match (key, kind) {
+            (_, 0) => ("Automate Volume", T::Volume),
+            (Some(_), 1) => ("Automate Pan", T::Pan),
+            (Some(_), 2) => ("Automate Mute", T::Mute),
+            (Some(_), 3) => ("Automate Trim", T::Trim),
+            (Some(_), 4) => ("Automate Width", T::Width),
+            (Some(_), 5) => ("Automate Mono", T::Mono),
+            _ => return,
+        };
+        let rows: MenuRows = vec![(label.to_string(), String::new(), Some(MenuPick::AutomateTrack(key, target)), false)];
+        self.devices.menu = Some(DevMenu { pos: (x, y), w: 200.0, rows });
+        self.ui_dirty = true;
     }
 
     // ---------------------------------------------------------------- source panels

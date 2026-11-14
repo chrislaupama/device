@@ -111,6 +111,11 @@ impl Hue {
         match target {
             AutomationTarget::Volume => Hue::key("Channel", "Volume"),
             AutomationTarget::Pan => Hue::key("Channel", "Pan"),
+            AutomationTarget::Mute => Hue::key("Channel", "Mute"),
+            AutomationTarget::Trim => Hue::key("Channel", "Trim"),
+            AutomationTarget::Width => Hue::key("Channel", "Width"),
+            AutomationTarget::Mono => Hue::key("Channel", "Mono"),
+            AutomationTarget::DeviceOn { name, .. } => Hue::key(name, "On"),
             AutomationTarget::Synth { param } => Hue::key("Synth", param.name()),
             AutomationTarget::Plugin { name, .. } => Hue::key(device, name),
             AutomationTarget::Builtin { .. } => {
@@ -243,6 +248,11 @@ pub fn norm_of(t: &AutomationTarget, v: f32) -> f32 {
             }
         }
         AutomationTarget::Pan => (v + 1.0) / 2.0,
+        AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } | AutomationTarget::Mono => v,
+        AutomationTarget::Trim | AutomationTarget::Width => {
+            let (lo, hi) = t.range();
+            (v - lo) / (hi - lo)
+        }
         AutomationTarget::Synth { param } => {
             let (lo, hi) = param.range();
             if param.logarithmic() { (v.max(lo) / lo).ln() / (hi / lo).ln() } else { (v - lo) / (hi - lo) }
@@ -262,6 +272,9 @@ pub fn value_of(t: &AutomationTarget, n: f32) -> f32 {
             if a <= db_to_gain(VOLUME_MIN_DB) { VOLUME_MIN_DB } else { (gain_to_db(a) * 100.0).round() / 100.0 }
         }
         AutomationTarget::Pan => ((n * 2.0 - 1.0) * 1000.0).round() / 1000.0,
+        AutomationTarget::Mute | AutomationTarget::DeviceOn { .. } | AutomationTarget::Mono => n.round(),
+        AutomationTarget::Trim => ((n * 48.0 - 24.0) * 10.0).round() / 10.0,
+        AutomationTarget::Width => (n * 200.0).round() / 100.0,
         AutomationTarget::Synth { param } => {
             let (lo, hi) = param.range();
             if param.logarithmic() { lo * (hi / lo).powf(n) } else { lo + (hi - lo) * n }
@@ -280,6 +293,30 @@ pub fn volume_label(db: f32) -> String {
     }
     let r = (db * 10.0).round() / 10.0;
     if r >= 0.0 { format!("+{:.1}", r.abs()) } else { format!("−{:.1}", -r) }
+}
+
+/// Lane value label of a legacy synth parameter, in the parameter's own unit.
+pub fn synth_label(param: SynthParam, v: f32) -> String {
+    use SynthParam::*;
+    use dstudio_core::builtin::{Format, format_value};
+    let (lo, hi) = param.range();
+    match param {
+        FilterCutoff => format_value(Format::Hz, v, "", &[], hi - lo),
+        LfoRate => format_value(Format::Freq, v, "", &[], hi - lo),
+        Osc1Fine | Osc2Fine => format_value(Format::SignedBareZero(0), v, "ct", &[], hi - lo),
+        LfoToPitch | UnisonDetune => format!("{v:.0} ct"),
+        LfoToCutoff => format!("{v:.2} oct"),
+        Glide => format_value(Format::MsAuto, v * 1000.0, "", &[], 2000.0),
+        FilterEnvAmount => format_value(Format::SignedBareZero(0), v * 100.0, "%", &[], 200.0).replace(" %", "%"),
+        Output => {
+            if v <= 1e-4 {
+                "−∞ dB".into()
+            } else {
+                format_value(Format::Db, gain_to_db(v), "", &[], 0.0)
+            }
+        }
+        _ => format!("{:.0}%", v * 100.0),
+    }
 }
 
 /// Keep points within `tol` (fraction of 0..1) of the line through their kept neighbours out.
@@ -380,6 +417,8 @@ pub struct AutoUi {
     pub pending: Option<(LaneKey, AutomationLane)>,
     pub writes: Vec<WritePass>,
     last_down: Option<(Instant, LaneKey, AutomationTarget, usize)>,
+    /// Point under the pointer (its value is shown above it).
+    pub hover: Option<(LaneKey, AutomationTarget, usize)>,
     /// Write passes committed (counter for tests / diagnostics).
     pub writes_committed: usize,
     /// Display names of every plugin device the project has had (`remember_device_names`, after
@@ -398,6 +437,7 @@ impl AutoUi {
         self.sel = None;
         self.gesture = None;
         self.pending = None;
+        self.hover = None;
         self.writes.clear();
     }
 }
@@ -446,6 +486,13 @@ impl Controller {
         match target {
             AutomationTarget::Volume => clamp_db(t.gain),
             AutomationTarget::Pan => t.pan,
+            AutomationTarget::Mute => f32::from(u8::from(t.mute)),
+            AutomationTarget::Trim => t.trim_db,
+            AutomationTarget::Width => t.width,
+            AutomationTarget::Mono => f32::from(u8::from(t.mono)),
+            AutomationTarget::DeviceOn { device, .. } => {
+                f32::from(u8::from(t.devices.iter().chain(t.instrument_plugin.iter()).find(|d| d.id == *device).is_none_or(|d| d.enabled)))
+            }
             AutomationTarget::Synth { param } => param.get(&t.synth),
             AutomationTarget::Plugin { device, param, .. } => self
                 .engine
@@ -507,12 +554,25 @@ impl Controller {
         match target {
             AutomationTarget::Volume => volume_label(v),
             AutomationTarget::Pan => fmt_pan(v),
-            AutomationTarget::Synth { .. } => format!("{v:.2}"),
+            AutomationTarget::Mute => (if v >= 0.5 { "Muted" } else { "Unmuted" }).into(),
+            AutomationTarget::Trim => crate::controller::fmt_trim(v),
+            AutomationTarget::Width => crate::controller::fmt_width(v),
+            AutomationTarget::Mono => (if v >= 0.5 { "On" } else { "Off" }).into(),
+            AutomationTarget::DeviceOn { .. } => (if v >= 0.5 { "On" } else { "Off" }).into(),
+            AutomationTarget::Synth { param } => synth_label(*param, v),
             AutomationTarget::Plugin { device, param, .. } => {
-                let _ = key;
                 self.engine.plugin_param_text(*device, *param, v).unwrap_or_else(|| format!("{:.0}%", v * 100.0))
             }
-            AutomationTarget::Builtin { .. } => target.builtin_param().map_or_else(|| format!("{v:.2}"), |p| p.format(v)),
+            AutomationTarget::Builtin { device, param, .. } => {
+                // The device's own text (state-dependent units, e.g. a synced rate shows "1/8"), so
+                // the lane reads exactly like the control it automates.
+                let Some(q) = target.builtin_param() else { return format!("{v:.2}") };
+                let p = self.project();
+                key.and_then(|k| p.track(k))
+                    .and_then(|t| t.devices.iter().chain(t.instrument_plugin.iter()).find(|d| d.id == *device))
+                    .and_then(|d| dstudio_core::builtin::def_of(d).filter(|def| def.param(param).is_some()).map(|def| def.text(d, q, v)))
+                    .unwrap_or_else(|| q.format(v))
+            }
         }
     }
 
@@ -679,23 +739,81 @@ impl Controller {
         self.auto_rows()
             .into_iter()
             .filter(|r| r.master || r.pinned || (r.y0 >= timeline::RULER_H - 1.0 && r.y0 + 12.0 <= bottom))
-            .map(|r| {
+            .filter_map(|r| {
                 let val = self.lane(r.key, &r.target).and_then(|l| l.value_at(t0)).unwrap_or_else(|| self.static_value(r.key, &r.target));
                 let ly = r.y_of(norm_of(&r.target, val));
                 let y = (ly - 9.5 - 6.5).clamp(r.y0 + 1.0, r.y0 + r.h - 14.0);
-                {
-                    let hue = self.lane_hue(&r.target);
-                    AutoLabel {
-                        x: 1.5,
-                        y,
-                        text: self.auto_label(r.key, &r.target, val).into(),
-                        state: self.auto_style(r.key, &r.target).code(),
-                        accent: hue.slint_bright(),
-                        dim: hue.slint_dim(),
-                    }
+                // A row cut off by the pinned rows keeps its label only while the label is in view.
+                if !Self::label_visible(&r, y, bottom) {
+                    return None;
                 }
+                let hue = self.lane_hue(&r.target);
+                Some(AutoLabel {
+                    x: 1.5,
+                    y,
+                    text: self.auto_label(r.key, &r.target, val).into(),
+                    state: self.auto_style(r.key, &r.target).code(),
+                    accent: hue.slint_bright(),
+                    dim: hue.slint_dim(),
+                })
             })
+            .chain(self.point_readout().filter(|(r, l)| Self::label_visible(r, l.y, bottom)).map(|(_, l)| l))
             .collect()
+    }
+
+    /// A label at `y` on a scrolling row is drawn only between the ruler and the pinned rows.
+    fn label_visible(r: &Row, y: f32, bottom: f32) -> bool {
+        r.master || r.pinned || (y >= timeline::RULER_H - 1.0 && y + 13.0 <= bottom)
+    }
+
+    /// The point being dragged (one point) or hovered: (row, lane, index).
+    fn readout_point(&self) -> Option<(Row, AutomationLane, usize)> {
+        if let Some(Gesture::Points { row, idx, .. }) = &self.auto.gesture {
+            let [i] = idx.as_slice() else { return None };
+            return Some((row.clone(), self.lane(row.key, &row.target)?, *i));
+        }
+        if self.auto.gesture.is_some() {
+            return None;
+        }
+        let (key, target, i) = self.auto.hover.as_ref()?;
+        let row = self.auto_rows().into_iter().find(|r| r.key == *key && r.target == *target)?;
+        Some((row, self.lane(*key, target)?, *i))
+    }
+
+    /// Value of the hovered or dragged point, in the parameter's unit, just above the point.
+    fn point_readout(&self) -> Option<(Row, AutoLabel)> {
+        let (row, lane, i) = self.readout_point()?;
+        let p = lane.points.get(i)?;
+        let hue = self.lane_hue(&row.target);
+        let py = row.y_of(norm_of(&row.target, p.value));
+        // Above the point; below it when the point sits at the top of the row.
+        let y = if py - 18.0 >= row.y0 { py - 18.0 } else { py + 5.0 };
+        let label = AutoLabel {
+            x: self.x_of_ticks(p.time) + 5.0,
+            y: y.min(row.y0 + row.h - 14.0),
+            text: self.auto_label(row.key, &row.target, p.value).into(),
+            state: LineStyle::Active.code(),
+            accent: hue.slint_bright(),
+            dim: hue.slint_dim(),
+        };
+        Some((row, label))
+    }
+
+    /// Pointer over the lanes (no button held): tracks the point under it for the value readout.
+    pub fn auto_hover(&mut self, x: f32, y: f32) {
+        let hit = if self.auto.shown && self.auto.gesture.is_none() {
+            self.row_at(y).and_then(|row| {
+                let lane = self.lane(row.key, &row.target)?;
+                let i = self.point_hit(&row, &lane, x, y)?;
+                Some((row.key, row.target, i))
+            })
+        } else {
+            None
+        };
+        if hit != self.auto.hover {
+            self.auto.hover = hit;
+            self.ui_dirty = true;
+        }
     }
 
     // ---------------------------------------------------------------- header toggles
@@ -768,18 +886,31 @@ impl Controller {
         let mut cats = vec![("Track".to_string(), vec![e("Volume", AutomationTarget::Volume)])];
         let Some(t) = key.and_then(|k| self.project().track(k)) else { return cats };
         cats[0].1.push(e("Pan", AutomationTarget::Pan));
+        for (label, target) in [
+            ("Mute", AutomationTarget::Mute),
+            ("Trim", AutomationTarget::Trim),
+            ("Width", AutomationTarget::Width),
+            ("Mono", AutomationTarget::Mono),
+        ] {
+            cats[0].1.push(e(label, target));
+        }
+        let on = |d: &dstudio_core::Device| {
+            let target = self.device_on_target(d.id).map(|(_, x)| x);
+            e("On", target.unwrap_or_else(|| AutomationTarget::DeviceOn { device: d.id, name: d.display_name().to_string() }))
+        };
         if t.kind == TrackKind::Instrument && t.instrument_plugin.is_none() {
             cats.push(("Synth".into(), SynthParam::ALL.iter().map(|p| e(p.name(), AutomationTarget::Synth { param: *p })).collect()));
         }
         for d in t.instrument_plugin.iter().chain(t.devices.iter()) {
             if let Some(def) = dstudio_core::builtin::def_of(d) {
-                let items = def
+                let mut items: Vec<_> = def
                     .params
                     .iter()
                     .filter(|p| p.automatable)
                     .map(|p| e(p.name, AutomationTarget::Builtin { device: d.id, device_type: def.id.into(), param: p.id.into() }))
                     .collect();
-                cats.push((def.name.into(), items));
+                items.push(on(d));
+                cats.push((d.display_name().into(), items));
                 continue;
             }
             let mut params: Vec<_> = self.engine.plugin_params(d.id).into_iter().filter(|p| p.automatable).collect();
@@ -793,10 +924,8 @@ impl Controller {
                 }
                 items.push(e(&p.name, AutomationTarget::Plugin { device: d.id, param: p.id, name: p.name.clone() }));
             }
-            if items.is_empty() {
-                items.push(PickEntry { label: "No automatable parameters".into(), target: None });
-            }
-            cats.push((d.plugin.name.clone(), items));
+            items.push(on(d));
+            cats.push((d.display_name().into(), items));
         }
         cats
     }
@@ -823,6 +952,8 @@ impl Controller {
 
     pub(crate) fn auto_choose(&mut self, key: LaneKey, target: AutomationTarget) {
         self.auto.targets.insert(key, target);
+        // Choosing a parameter from a control's menu shows the lanes, so the pick is visible.
+        self.auto.shown = true;
         self.auto.picker = None;
         self.auto.sel = None;
         self.auto_sync_view();
@@ -1295,6 +1426,70 @@ impl Controller {
         (gain, vol.is_some(), pan.unwrap_or(t.pan), pan.is_some())
     }
 
+    /// A switch (track mute, device power) as heard now: the active lane's value at the
+    /// playhead (on from 0.5), else the static switch.
+    pub fn switch_now(&self, key: LaneKey, target: &AutomationTarget, fallback: bool) -> bool {
+        self.auto_value_now(key, target).map_or(fallback, |v| v >= 0.5)
+    }
+
+    /// A switch clicked (track M, device power). True when automation took the click: written
+    /// while armed and playing, or blocked because the lane is active. `fallback` is the static
+    /// switch.
+    pub fn auto_switch(&mut self, key: LaneKey, target: AutomationTarget, fallback: bool) -> bool {
+        let on = self.switch_now(key, &target, fallback);
+        let (old, new) = if on { (1.0, 0.0) } else { (0.0, 1.0) };
+        if self.auto.armed && self.engine.transport().playing {
+            // A switch has no gesture to follow: the click writes one step at the playhead that
+            // holds until the lane's next point (a new lane keeps the old state before it).
+            let now = self.playhead_ticks();
+            let mut lane = self.model_lane(key, &target).cloned().unwrap_or_else(|| AutomationLane::new(target.clone()));
+            if lane.points.is_empty() && now > 0 {
+                lane.points.push(AutoPoint { time: 0, value: old, curve: 0.0 });
+            }
+            lane.points.retain(|p| p.time != now);
+            lane.points.push(AutoPoint { time: now, value: new, curve: 0.0 });
+            lane.points.sort_by_key(|p| p.time);
+            lane.enabled = true;
+            self.doc.seal_coalescing();
+            if self.execute(Command::SetAutomationLane { track: key, target, lane: Some(lane) }) {
+                self.auto.writes_committed += 1;
+            }
+            self.ui_dirty = true;
+            return true;
+        }
+        self.auto_intercept(key, target, new)
+    }
+
+    /// The on/off target of a device: the lane it already has (named when it was made), else a
+    /// new target named after the device.
+    pub fn device_on_target(&self, device: dstudio_core::DeviceId) -> Option<(TrackId, AutomationTarget)> {
+        let t = self.project().tracks.iter().find(|t| t.devices.iter().chain(t.instrument_plugin.iter()).any(|d| d.id == device))?;
+        let d = t.devices.iter().chain(t.instrument_plugin.iter()).find(|d| d.id == device)?;
+        let target = t
+            .automation
+            .iter()
+            .map(|l| &l.target)
+            .find(|x| matches!(x, AutomationTarget::DeviceOn { device: id, .. } if *id == device))
+            .cloned()
+            .unwrap_or_else(|| AutomationTarget::DeviceOn { device, name: d.display_name().to_string() });
+        Some((t.id, target))
+    }
+
+    /// Channel strip (trim dB, width, mono) as heard now: active lanes, else the static settings.
+    pub fn strip_now(&self, id: TrackId) -> (f32, f32, bool) {
+        let Some(t) = self.project().track(id) else { return (0.0, 1.0, false) };
+        (
+            self.auto_value_now(Some(id), &AutomationTarget::Trim).unwrap_or(t.trim_db),
+            self.auto_value_now(Some(id), &AutomationTarget::Width).unwrap_or(t.width),
+            self.switch_now(Some(id), &AutomationTarget::Mono, t.mono),
+        )
+    }
+
+    /// Whether a device is on now (its power lane, else its switch).
+    pub fn device_on_now(&self, d: &dstudio_core::Device) -> bool {
+        self.device_on_target(d.id).map_or(d.enabled, |(t, target)| self.switch_now(Some(t), &target, d.enabled))
+    }
+
     /// Any enabled lane with points (controls then follow the playhead every frame).
     pub fn auto_any_active(&self) -> bool {
         let p = self.project();
@@ -1309,7 +1504,8 @@ impl Controller {
         for (i, id) in ids.iter().enumerate() {
             let (gain, va, pan, pa) = self.track_feedback(*id);
             if let Some(r) = self.tracks_model.row_data(i) {
-                let new = TrackRow { volume_pos: slider_from_gain(gain), pan, vol_auto: va, pan_auto: pa, ..r.clone() };
+                let mute = self.project().track(*id).is_some_and(|t| self.switch_now(Some(*id), &AutomationTarget::Mute, t.mute));
+                let new = TrackRow { volume_pos: slider_from_gain(gain), pan, vol_auto: va, pan_auto: pa, mute, ..r.clone() };
                 if new != r {
                     self.tracks_model.set_row_data(i, new);
                 }
@@ -1332,6 +1528,17 @@ impl Controller {
             }
             s.set_sel_vol_auto(va);
             s.set_sel_pan_auto(pa);
+            if let Some(t) = self.project().track(id) {
+                s.set_sel_mute(self.switch_now(Some(id), &AutomationTarget::Mute, t.mute));
+            }
+            let (trim, width, mono) = self.strip_now(id);
+            if (s.get_sel_trim() - trim).abs() > 1e-6 || (s.get_sel_width() - width).abs() > 1e-6 || s.get_sel_mono() != mono {
+                s.set_sel_trim(trim);
+                s.set_sel_trim_text(crate::controller::fmt_trim(trim).into());
+                s.set_sel_width(width);
+                s.set_sel_width_text(crate::controller::fmt_width(width).into());
+                s.set_sel_mono(mono);
+            }
         }
         let mv = self.auto_value_now(None, &AutomationTarget::Volume);
         let mg = mv.map(|db| if db <= VOLUME_MIN_DB { 0.0 } else { db_to_gain(db) }).unwrap_or(self.project().master_gain);
@@ -1408,7 +1615,7 @@ impl Controller {
                     instrument: t.kind == TrackKind::Instrument,
                     color: crate::controller::slint_color(crate::controller::track_color(t.color)),
                     selected: Some(t.id) == self.selected_track,
-                    mute: t.mute,
+                    mute: self.switch_now(Some(t.id), &AutomationTarget::Mute, t.mute),
                     solo: t.solo,
                     arm: t.arm,
                     monitor: t.monitor,
@@ -1600,6 +1807,143 @@ mod tests {
         assert_eq!(volume_label(-0.04), "+0.0");
         assert_eq!(volume_label(-6.0), "−6.0");
         assert_eq!(volume_label(-60.0), "−∞");
+    }
+
+    #[test]
+    fn synth_lanes_read_in_the_parameters_own_units() {
+        assert_eq!(synth_label(SynthParam::FilterCutoff, 440.0), "440 Hz");
+        assert_eq!(synth_label(SynthParam::FilterCutoff, 2093.0), "2.09 kHz");
+        assert_eq!(synth_label(SynthParam::LfoRate, 5.0), "5.0 Hz");
+        assert_eq!(synth_label(SynthParam::Osc1Fine, 12.0), "+12 ct");
+        assert_eq!(synth_label(SynthParam::Osc2Fine, -7.0), "−7 ct");
+        assert_eq!(synth_label(SynthParam::Glide, 0.04), "40.0 ms");
+        assert_eq!(synth_label(SynthParam::Output, 1.0), "+0.0 dB");
+        assert_eq!(synth_label(SynthParam::Output, 0.0), "−∞ dB");
+        assert_eq!(synth_label(SynthParam::FilterEnvAmount, -0.3), "−30%");
+        assert_eq!(synth_label(SynthParam::Osc1Level, 0.5), "50%");
+    }
+
+    /// A project with a Compressor on the first track: (controller, track, device).
+    fn with_compressor() -> (Controller, TrackId, dstudio_core::DeviceId) {
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, dstudio_core::Project::default());
+        let t = c.project().tracks[0].id;
+        let device = dstudio_core::builtin::find("compressor").unwrap().instantiate();
+        assert!(c.execute(Command::AddDevice { track: t, index: None, device }));
+        let d = c.project().track(t).unwrap().devices[0].id;
+        (c, t, d)
+    }
+
+    #[test]
+    fn device_lanes_read_like_their_controls() {
+        let (c, t, d) = with_compressor();
+        let def = dstudio_core::builtin::find("compressor").unwrap();
+        let attack = AutomationTarget::Builtin { device: d, device_type: "compressor".into(), param: "attack".into() };
+        let dev = c.project().track(t).unwrap().devices[0].clone();
+        assert_eq!(c.auto_label(Some(t), &attack, 10.0), def.text(&dev, def.param("attack").unwrap(), 10.0));
+        assert!(c.auto_label(Some(t), &attack, 10.0).ends_with("ms"), "attack reads in ms, not percent");
+        assert_eq!(c.auto_label(Some(t), &AutomationTarget::Mute, 1.0), "Muted");
+        let on = AutomationTarget::DeviceOn { device: d, name: "Compressor".into() };
+        assert_eq!((c.auto_label(Some(t), &on, 1.0), c.auto_label(Some(t), &on, 0.0)), ("On".into(), "Off".into()));
+        assert_eq!((value_of(&on, 0.3), value_of(&on, 0.7)), (0.0, 1.0), "switch lanes snap to off / on");
+        assert_eq!(c.static_value(Some(t), &on), 1.0);
+        assert_eq!(c.auto_label(Some(t), &AutomationTarget::Trim, -3.5), "−3.5 dB");
+        assert_eq!(c.auto_label(Some(t), &AutomationTarget::Width, 1.5), "150%");
+        assert_eq!(c.auto_label(Some(t), &AutomationTarget::Mono, 1.0), "On");
+        assert_eq!(value_of(&AutomationTarget::Trim, norm_of(&AutomationTarget::Trim, 6.0)), 6.0);
+        assert_eq!(value_of(&AutomationTarget::Width, 0.75), 1.5);
+    }
+
+    #[test]
+    fn the_picker_lists_mute_and_each_devices_on_switch() {
+        let (c, t, d) = with_compressor();
+        let cats = c.pick_categories(Some(t));
+        let labels = |i: usize| cats[i].1.iter().map(|e| e.label.as_str()).collect::<Vec<_>>();
+        assert_eq!(labels(0), ["Volume", "Pan", "Mute", "Trim", "Width", "Mono"]);
+        let comp = cats.iter().position(|(name, _)| name == "Compressor").expect("device category");
+        let last = cats[comp].1.last().unwrap();
+        assert_eq!(last.label, "On");
+        assert!(matches!(&last.target, Some(AutomationTarget::DeviceOn { device, .. }) if *device == d));
+        assert_eq!(c.pick_categories(None).len(), 1, "the master only has volume");
+    }
+
+    #[test]
+    fn labels_under_the_pinned_rows_are_hidden() {
+        let row =
+            |master: bool| Row { key: None, target: AutomationTarget::Volume, y0: 300.0, h: 60.0, master, extra: false, pinned: false };
+        let bottom = 330.0;
+        assert!(Controller::label_visible(&row(false), 310.0, bottom), "in view above the pinned rows");
+        assert!(!Controller::label_visible(&row(false), 340.0, bottom), "covered by the pinned rows");
+        assert!(!Controller::label_visible(&row(false), 2.0, bottom), "under the ruler");
+        assert!(Controller::label_visible(&row(true), 340.0, bottom), "the master row is never covered");
+    }
+
+    #[test]
+    fn right_click_menus_open_the_parameters_lane() {
+        let (mut c, t, d) = with_compressor();
+        let def = dstudio_core::builtin::find("compressor").unwrap();
+        let first = |c: &Controller| c.devices.menu.as_ref().map(|m| m.rows[0].0.clone());
+        c.mod_menu(d, def.index_of("attack").unwrap() as i32, 10.0, 10.0);
+        assert_eq!(first(&c).as_deref(), Some("Automate Attack"));
+        c.devmenu_pick(0);
+        assert!(c.auto.shown, "choosing Automate shows the lanes");
+        assert!(matches!(c.auto_target(Some(t)), AutomationTarget::Builtin { ref param, .. } if param == "attack"));
+        c.mod_menu(d, crate::device_mod::POWER_PARAM, 10.0, 10.0);
+        assert_eq!(first(&c).as_deref(), Some("Automate On"));
+        c.devmenu_pick(0);
+        assert!(matches!(c.auto_target(Some(t)), AutomationTarget::DeviceOn { device, .. } if device == d));
+        for (kind, label, target) in [
+            (0, "Automate Volume", AutomationTarget::Volume),
+            (1, "Automate Pan", AutomationTarget::Pan),
+            (2, "Automate Mute", AutomationTarget::Mute),
+            (3, "Automate Trim", AutomationTarget::Trim),
+            (4, "Automate Width", AutomationTarget::Width),
+            (5, "Automate Mono", AutomationTarget::Mono),
+        ] {
+            c.strip_menu(t.0 as i32, kind, 10.0, 10.0);
+            assert_eq!(first(&c).as_deref(), Some(label));
+            c.devmenu_pick(0);
+            assert_eq!(c.auto_target(Some(t)), target);
+        }
+        c.devices.menu = None;
+        c.strip_menu(-1, 2, 10.0, 10.0);
+        assert!(c.devices.menu.is_none(), "the master has no mute lane");
+    }
+
+    #[test]
+    fn switches_follow_an_active_lane() {
+        let (mut c, t, d) = with_compressor();
+        let mut lane = AutomationLane::new(AutomationTarget::Mute);
+        lane.points = vec![AutoPoint { time: 0, value: 1.0, curve: 0.0 }];
+        assert!(c.execute(Command::SetAutomationLane { track: Some(t), target: AutomationTarget::Mute, lane: Some(lane) }));
+        assert!(c.switch_now(Some(t), &AutomationTarget::Mute, false), "the lane mutes the track");
+        let rev = c.doc.revision();
+        c.toggle_mute(t);
+        assert_eq!(c.doc.revision(), rev, "the lane decides, the click only explains");
+        assert!(c.status_text().is_some_and(|s| s.contains("automated")));
+
+        let (_, on) = c.device_on_target(d).unwrap();
+        let mut lane = AutomationLane::new(on.clone());
+        lane.points = vec![AutoPoint { time: 0, value: 0.0, curve: 0.0 }];
+        assert!(c.execute(Command::SetAutomationLane { track: Some(t), target: on, lane: Some(lane) }));
+        let dev = c.project().device(d).unwrap().clone();
+        assert!(dev.enabled && !c.device_on_now(&dev), "the power lane switches the device off");
+        // Strip lanes drive the inspector's trim, width and mono; moving the knob explains.
+        let mut trim = AutomationLane::new(AutomationTarget::Trim);
+        trim.points = vec![AutoPoint { time: 0, value: -6.0, curve: 0.0 }];
+        let mut mono = AutomationLane::new(AutomationTarget::Mono);
+        mono.points = vec![AutoPoint { time: 0, value: 1.0, curve: 0.0 }];
+        for lane in [trim, mono] {
+            let target = lane.target.clone();
+            assert!(c.execute(Command::SetAutomationLane { track: Some(t), target, lane: Some(lane) }));
+        }
+        assert_eq!(c.strip_now(t), (-6.0, 1.0, true));
+        let rev = c.doc.revision();
+        assert!(!c.set_track_trim(t, 3.0) && !c.toggle_track_mono(t));
+        assert_eq!(c.doc.revision(), rev);
+        // A renamed device keeps finding its lane.
+        assert!(c.execute(Command::SetDeviceLabel { device: d, label: Some("Glue".into()) }));
+        assert!(matches!(c.device_on_target(d), Some((_, AutomationTarget::DeviceOn { name, .. })) if name == "Compressor"));
     }
 
     #[test]

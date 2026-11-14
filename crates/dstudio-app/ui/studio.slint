@@ -351,6 +351,7 @@ export struct MenuItem { label: string, shortcut: string, enabled: bool, separat
 export global Studio {
     // ---- project / status ----
     in property <string> project-name: "Untitled";
+    in property <bool> project-edited;          // unsaved changes (window title)
     in property <string> status-text;
     // A clip render (Consolidate, Bounce, Export audio) runs on a worker: label with percent, bar fill 0..1, Cancel.
     in property <bool> render-busy;
@@ -402,7 +403,6 @@ export global Studio {
     in property <[RulerLabel]> ruler-labels;
     in property <[SectionLabel]> section-labels;
     in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
-    callback lane-double(length, length);          // lane x, y
     in property <[ClipLabel]> clip-labels;
     // Header minimap: bars, the visible window (fractions of the whole-song map), playhead (< 0 hidden).
     in property <[MiniBar]> minimap-bars;
@@ -791,6 +791,8 @@ export global Studio {
     callback synth-pill(int, int, length, length, length); // menu action, argument, window x, y, width
     callback synth-remove(int, int);             // 0 route / 1 mapping, slot
     callback synth-knob-menu(int, length, length); // right click: param index, window x, y
+    callback strip-menu(int, int, length, length);        // right press on a channel control: track (-1 master), 0 volume / 1 pan / 2 mute / 3 trim / 4 width / 5 mono
+    callback synth-pill-menu(int, int, length, length);   // right press on a pill: the menu of its parameter
     callback synth-rail(int, int, length, length); // source, phase (0 down 1 move 2 up), card x, y
     callback synth-scope-drag(int, int, length, length); // picture slot, phase, local x, y
     callback synth-macro-select(int);

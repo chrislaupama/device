@@ -165,9 +165,10 @@ struct Args {
     /// reference-live (100 % zoom): the default project
     /// with the assistant panel open and the automation lanes shown.
     live_state: bool,
-    /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
-    /// an expanded extra lane, master) for review; the second also opens the picker with the
-    /// Synth submenu.
+    /// review-automation / review-automation-picker / review-automation-menu: lanes with points
+    /// (active, disabled, curved, an expanded extra lane, master) for review; the second also
+    /// opens the picker with the Synth submenu; the third shows the Synth's Cutoff lane with a
+    /// hovered point's readout and opens the Cutoff knob's right-click menu.
     automation_review: u8,
     /// review-track-heights / review-bottom-collapsed: the demo tracks at 0.25x, 0.5x and 2x
     /// height; the second instead collapses the bottom panel to its tab row.
@@ -496,6 +497,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-automation-picker" => {
                     a.reference_default = true;
                     a.automation_review = 2;
+                }
+                "review-automation-menu" => {
+                    a.reference_default = true;
+                    a.automation_review = 3;
                 }
                 "reference-devices-effects" => {
                     a.reference_default = true;
@@ -871,7 +876,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         }
         "draw_mode.toggle" => ctl.borrow_mut().auto_toggle_draw(),
         "clip.insert_midi" => {
-            ctl.borrow_mut().insert_midi_clip();
+            ctl.borrow_mut().insert_and_open_midi_clip();
         }
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
         "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
@@ -1731,6 +1736,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
             c.auto_picker_pick(1);
         }
+        if args.automation_review == 3
+            && let Some(dev) = c.synth_device()
+        {
+            let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
+            let target = AutomationTarget::Builtin { device: dev, device_type: def.id.into(), param: "cutoff".into() };
+            let points = vec![pt(0, 300.0, 0.0), pt(12, 4000.0, 0.0), pt(20, 900.0, 0.0)];
+            c.auto_commit(Some(inst), AutomationLane { target: target.clone(), enabled: true, points });
+            c.auto.targets.insert(Some(inst), target.clone());
+            c.auto.hover = Some((Some(inst), target, 1));
+            // Audio's lanes folded so the Instrument row (and its lane in Hz) is in view.
+            c.auto.expanded.remove(&audio);
+            if let Some(i) = def.index_of("cutoff") {
+                c.synth_knob_menu(i, 560.0, 640.0);
+            }
+        }
     }
     // The dropdown opens once its editor is on screen (the audio clip state imports first).
     let clip_menu_timer = slint::Timer::default();
@@ -2338,15 +2358,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
-    on!(on_lane_double, |c, x: f32, y: f32| {
-        c.section_double(x, y);
-    });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
+        // A second press that completes a double-click acts on its own, and so do its moves and
+        // release (src/clipedit.rs). It leaves press_epoch alone: a bump moves keyboard focus back
+        // to the main area, away from a rename field the double-click just opened.
         if kind == 0 {
-            c.press_epoch = c.press_epoch.wrapping_add(1);
             c.snap.bypass = cmd;
+            c.lane_press_used = c.lane_press_double(x, y);
+            if !c.lane_press_used {
+                c.press_epoch = c.press_epoch.wrapping_add(1);
+            }
+        } else if kind == 2 {
+            c.lane_release(x, y);
         }
-        c.pointer_mods(kind, x, y, shift, alt)
+        if !c.lane_press_used {
+            c.pointer_mods(kind, x, y, shift, alt)
+        }
+        if kind == 2 {
+            c.lane_press_used = false;
+        }
     });
     on!(on_snap_toggle, |c| c.snap_toggle());
     on!(on_snap_menu_toggle, |c, x: f32, y: f32| c.snap_menu_toggle(x, y));
@@ -2384,6 +2414,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_synth_pill, |c, action: i32, arg: i32, x: f32, y: f32, w: f32| c.synth_pill(action, arg.max(0) as usize, x, y, w));
     on!(on_synth_remove, |c, kind: i32, slot: i32| c.synth_remove(kind, slot.max(0) as usize));
     on!(on_synth_knob_menu, |c, id: i32, x: f32, y: f32| c.synth_knob_menu(id.max(0) as usize, x, y));
+    on!(on_strip_menu, |c, track: i32, kind: i32, x: f32, y: f32| c.strip_menu(track, kind, x, y));
+    on!(on_synth_pill_menu, |c, action: i32, arg: i32, x: f32, y: f32| c.synth_pill_menu(action, arg.max(0) as usize, x, y));
     on!(on_synth_rail, |c, src: i32, phase: i32, x: f32, y: f32| c.synth_rail(src.max(0) as usize, phase, x, y));
     on!(on_synth_scope_drag, |c, slot: i32, phase: i32, x: f32, y: f32| c.synth_scope_drag(slot.max(0) as usize, phase, x, y));
     on!(on_synth_macro_select, |c, m: i32| c.synth_macro_select(m.max(0) as usize));
@@ -2745,6 +2777,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 drop(c);
                 // Studio global is reachable through any component handle; avoid holding a strong ref.
                 LANE_CURSOR.with(|lc| lc.set(cur));
+            }
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.auto_hover(x, y);
             }
         });
     }
@@ -3196,19 +3231,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     let size = ((c.lanes_size.0 * scale).round() as u32, (c.lanes_size.1 * scale).round() as u32);
                     let f = &mut *f;
                     if let Some(r) = f.renderer.as_mut() {
-                        if let Some(tex) = r.ensure_target(size) {
-                            match gpu::to_slint_image(tex) {
-                                Ok(img) => app.global::<Studio>().set_timeline_image(img),
-                                Err(e) => eprintln!("timeline texture import failed: {e}"),
-                            }
-                        }
+                        r.ensure_target(size);
                         f.tex = r.target_size();
                         r.sync_peaks(c.peaks.generation, &c.peaks.data);
                         let auto = c.auto_scene(scale);
                         let mut sc = c.scene(scale);
                         sc.auto = auto.as_ref();
                         timeline::build(&mut f.dl, &sc);
-                        r.render(&f.dl);
+                        if let Some(tex) = r.render(&f.dl) {
+                            match gpu::to_slint_image(tex) {
+                                Ok(img) => app.global::<Studio>().set_timeline_image(img),
+                                Err(e) => eprintln!("timeline texture import failed: {e}"),
+                            }
+                        }
                     }
                     // Clip editor texture (only while a MIDI or audio clip is open in the Clip tab).
                     let pr_vis = c.clip_editor_visible();
@@ -3223,15 +3258,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let notes = c.pr_notes();
                         if let (false, Some(r), Some(sc)) = (c.seq_visible(), f.pr_renderer.as_mut(), c.pr_scene(scale, &notes)) {
                             let phys = ((size.0 * scale).round() as u32, (size.1 * scale).round() as u32);
-                            if let Some(tex) = r.ensure_target(phys) {
+                            r.ensure_target(phys);
+                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
+                            pianoroll::build(&mut f.pr_dl, &sc);
+                            if let Some(tex) = r.render(&f.pr_dl) {
                                 match gpu::to_slint_image(tex) {
                                     Ok(img) => app.global::<Studio>().set_pr_image(img),
                                     Err(e) => eprintln!("piano roll texture import failed: {e}"),
                                 }
                             }
-                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
-                            pianoroll::build(&mut f.pr_dl, &sc);
-                            r.render(&f.pr_dl);
                         }
                     }
                     f.pr_visible = pr_vis;
