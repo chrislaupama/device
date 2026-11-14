@@ -12334,7 +12334,12 @@ fn zoom_fit_steps() -> Vec<Step> {
             Box::new(|a, ctl| {
                 {
                     let mut c = ctl.borrow_mut();
-                    let id = c.project().tracks.iter().flat_map(|t| t.clips.iter().map(|cl| cl.id).chain(t.midi_clips.iter().map(|m| m.id))).next();
+                    let id = c
+                        .project()
+                        .tracks
+                        .iter()
+                        .flat_map(|t| t.clips.iter().map(|cl| cl.id).chain(t.midi_clips.iter().map(|m| m.id)))
+                        .next();
                     c.select_clip(id);
                     c.rebuild_vis();
                 }
@@ -12362,9 +12367,10 @@ fn zoom_fit_steps() -> Vec<Step> {
                 let bottom = c.view.track_top(n.saturating_sub(1)) + c.view.track_span(n.saturating_sub(1));
                 let limit = c.lanes_size.1 - c.view.footer_h();
                 let fills = h0 == lo || h0 == hi || (bottom <= limit + 0.5 && bottom > limit - 2.0 * shown.len() as f32);
-                (same && fills && c.view.scroll_y == 0.0)
-                    .then_some(())
-                    .ok_or(format!("heights {:?} bottom {bottom} limit {limit}", shown.iter().map(|&i| p.tracks[i].height).collect::<Vec<_>>()))
+                (same && fills && c.view.scroll_y == 0.0).then_some(()).ok_or(format!(
+                    "heights {:?} bottom {bottom} limit {limit}",
+                    shown.iter().map(|&i| p.tracks[i].height).collect::<Vec<_>>()
+                ))
             }),
         ),
         DoC(
@@ -12385,7 +12391,6 @@ fn zoom_fit_steps() -> Vec<Step> {
         ),
     ]
 }
-
 
 /// Track rename: double-click the selected track's name in the inspector, type, Enter. An
 /// empty name and Escape leave the name alone; undo restores it.
