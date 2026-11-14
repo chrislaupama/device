@@ -165,7 +165,7 @@ fn write_render(
     let (path, target, bits) = match out {
         Output::New { dir, stem } => {
             std::fs::create_dir_all(dir).map_err(|e| failed(dir, e.to_string()))?;
-            let (path, _) = create_free_file(dir, stem).map_err(|e| failed(dir, e))?;
+            let (path, _) = create_free_file(dir, stem, "wav").map_err(|e| failed(dir, e))?;
             (path.clone(), path, 24)
         }
         Output::Export { path, bits } => {

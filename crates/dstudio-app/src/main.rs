@@ -57,6 +57,7 @@ mod live_set;
 mod midi_in;
 mod minimap;
 mod mixer;
+mod mp3;
 mod panel_fields;
 mod panel_graph;
 mod panel_multiband;
@@ -426,6 +427,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-export-range" => {
                     a.reference_default = true;
                     a.dialog_state = 9;
+                }
+                "review-export-mp3" => {
+                    a.reference_default = true;
+                    a.dialog_state = 10;
                 }
                 "review-undo-history" => {
                     a.reference_default = true;
@@ -2174,6 +2179,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_run, |c| c.export_run());
     on!(on_export_bits, |c, b: bool| c.export_set_bits(b));
     on!(on_export_rate, |c, b: bool| c.export_set_rate(b));
+    on!(on_export_format, |c, b: bool| c.export_set_mp3(b));
+    on!(on_export_kbps, |c, b: bool| c.export_set_kbps(b));
     on!(on_export_pick_recipe, |c, i: i32| c.export_pick_recipe(i));
     on!(on_export_toggle_tracks, |c| c.export_toggle_tracks_menu());
     on!(on_export_toggle_range, |c| c.export_toggle_range_menu());
@@ -2997,6 +3004,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if state == 8 {
                         c.export_set_rate(false);
+                    }
+                    if state == 10 {
+                        c.export_set_mp3(true);
                     }
                     if state == 9 {
                         let tpb = c.project().ticks_per_bar();
