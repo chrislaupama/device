@@ -9,6 +9,11 @@ export struct TrackRow {
     // Return tracks (src/routing.rs): lettered A, B, C ... instead of numbered.
     is-return: bool,
     letter: string,
+    // Group tracks (src/groups.rs): a group row (fold chevron, no R), its folded state, and
+    // rows of tracks inside a group (indented).
+    is-group: bool,
+    folded: bool,
+    in-group: bool,
     pinned: bool,       // drawn in the pinned band above the master row (y relative to it)
     name: string,
     instrument: bool,
@@ -277,6 +282,7 @@ export struct MixerStrip {
     name: string,
     instrument: bool,
     is-return: bool,     // return strip: no R / I, no Sends section
+    is-group: bool,      // group strip: no R / I, no Sends section, a "Group" caption
     group-start: bool,   // first return strip (divider before it)
     color: color,
     selected: bool,
@@ -511,6 +517,8 @@ export global Studio {
     /// Right-click on the record button: the count-in menu (window x, y).
     callback record-menu(length, length);
     callback add-track();
+    /// Fold or unfold a group track's rows.
+    callback group-fold(int);
     callback import-audio();
     callback select-track(int);
     callback track-mute(int);
@@ -848,6 +856,7 @@ export global Studio {
     in property <[SendRow]> strip-sends;           // every strip's send slots (rows name their sender)
     in property <int> strip-sends-max;             // send slots per track: the number of returns
     in property <bool> sel-return;                 // the selected track is a return track
+    in property <bool> sel-group;                  // the selected track is a group track (M / S only, no In, Out to Master)
     in property <string> sel-letter;
     in property <string> sel-out-text: "Master";
     in property <[SendRow]> sel-sends;             // channel strip Sends tab: one slot per return

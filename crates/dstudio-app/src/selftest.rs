@@ -3533,10 +3533,10 @@ fn steps() -> Vec<Step> {
         ),
         Do("click 'Add track'", Box::new(|a| click(a, tracks_x() + 37.35, geo().timeline_y + 45.8))),
         Check(
-            "the Add track menu offers Audio, Instrument and Return tracks",
+            "the Add track menu offers Audio, Instrument, Return and Group tracks",
             Box::new(|c, _| {
                 let l = c.route_menu_labels();
-                (l == ["Audio track", "Instrument track", "Return track"]).then_some(()).ok_or(format!("{l:?}"))
+                (l == ["Audio track", "Instrument track", "Return track", "Group track"]).then_some(()).ok_or(format!("{l:?}"))
             }),
         ),
         DoC(
@@ -11921,6 +11921,172 @@ fn transport_fields_steps() -> Vec<Step> {
         ),
     ]
 }
+/// Group (folder) tracks: Cmd+G groups the selected track, the header shows the fold chevron and
+/// its track's inset, folding hides the track's row, a track joins from the Out menu, the group
+/// moves with its tracks, and Ungroup sends them back to the master. All undone at the end.
+fn group_steps() -> Vec<Step> {
+    use Step::*;
+    fn group(c: &Controller) -> Option<&dstudio_core::Track> {
+        c.project().tracks.iter().find(|t| t.is_group())
+    }
+    fn row(a: &AppWindow, i: usize) -> Option<crate::TrackRow> {
+        slint::Model::row_data(&a.global::<Studio>().get_tracks(), i)
+    }
+    fn names(c: &Controller) -> Vec<String> {
+        c.project().tracks.iter().map(|t| t.name.clone()).collect()
+    }
+    let hist = Rc::new(Cell::new(0usize));
+    let (h1, h2) = (hist.clone(), hist.clone());
+    vec![
+        DoC(
+            "groups: select track 1, press Cmd+G",
+            Box::new(move |a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    h1.set(c.doc.history_labels().len());
+                    let t = c.project().tracks[0].id;
+                    c.select_track(t);
+                }
+                key(a, "g", true, false);
+            }),
+        ),
+        Check(
+            "groups: one Group Tracks step; Group 1 above track 1, which plays into it; the inspector shows a group",
+            Box::new(|c, a| {
+                let g = group(c).ok_or(format!("no group; tracks {:?}", names(c)))?;
+                let t1 = &c.project().tracks[1];
+                let (r0, r1) = (row(a, 0).ok_or("no row 0")?, row(a, 1).ok_or("no row 1")?);
+                let s = a.global::<Studio>();
+                (c.doc.undo_label() == Some("Group Tracks")
+                    && c.project().tracks[0].id == g.id
+                    && g.name == "Group 1"
+                    && t1.output == Some(g.id)
+                    && r0.is_group
+                    && !r0.in_group
+                    && r1.in_group
+                    && c.selected_track == Some(g.id)
+                    && s.get_sel_group()
+                    && !s.get_sel_return())
+                .then_some(())
+                .ok_or(format!(
+                    "undo {:?} tracks {:?} out {:?} rows ({}, {}) sel-group {}",
+                    c.doc.undo_label(),
+                    names(c),
+                    t1.output,
+                    r0.is_group,
+                    r1.in_group,
+                    s.get_sel_group()
+                ))
+            }),
+        ),
+        DoC(
+            "groups: fold the group (its chevron)",
+            Box::new(|a, ctl| {
+                let id = group(&ctl.borrow()).map(|g| g.id.0 as i32).unwrap_or(-1);
+                a.global::<Studio>().invoke_group_fold(id);
+            }),
+        ),
+        Check(
+            "groups: folded, the group's track has no row height and the group stays selected",
+            Box::new(|c, a| {
+                let (r0, r1) = (row(a, 0).ok_or("no row 0")?, row(a, 1).ok_or("no row 1")?);
+                (r0.folded && r1.h == 0.0 && c.view.pitch(1) == 0.0 && c.selected_track == group(c).map(|g| g.id))
+                    .then_some(())
+                    .ok_or(format!("folded {} h {} pitch {}", r0.folded, r1.h, c.view.pitch(1)))
+            }),
+        ),
+        DoC(
+            "groups: unfold, route the next ungrouped track into the group (Out menu)",
+            Box::new(|a, ctl| {
+                let id = group(&ctl.borrow()).map(|g| g.id).unwrap_or(dstudio_core::TrackId(0));
+                a.global::<Studio>().invoke_group_fold(id.0 as i32);
+                let mut c = ctl.borrow_mut();
+                if let Some(t) = c.project().tracks.iter().find(|t| !t.is_bus() && t.output.is_none()).map(|t| t.id) {
+                    c.route_to_group(t, Some(id));
+                }
+            }),
+        ),
+        Check(
+            "groups: both tracks play into the group, right below it",
+            Box::new(|c, a| {
+                let g = group(c).ok_or("no group")?;
+                let p = c.project();
+                let ok = p.tracks[1].output == Some(g.id)
+                    && p.tracks[2].output == Some(g.id)
+                    && p.group_members(g.id).count() == 2
+                    && c.doc.undo_label() == Some("Output Change")
+                    && row(a, 2).is_some_and(|r| r.in_group && r.h > 0.0);
+                ok.then_some(()).ok_or(format!("tracks {:?} undo {:?}", names(c), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "groups: add an audio track at the end, drag the group header below it",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let t = dstudio_core::Track::new(dstudio_core::TrackId(0), TrackKind::Audio, "Below", dstudio_core::ColorIndex(2));
+                c.execute(dstudio_core::Command::AddTrack { index: None, track: t });
+                let end = c.project().ordinary_track_count();
+                if let Some(g) = group(&c).map(|g| g.id) {
+                    c.move_group(g, end);
+                }
+            }),
+        ),
+        Check(
+            "groups: the group moved with its two tracks (one Move Track step)",
+            Box::new(|c, _| {
+                let p = c.project();
+                let g = group(c).ok_or("no group")?;
+                let n = p.ordinary_track_count();
+                (c.doc.undo_label() == Some("Move Track")
+                    && n >= 4
+                    && p.tracks[n - 3].id == g.id
+                    && p.tracks[n - 2].output == Some(g.id)
+                    && p.tracks[n - 1].output == Some(g.id)
+                    && p.tracks[n - 4].name == "Below")
+                    .then_some(())
+                    .ok_or(format!("tracks {:?} undo {:?}", names(c), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "groups: Ungroup",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some(g) = group(&c).map(|g| g.id) {
+                    c.ungroup(g);
+                }
+            }),
+        ),
+        Check(
+            "groups: the group is gone and its tracks play into the master",
+            Box::new(|c, _| {
+                (c.doc.undo_label() == Some("Ungroup")
+                    && group(c).is_none()
+                    && c.project().tracks.iter().all(|t| t.output.is_none_or(|o| c.project().track(o).is_some_and(|r| r.is_return()))))
+                .then_some(())
+                .ok_or(format!("tracks {:?} undo {:?}", names(c), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "groups: undo back to the start",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                for _ in h2.get()..c.doc.history_labels().len() {
+                    c.undo();
+                }
+            }),
+        ),
+        Check(
+            "groups: no group left after undo",
+            Box::new(move |c, _| {
+                (group(c).is_none() && c.doc.history_labels().len() == hist.get()).then_some(()).ok_or(format!(
+                    "tracks {:?} history {}",
+                    names(c),
+                    c.doc.history_labels().len()
+                ))
+            }),
+        ),
+    ]
+}
 
 /// Track rename: double-click the selected track's name in the inspector, type, Enter. An
 /// empty name and Escape leave the name alone; undo restores it.
@@ -14595,6 +14761,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(transport_fields_steps());
     all.extend(track_rename_steps());
     all.extend(track_menu_steps());
+    all.extend(group_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

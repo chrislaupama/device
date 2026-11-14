@@ -36,14 +36,20 @@ impl Controller {
     pub fn open_track_menu(&mut self, id: TrackId, wx: f32, wy: f32) {
         let Some(t) = self.project().track(id) else { return };
         let is_return = t.is_return();
-        let can_copy = !is_return || self.project().returns().count() < dstudio_core::MAX_RETURNS;
+        let (is_bus, is_group) = (t.is_bus(), t.is_group());
+        let can_copy = !t.is_bus() || self.project().tracks.iter().filter(|t| t.is_bus()).count() < dstudio_core::MAX_RETURNS;
         self.select_track(id);
         use MenuAction::*;
         let mut items = vec![(TrackRename, true), (TrackDuplicate, can_copy)];
-        if !is_return {
+        if !is_bus {
             items.push((TrackDuplicateClips, true));
         }
         items.push((TrackColor, true));
+        if is_group {
+            items.push((TrackUngroup, true));
+        } else if !is_return {
+            items.push((TrackGroup, true));
+        }
         items.push((TrackDelete, true));
         let win = self.devices.win;
         self.open_menu(items, wx, wy, win);
@@ -65,6 +71,12 @@ impl Controller {
             }
             MenuAction::TrackDuplicate => self.duplicate_track(id, false),
             MenuAction::TrackDuplicateClips => self.duplicate_track(id, true),
+            MenuAction::TrackGroup => {
+                self.group_tracks(&[id]);
+            }
+            MenuAction::TrackUngroup => {
+                self.ungroup(id);
+            }
             MenuAction::TrackDelete => {
                 self.select_clip(None);
                 self.selected_section = None;
@@ -139,6 +151,10 @@ impl Controller {
                 let Some(d) = self.track_drag.take() else { return };
                 self.ui_dirty |= d.active;
                 let (Some(gap), Some(from)) = (d.gap.filter(|_| d.active), self.project().track_index(d.track)) else { return };
+                if self.project().track(d.track).is_some_and(|t| t.is_group()) {
+                    self.move_group(d.track, gap);
+                    return;
+                }
                 let to = move_target(from, gap);
                 if to != from {
                     self.execute(Command::MoveTrack { track: d.track, index: to });

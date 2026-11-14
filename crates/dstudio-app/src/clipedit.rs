@@ -78,6 +78,8 @@ impl MenuAction {
             MenuAction::TrackDuplicateClips => "Duplicate track with clips",
             MenuAction::TrackColor => "Color",
             MenuAction::TrackDelete => "Delete track",
+            MenuAction::TrackGroup => "Group track",
+            MenuAction::TrackUngroup => "Ungroup",
             MenuAction::CountInOff => "No count-in",
             MenuAction::CountIn1 => "Count-in: 1 bar",
             MenuAction::CountIn2 => "Count-in: 2 bars",
@@ -97,6 +99,7 @@ impl MenuAction {
             MenuAction::InsertMidiClip => "⇧⌘ M",
             MenuAction::SectionDelete | MenuAction::TrackDelete => "Del",
             MenuAction::TrackRename => "⌘ R",
+            MenuAction::TrackGroup => "⌘ G",
             _ => "",
         }
     }

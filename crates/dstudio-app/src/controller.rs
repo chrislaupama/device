@@ -343,6 +343,10 @@ pub enum MenuAction {
     TrackDuplicate,
     TrackDuplicateClips,
     TrackColor,
+    /// Put the track in a new group (src/groups.rs).
+    TrackGroup,
+    /// A group track's menu: remove the group, keeping its tracks.
+    TrackUngroup,
     TrackDelete,
     /// Record button menu (src/count_in.rs): count-in off, one bar, two bars.
     CountInOff,
@@ -400,6 +404,8 @@ pub struct Controller {
     pub(crate) fade_drag: Option<crate::fades::FadeDrag>,
     /// The audio clip under the lane pointer, which shows its fade handles.
     pub(crate) hover_clip: Option<ClipId>,
+    /// Folded group tracks: their tracks' rows hide (src/groups.rs).
+    pub(crate) collapsed: std::collections::HashSet<TrackId>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
     /// Saved height (None = default) each bottom panel kind had before its collapse button shut
@@ -587,6 +593,7 @@ impl Controller {
             track_drag: None,
             fade_drag: None,
             hover_clip: None,
+            collapsed: Default::default(),
             bottom_drag: None,
             bottom_restore: Default::default(),
             chat_drag: None,
@@ -1958,6 +1965,10 @@ impl Controller {
         self.clip_vis.clear();
         self.clip_ids.clear();
         for (ti, t) in p.tracks.iter().enumerate() {
+            // A folded group's tracks have no row to draw their clips in.
+            if t.output.is_some_and(|g| self.collapsed.contains(&g)) {
+                continue;
+            }
             for c in &t.clips {
                 let (mut track_index, mut start, mut off, mut len) = (ti, c.start, c.source_offset, c.source_length);
                 let mut clip_loop = c.clip_loop;
@@ -2333,7 +2344,7 @@ impl Controller {
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let n = if t.is_return() { 0 } else { slots };
+                let n = if t.is_bus() { 0 } else { slots };
                 send_first += n;
                 (i, t, send_first - n, n)
             })
@@ -2344,6 +2355,7 @@ impl Controller {
                 name: t.name.clone().into(),
                 instrument: t.kind == TrackKind::Instrument,
                 is_return: t.is_return(),
+                is_group: t.is_group(),
                 group_start: t.is_return() && i == first_return,
                 color: slint_color(track_color(t.color)),
                 selected: Some(t.id) == self.selected_track,

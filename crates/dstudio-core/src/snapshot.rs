@@ -250,7 +250,7 @@ pub fn build_full(
             arm: t.arm,
             monitor: t.monitor,
             input: t.input,
-            is_return: t.is_return(),
+            is_return: t.is_bus(),
             output: t.output.map(|o| o.0),
             sends: t.sends.iter().map(|s| SendSnapshot { target: s.target.0, gain: s.level, pre_fader: s.pre_fader }).collect(),
             notes: {

@@ -274,6 +274,7 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
                 TrackKind::Audio => "an audio",
                 TrackKind::Instrument => "an instrument",
                 TrackKind::Return => "a return",
+                TrackKind::Group => "a group",
             },
             track.name
         ),

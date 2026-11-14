@@ -148,7 +148,7 @@ impl Controller {
     /// Create a return track and a send to it from `track`, in one undo step ("Add Send").
     pub fn new_return_with_send(&mut self, track: TrackId) -> Option<TrackId> {
         let p = self.project();
-        let t = p.track(track).filter(|t| !t.is_return())?;
+        let t = p.track(track).filter(|t| !t.is_bus())?;
         if p.returns().count() >= MAX_RETURNS {
             self.set_status(format!("A project has at most {MAX_RETURNS} return tracks"), 3);
             return None;
@@ -204,7 +204,7 @@ impl Controller {
     /// `track` can send to `target`: an ordinary track and an existing return track.
     fn can_send(&self, track: TrackId, target: TrackId) -> bool {
         let p = self.project();
-        p.track(track).is_some_and(|t| !t.is_return()) && p.track(target).is_some_and(|r| r.is_return())
+        p.track(track).is_some_and(|t| !t.is_bus()) && p.track(target).is_some_and(|r| r.is_return())
     }
 
     /// Set a send's level (linear gain, clamped to −∞..+6 dB). A silent slot (no send stored yet)
@@ -247,7 +247,7 @@ impl Controller {
 
     /// Route `track`'s Out to the master (None) or a return ("Output Change").
     pub fn set_track_output(&mut self, track: TrackId, output: Option<TrackId>) -> bool {
-        if self.project().track(track).is_none_or(|t| t.is_return() || t.output == output) {
+        if self.project().track(track).is_none_or(|t| t.is_bus() || t.output == output) {
             return false;
         }
         self.execute(Command::SetTrackOutput { track, output })
@@ -262,7 +262,7 @@ impl Controller {
     /// The "+" beside Sends (channel strip Sends tab, mixer strip): a new return track, its slot
     /// silent on every track; `track` stays selected.
     pub fn sends_add_return(&mut self, track: TrackId) -> Option<TrackId> {
-        if self.project().track(track).is_none_or(|t| t.is_return()) {
+        if self.project().track(track).is_none_or(|t| t.is_bus()) {
             return None;
         }
         self.add_return_track(false)
@@ -294,9 +294,15 @@ impl Controller {
     /// return lists that return too (checked), so it can be moved back.
     pub fn open_out_menu(&mut self, x: f32, y: f32) {
         let p = self.project();
-        let Some(t) = self.selected_track.and_then(|id| p.track(id)).filter(|t| !t.is_return()) else { return };
+        let Some(t) = self.selected_track.and_then(|id| p.track(id)).filter(|t| !t.is_bus()) else { return };
         let mut items = vec![("Master".to_string(), RouteItem::Out(None), t.output.is_none())];
-        if let Some(r) = t.output.and_then(|r| p.track(r)) {
+        // Ordinary tracks can play into any group (and join it).
+        if !t.is_group() {
+            items.extend(
+                p.tracks.iter().filter(|g| g.is_group()).map(|g| (g.name.clone(), RouteItem::Out(Some(g.id)), t.output == Some(g.id))),
+            );
+        }
+        if let Some(r) = t.output.and_then(|r| p.track(r)).filter(|r| r.is_return()) {
             items.push((r.name.clone(), RouteItem::Out(Some(r.id)), true));
         }
         self.routing.menu = Some(RouteMenu { track: Some(t.id), items, x, y });
@@ -309,6 +315,7 @@ impl Controller {
             ("Audio track".to_string(), RouteItem::AddTrack(TrackKind::Audio), false),
             ("Instrument track".to_string(), RouteItem::AddTrack(TrackKind::Instrument), false),
             ("Return track".to_string(), RouteItem::AddTrack(TrackKind::Return), false),
+            ("Group track".to_string(), RouteItem::AddTrack(TrackKind::Group), false),
         ];
         self.routing.menu = Some(RouteMenu { track: None, items, x, y });
         self.ui_dirty = true;
@@ -336,7 +343,13 @@ impl Controller {
                 self.remove_send(track, target);
             }
             (RouteItem::Out(out), Some(track)) => {
-                self.set_track_output(track, out);
+                let group = |o: Option<TrackId>| o.and_then(|o| self.project().track(o)).is_some_and(|g| g.is_group());
+                let from_group = group(self.project().track(track).and_then(|t| t.output));
+                if group(out) || (out.is_none() && from_group) {
+                    self.route_to_group(track, out);
+                } else {
+                    self.set_track_output(track, out);
+                }
             }
             (RouteItem::AddTrack(TrackKind::Audio), _) => {
                 self.add_audio_track();
@@ -346,6 +359,9 @@ impl Controller {
             }
             (RouteItem::AddTrack(TrackKind::Return), _) => {
                 self.add_return_track(true);
+            }
+            (RouteItem::AddTrack(TrackKind::Group), _) => {
+                self.add_group_track();
             }
             _ => {}
         }
@@ -362,7 +378,7 @@ impl Controller {
     /// send, or a silent one.
     pub(crate) fn send_rows(&self, track: &Track) -> Vec<SendRow> {
         let p = self.project();
-        if track.is_return() {
+        if track.is_bus() {
             return Vec::new();
         }
         p.returns()
@@ -394,11 +410,12 @@ impl Controller {
         // The pill is lit while return rows actually show (not in a project without returns).
         s.set_returns_shown(self.returns_shown() && p.returns().next().is_some());
         s.set_sends_open(self.routing.sends_open);
-        let rows: Vec<SendRow> = p.tracks.iter().filter(|t| !t.is_return()).flat_map(|t| self.send_rows(t)).collect();
+        let rows: Vec<SendRow> = p.tracks.iter().filter(|t| !t.is_bus()).flat_map(|t| self.send_rows(t)).collect();
         s.set_strip_sends_max(p.returns().count() as i32);
         sync_model(&self.routing.strip_sends_model, rows);
         let sel = self.selected_track.and_then(|id| p.track(id));
         s.set_sel_return(sel.is_some_and(|t| t.is_return()));
+        s.set_sel_group(sel.is_some_and(|t| t.is_group()));
         let letter = sel.and_then(|t| p.return_index(t.id)).map(|i| return_letter(i).to_string()).unwrap_or_default();
         s.set_sel_letter(letter.into());
         let out = match sel.and_then(|t| t.output) {
@@ -407,7 +424,7 @@ impl Controller {
         };
         s.set_sel_out_text(out.into());
         sync_model(&self.routing.sel_sends_model, sel.map(|t| self.send_rows(t)).unwrap_or_default());
-        s.set_sel_can_send(sel.is_some_and(|t| !t.is_return()));
+        s.set_sel_can_send(sel.is_some_and(|t| !t.is_bus()));
         s.set_can_add_return(p.returns().count() < MAX_RETURNS);
         match &self.routing.menu {
             Some(m) => {

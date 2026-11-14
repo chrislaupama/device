@@ -452,7 +452,7 @@ impl Controller {
         let pick = match row {
             0 => Some(StemsPick::AllTracks),
             1 => self.selected_track.map(|_| StemsPick::Selected),
-            r => p.tracks.iter().filter(|t| !t.is_return()).nth((r - 3).max(0) as usize).filter(|_| r >= 3).map(|t| StemsPick::Track(t.id)),
+            r => p.tracks.iter().filter(|t| !t.is_bus()).nth((r - 3).max(0) as usize).filter(|_| r >= 3).map(|t| StemsPick::Track(t.id)),
         };
         if let Some(pick) = pick {
             self.export.stems = pick;
@@ -663,7 +663,8 @@ impl Controller {
                         markers: Vec::new(),
                     }])
                 }
-                (None, dstudio_core::TrackKind::Audio) => SetContent::Audio(Vec::new()),
+                // Live sets don't carry groups yet: a group without a render is an empty audio track.
+                (None, dstudio_core::TrackKind::Audio | dstudio_core::TrackKind::Group) => SetContent::Audio(Vec::new()),
                 (None, dstudio_core::TrackKind::Instrument) => SetContent::Midi(Vec::new()),
                 // A return without a render is a Live return track only (below).
                 (None, dstudio_core::TrackKind::Return) => continue,
@@ -1089,8 +1090,8 @@ impl Controller {
                 &mut rows,
             );
             row(String::new(), false, true, MENU_GAP, &mut rows);
-            // Returns hold no clips of their own, so they are never a stem.
-            for t in p.tracks.iter().filter(|t| !t.is_return()) {
+            // Returns and groups hold no clips of their own, so they are never a stem.
+            for t in p.tracks.iter().filter(|t| !t.is_bus()) {
                 let name = t.name.trim();
                 row(
                     if name.is_empty() { "Track".into() } else { name.into() },

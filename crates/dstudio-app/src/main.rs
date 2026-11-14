@@ -56,6 +56,7 @@ mod fades;
 mod files;
 mod gain_scope;
 mod gpu;
+mod groups;
 mod highlight;
 mod live_import;
 mod live_set;
@@ -217,6 +218,8 @@ struct Args {
     /// review-returns-empty: the default project, Audio selected, Sends tab with no returns yet.
     /// review-returns-options: review-returns with the options of Audio's send to B open.
     returns_review: u8,
+    /// review-groups*: 1 the two tracks in a group, 2 folded, 3 in the mixer.
+    groups_review: u8,
     /// review-strip-trim: the default project, Audio selected, its channel strip at -6.0 dB trim,
     /// 150 % width, mono on (spec 005).
     strip_review: bool,
@@ -553,6 +556,15 @@ fn parse_args() -> Result<Args, String> {
                     a.open_mixer = true;
                     a.returns_review = 1;
                 }
+                st @ ("review-groups" | "review-groups-folded" | "review-groups-mixer") => {
+                    a.reference_default = true;
+                    a.open_mixer = st == "review-groups-mixer";
+                    a.groups_review = match st {
+                        "review-groups" => 1,
+                        "review-groups-folded" => 2,
+                        _ => 3,
+                    };
+                }
                 "review-returns-strip" => {
                     a.reference_default = true;
                     a.returns_review = 2;
@@ -837,7 +849,9 @@ pub fn app_keymap() -> Keymap {
     }
     // Arm / input monitoring on the selected track (the core preset has no bindings for them).
     // Added only if the core lacks them.
-    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i"), ("track.rename", "primary+r")] {
+    for (action, chord) in
+        [("track.arm", "shift+r"), ("track.monitor", "shift+i"), ("track.rename", "primary+r"), ("track.group", "primary+g")]
+    {
         if k.chords_for(action).is_empty() {
             k.bindings.push(Binding {
                 action: action.into(),
@@ -1020,6 +1034,12 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             ctl.borrow_mut().add_audio_track();
         }
         "track.rename" => ctl.borrow_mut().open_rename_field(),
+        "track.group" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(t) = c.selected_track {
+                c.group_tracks(&[t]);
+            }
+        }
         "track.mute" => {
             let mut c = ctl.borrow_mut();
             if let Some(t) = c.selected_track {
@@ -2139,6 +2159,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             app.global::<Studio>().set_strip_tab(1);
         }
     }
+    if args.groups_review > 0 {
+        let mut c = ctl.borrow_mut();
+        let ids: Vec<_> = c.project().tracks.iter().filter(|t| !t.is_return()).map(|t| t.id).collect();
+        if let Some(g) = c.group_tracks(&ids) {
+            if args.groups_review == 2 {
+                c.toggle_group_folded(g);
+            }
+        }
+    }
     if args.strip_review {
         let mut c = ctl.borrow_mut();
         let audio = c.project().tracks[0].id;
@@ -2271,6 +2300,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         x,
         y
     ));
+    on!(on_group_fold, |c, id: i32| c.toggle_group_folded(dstudio_core::TrackId(id as u64)));
     on!(on_open_out_menu, |c, x: f32, y: f32| c.open_out_menu(x, y));
     on!(on_open_add_track_menu, |c, x: f32, y: f32| c.open_add_track_menu(x, y));
     on!(on_route_menu_pick, |c, i: i32| c.route_menu_pick(i.max(0) as usize));

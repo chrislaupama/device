@@ -712,7 +712,8 @@ component Timeline inherits Panel {
             scroll-event(e) => { Studio.lane-scroll(0, e.delta-y / 1px, 0, false); accept }
         }
         for t[i] in Studio.tracks: TrackRowItem {
-            visible: !t.pinned; rename-target: !t.pinned;
+            // Rows of a folded group's tracks have no height and don't show.
+            visible: !t.pinned && t.h > 0; rename-target: !t.pinned;
             x: 0; y: t.y - Studio.scroll-y; width: parent.width; height: t.h;
             t: t; level: Studio.track-levels[i];
             edit-done => { root.focus-main(); }
@@ -779,7 +780,7 @@ component Inspector inherits Rectangle {
     // Colour tab flush with the panel edge: 4 x 19 pt at y 6.5 pt (100 % zoom).
     Rectangle { x: 0px; y: 5.5px; width: 3.4px; height: 16.15px; border-radius: 1.7px; background: Studio.sel-color; }
     Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-return ? Studio.sel-letter : Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
-    Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-return ? Icons.returns : Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
+    Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-return ? Icons.returns : Studio.sel-group ? Icons.folder : Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
     if !Studio.has-selection: Label { x: 37px; y: 7px; text: "No track selected"; color: Tokens.text-bright; font-size: 10px; }
     if Studio.has-selection: TrackName { x: 37px; y: 7px; width: 120px; height: 14.5px; track-id: Studio.sel-id; text: Studio.sel-name; text-color: Tokens.text-bright; font-size: 10px; font-weight: 600; letter-spacing: 0; review-edit: Studio.review-rename; edit-done => { root.focus-main(); } }
 
@@ -787,11 +788,11 @@ component Inspector inherits Rectangle {
     // tracks open the instrument selector (built-in Synth or an instrument plugin: SetInstrumentPlugin).
     // Return tracks have no input: a "Return" label instead.
     // Out: Master or a return track (SetTrackOutput, src/routing.rs); fixed to Master on returns.
-    if Studio.sel-return: Raised {
+    if Studio.sel-return || Studio.sel-group: Raised {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px;
-        Text { x: 7.5px; text: "Return"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: 7.5px; text: Studio.sel-group ? "Group" : "Return"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
     }
-    if !Studio.sel-return: Raised {
+    if !Studio.sel-return && !Studio.sel-group: Raised {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px;
         Text { x: 7.5px; text: Studio.sel-instrument ? "Inst" : "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Text { x: Studio.sel-instrument ? 29.5px : 21px; width: 134px - self.x - 4px; text: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
@@ -949,7 +950,7 @@ component Inspector inherits Rectangle {
     // instrument tracks). 22 x 20 pt, 4 pt apart, on the peak box's row.
     for b[i] in [ {t: "M", on: Studio.sel-mute}, {t: "S", on: Studio.sel-solo}, {t: "R", on: Studio.sel-arm}, {t: "I", on: Studio.sel-monitor} ]: StripButton {
         x: (50 + i * 26) * StripMetrics.u; y: 324 * StripMetrics.u; big: true; text: b.t; kind: i; on: b.on;
-        visible: i < 2 || !Studio.sel-return;   // return tracks: M / S only
+        visible: i < 2 || !(Studio.sel-return || Studio.sel-group);   // return and group tracks: M / S only
         clicked => {
             if (i == 0) { Studio.track-mute(Studio.sel-id); }
             if (i == 1) { Studio.track-solo(Studio.sel-id); }
