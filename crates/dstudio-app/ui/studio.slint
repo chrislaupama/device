@@ -14,6 +14,8 @@ export struct TrackRow {
     is-group: bool,
     folded: bool,
     in-group: bool,
+    group-color: color,  // a track in a group: the group's colour (its rail)
+    group-muted: bool,   // a track in a muted group: drawn dimmed
     pinned: bool,       // drawn in the pinned band above the master row (y relative to it)
     name: string,
     instrument: bool,
@@ -294,6 +296,16 @@ export struct MixerStrip {
     gain-text: string, // gain readout: "0.0", "+1.5", "−12.0", "−∞" at or below -60 dB
     send-first: int,   // this strip's rows in Studio.strip-sends: send-first .. send-first + send-count
     send-count: int,
+    // Groups (src/groups.rs): the strip's column (folded tracks have none and are hidden), the
+    // group bar across the top of a group's strips (its colour, and whether this strip ends it),
+    // whether the group is folded, and a muted group dims its tracks.
+    column: int,
+    hidden: bool,
+    bar: bool,
+    bar-color: color,
+    bar-end: bool,
+    folded: bool,
+    group-muted: bool,
 }
 export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 (silent)
 // One send slot (src/routing.rs): sender track id, the return's row among the returns, the return
@@ -594,6 +606,8 @@ export global Studio {
     callback toggle-assistant();
     // ---- mixer ----
     in property <[MixerStrip]> strips;
+    in property <int> strip-columns;                // strips shown (a folded group's tracks have none)
+    in property <int> mixer-group-lanes;            // 1 while any strip has a group bar (4 px lane on top)
     in property <[StripMeter]> strip-meters;
     in property <float> master-fader: 0.2;
     in property <float> master-meter-l: 1;

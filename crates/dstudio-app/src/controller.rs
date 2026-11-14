@@ -474,6 +474,8 @@ pub struct Controller {
     pub(crate) dm: crate::devminimap::State,
     pub(crate) ptr: crate::pointer::Queue,
     pub clip_vis: Vec<ClipVis>,
+    /// Group lanes' clip bars (src/groups.rs).
+    pub summary_vis: Vec<timeline::SummaryBlock>,
     pub track_vis: Vec<TrackVis>,
     pub(crate) clip_ids: Vec<ClipId>,
     /// Show status messages (disabled for pixel-comparison screenshots).
@@ -647,6 +649,7 @@ impl Controller {
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0, 0),
             clip_vis: Vec::new(),
+            summary_vis: Vec::new(),
             track_vis: Vec::new(),
             clip_ids: Vec::new(),
             show_status: true,
@@ -1979,8 +1982,9 @@ impl Controller {
         let p = self.doc.project();
         self.track_vis = p.tracks.iter().map(|t| TrackVis { selected: Some(t.id) == self.selected_track }).collect();
         self.section_vis = self.build_section_vis();
-        let p = self.doc.project();
         let group = self.group_previews();
+        self.summary_vis = self.group_summary();
+        let p = self.doc.project();
         self.clip_vis.clear();
         self.clip_ids.clear();
         for (ti, t) in p.tracks.iter().enumerate() {
@@ -2112,6 +2116,7 @@ impl Controller {
             scale,
             tracks: &self.track_vis,
             clips: &self.clip_vis,
+            summary: &self.summary_vis,
             live: &self.rec.live_vis,
             playhead_beats: self.playhead_ticks() as f64 / PPQ as f64,
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
@@ -2361,6 +2366,11 @@ impl Controller {
         // one send slot per return track).
         let slots = p.returns().count() as i32;
         let mut send_first = 0;
+        let mut column = 0;
+        // The group a strip belongs to (a group strip belongs to itself).
+        fn group_of<'a>(p: &'a dstudio_core::Project, t: &'a dstudio_core::Track) -> Option<&'a dstudio_core::Track> {
+            if t.is_group() { Some(t) } else { t.output.and_then(|g| p.track(g)).filter(|g| g.is_group()) }
+        }
         let strips: Vec<MixerStrip> = p
             .tracks
             .iter()
@@ -2370,7 +2380,22 @@ impl Controller {
                 send_first += n;
                 (i, t, send_first - n, n)
             })
-            .map(|(i, t, first, n)| MixerStrip {
+            .map(|(i, t, first, n)| {
+                let group = group_of(p, t);
+                let next_group = p.tracks.get(i + 1).and_then(|n| group_of(p, n)).map(|g| g.id);
+                let hidden = self.hidden_by_fold(t);
+                let col = column;
+                column += i32::from(!hidden);
+                (i, t, first, n, group, next_group, hidden, col)
+            })
+            .map(|(i, t, first, n, group, next_group, hidden, col)| MixerStrip {
+                column: col,
+                hidden,
+                bar: group.is_some(),
+                bar_color: group.map(|g| slint_color(track_color(g.color))).unwrap_or_default(),
+                bar_end: group.is_some_and(|g| next_group != Some(g.id) || self.collapsed.contains(&g.id)),
+                folded: self.collapsed.contains(&t.id),
+                group_muted: !t.is_group() && group.is_some_and(|g| g.mute),
                 send_first: first,
                 send_count: n,
                 id: t.id.0 as i32,
@@ -2389,6 +2414,8 @@ impl Controller {
                 gain_text: mixer::fmt_gain(gain_to_db(t.gain)).into(),
             })
             .collect();
+        s.set_strip_columns(strips.iter().filter(|st| !st.hidden).count() as i32);
+        s.set_mixer_group_lanes(i32::from(strips.iter().any(|st| st.bar)));
         sync_model(&self.strips_model, strips);
         s.set_master_gain_text(mixer::fmt_gain(gain_to_db(p.master_gain)).into());
         if self.strip_meters_model.row_count() != p.tracks.len() {

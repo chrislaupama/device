@@ -18,7 +18,7 @@ fn add_return(d: &mut Document) -> TrackId {
 #[test]
 fn a_group_sits_among_the_ordinary_tracks_and_takes_outputs() {
     let mut d = Document::new(Project::default());
-    let g = add(&mut d, TrackKind::Group, "Group 1", Some(0));
+    let g = add(&mut d, TrackKind::Group, "Group", Some(0));
     assert_eq!(d.project().next_group_name(), "Group 2");
     assert!(d.project().track(g).unwrap().is_group() && d.project().track(g).unwrap().is_bus());
     assert_eq!(d.project().tracks[0].id, g);

@@ -2208,6 +2208,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.groups_review > 0 {
         let mut c = ctl.borrow_mut();
+        // Parts on the instrument tracks so the group row shows its summary.
+        c.add_instrument_track();
+        let inst: Vec<_> = c.project().tracks.iter().filter(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id).collect();
+        let bar = 4 * dstudio_core::PPQ;
+        for (k, track) in inst.into_iter().enumerate() {
+            for (start, len) in [(k as i64 * 2 * bar, 4 * bar), ((8 + k as i64 * 2) * bar, 4 * bar)] {
+                let mut clip = dstudio_core::MidiClip::empty(start, len);
+                clip.name = format!("Part {}", start / bar + 1);
+                c.execute(dstudio_core::Command::AddMidiClip { track, clip });
+            }
+        }
         let ids: Vec<_> = c.project().tracks.iter().filter(|t| !t.is_return()).map(|t| t.id).collect();
         if let Some(g) = c.group_tracks(&ids)
             && args.groups_review == 2
