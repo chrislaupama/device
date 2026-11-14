@@ -591,3 +591,14 @@ The source texture and exact generation prompt live in `docs/art/textures/`; the
 uses it at lower strength behind feature and architecture cards. App source, screenshots,
 installation identities and settings are unchanged. The website uses compressed versions of
 the same material in its own repository.
+
+### 2026-11-14: Resample in the audio clip editor
+
+- The Resample button in the audio clip editor's title row (a placeholder until now) renders the open clip through its
+  track's devices, as Bounce to new track (⌘B) does: rendering onto the same track would run the devices twice, so the
+  printed clip lands on a new "<track> (Bounce)" track below, at the same time and with the track's fader and pan, and
+  the source clip is disabled. The source file stays on disk, the render covers the whole clip (not only the visible
+  range) and runs in the background, and the result is one undo step.
+- `Controller::resample_open_clip` (src/clip_render.rs). Self-test: the audio clip editor section presses Resample,
+  checks the new track, the disabled source and the undo label, then undoes it in one step.
+

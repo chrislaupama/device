@@ -119,6 +119,8 @@ struct Args {
     /// 1 = reference-midi-clip, 2 = reference-pianoroll.
     midi_state: u8,
     audio_clip_state: bool,
+    /// review-resample: the audio clip editor's Resample pressed once the clip is open.
+    resample_state: bool,
     /// review-warp: the audio clip state with drum hits, warped (Drums, 1.5x, one marker).
     warp_state: bool,
     /// review-audio-clip-loop: review-warp with the clip looping its second quarter out to
@@ -368,6 +370,11 @@ fn parse_args() -> Result<Args, String> {
                 "reference-audio-clip" => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
+                }
+                "review-resample" => {
+                    a.reference_default = true;
+                    a.audio_clip_state = true;
+                    a.resample_state = true;
                 }
                 s @ ("review-warp" | "review-reverse" | "review-warp-stereo" | "review-audio-clip-loop" | "review-audio-loop-drag") => {
                     a.reference_default = true;
@@ -2366,6 +2373,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_dismiss_notice, |c| c.assistant_dismiss_notice());
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
+    on!(on_ac_resample, |c| c.resample_open_clip());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
         // A second press that completes a double-click acts on its own, and so do its moves and
@@ -3031,6 +3039,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         let warp = args.warp_state;
         let reverse = args.reverse_state;
+        let mut resample = args.resample_state;
         let looped = args.audio_loop_state;
         let mut loop_drag = args.audio_loop_drag;
         let mut menu = args.clip_menu.filter(|_| warp);
@@ -3044,6 +3053,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.select_clip(clip.as_ref().map(|cl| cl.id));
                 c.set_bottom_tab(BottomTab::Clip);
                 done.set(true);
+            } else if resample && c.ac_clip().is_some() {
+                resample = false;
+                c.resample_open_clip();
             }
             if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
                 let mut w = dstudio_core::ClipWarp {

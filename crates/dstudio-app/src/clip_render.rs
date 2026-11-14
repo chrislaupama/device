@@ -461,6 +461,18 @@ impl Controller {
         self.start_render(ClipOp::Bounce { source: id, span: span.clone() }, &span, RenderMode::Bounce, out, "Bouncing to New Track");
     }
 
+    /// The audio clip editor's Resample button: the open clip rendered in place through its
+    /// track's devices, the way Bounce to new track does it. Rendering onto the same track would
+    /// run the devices twice, so the printed clip lands on a new track below at the same time
+    /// (taking the fader and pan) and the source clip is disabled; its file stays on disk. One
+    /// undo step.
+    pub fn resample_open_clip(&mut self) {
+        match self.ac_clip().map(|c| c.id) {
+            Some(id) => self.bounce_clip(id),
+            None => self.set_status("Resample: open an audio clip first", 3),
+        }
+    }
+
     // ---------------------------------------------------------------- Export audio
 
     /// The name the save dialog offers: "<track> <clip>.wav".

@@ -9,7 +9,7 @@ use crate::controller::{BottomTab, Controller};
 use crate::{AppWindow, Studio};
 use dstudio_core::assistant::Mode;
 use dstudio_core::builtin::synth_v2::SYNTH_V2;
-use dstudio_core::{PPQ, TrackKind, db_to_gain};
+use dstudio_core::{ClipId, PPQ, TrackKind, db_to_gain};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model, SharedString};
 use std::cell::Cell;
@@ -88,6 +88,8 @@ enum Step {
 thread_local! {
     /// Audio loop start before the footer Position drag (audio loop section).
     static AUDIO_LOOP_START: Cell<i64> = const { Cell::new(0) };
+    /// Track count and the open clip before the audio clip editor's Resample.
+    static RESAMPLE_BEFORE: Cell<(usize, u64)> = const { Cell::new((0, 0)) };
     /// Undo history length before the audio loop bar drags.
     static AUDIO_LOOP_HISTORY: Cell<usize> = const { Cell::new(0) };
 }
@@ -2650,6 +2652,63 @@ fn steps() -> Vec<Step> {
                         s.get_ac_gain_text(),
                         s.get_pr_bar_labels().row_count()
                     ))
+            }),
+        ),
+        DoC(
+            "audio clip editor: Resample",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    RESAMPLE_BEFORE.set((c.project().tracks.len(), c.ac_clip().map_or(0, |k| k.id.0)));
+                    if c.clip_render.dir_override.is_none() {
+                        c.clip_render.dir_override = Some(run_dir().join("renders"));
+                    }
+                }
+                a.global::<Studio>().invoke_ac_resample();
+            }),
+        ),
+        Check(
+            "Resample: the clip rendered to a new '(Bounce)' track below, the source disabled, one undo step",
+            Box::new(|c, _| {
+                let (tracks, clip) = RESAMPLE_BEFORE.get();
+                let p = c.project();
+                let (ti, ci) = p.find_clip(ClipId(clip)).ok_or("source clip gone")?;
+                let below = p.tracks.get(ti + 1).ok_or("no track below")?;
+                let src = &p.tracks[ti].clips[ci];
+                let ok = p.tracks.len() == tracks + 1
+                    && below.name.ends_with("(Bounce)")
+                    && below.clips.len() == 1
+                    && below.clips[0].start == src.start
+                    && src.disabled
+                    && c.doc.undo_label() == Some("Bounce to New Track");
+                ok.then_some(()).ok_or(format!(
+                    "{} tracks (was {tracks}); below {:?} with {} clips; source disabled {}; undo {:?}; status {:?}",
+                    p.tracks.len(),
+                    below.name,
+                    below.clips.len(),
+                    src.disabled,
+                    c.doc.undo_label(),
+                    c.status_message()
+                ))
+            }),
+        ),
+        DoC(
+            "Resample: undo, then open the source clip again",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.undo();
+                c.select_clip(Some(ClipId(RESAMPLE_BEFORE.get().1)));
+                c.set_bottom_tab(BottomTab::Clip);
+            }),
+        ),
+        Check(
+            "Resample undone in one step: tracks as before, the source plays again",
+            Box::new(|c, _| {
+                let (tracks, clip) = RESAMPLE_BEFORE.get();
+                let enabled = c.project().clip(ClipId(clip)).is_some_and(|k| !k.disabled);
+                (c.project().tracks.len() == tracks && enabled && c.ac_clip().map(|k| k.id.0) == Some(clip))
+                    .then_some(())
+                    .ok_or(format!("{} tracks (was {tracks}); enabled {enabled}", c.project().tracks.len()))
             }),
         ),
         Check(
