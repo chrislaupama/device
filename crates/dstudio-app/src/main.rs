@@ -2190,10 +2190,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.groups_review > 0 {
         let mut c = ctl.borrow_mut();
         let ids: Vec<_> = c.project().tracks.iter().filter(|t| !t.is_return()).map(|t| t.id).collect();
-        if let Some(g) = c.group_tracks(&ids) {
-            if args.groups_review == 2 {
-                c.toggle_group_folded(g);
-            }
+        if let Some(g) = c.group_tracks(&ids)
+            && args.groups_review == 2
+        {
+            c.toggle_group_folded(g);
         }
     }
     if args.strip_review {
