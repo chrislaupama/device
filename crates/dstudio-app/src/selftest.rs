@@ -12152,7 +12152,7 @@ fn group_steps() -> Vec<Step> {
             }),
         ),
         Check(
-            "groups: one Group Tracks step; Group 1 above track 1, which plays into it; the inspector shows a group",
+            "groups: one Group Tracks step; Group above track 1, which plays into it; the inspector shows a group",
             Box::new(|c, a| {
                 let g = group(c).ok_or(format!("no group; tracks {:?}", names(c)))?;
                 let t1 = &c.project().tracks[1];
@@ -12160,7 +12160,7 @@ fn group_steps() -> Vec<Step> {
                 let s = a.global::<Studio>();
                 (c.doc.undo_label() == Some("Group Tracks")
                     && c.project().tracks[0].id == g.id
-                    && g.name == "Group 1"
+                    && g.name == "Group"
                     && t1.output == Some(g.id)
                     && r0.is_group
                     && !r0.in_group

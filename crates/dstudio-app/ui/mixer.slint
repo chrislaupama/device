@@ -69,23 +69,41 @@ component Strip inherits Rectangle {
     property <length> canvas-y: root.height - 234 * root.u;
     property <length> gain-y: root.height - 280 * root.u;
     property <length> sends-y: root.height - 302 * root.u;
+    // Group lanes: 4 px above the name bar while the mixer shows any group.
+    property <length> lanes-h: Studio.mixer-group-lanes * 4 * root.u;
     width: 108 * root.u;
     background: !root.master && root.s.selected ? #232428 : body-ta.has-hover ? #1c1d20 : transparent;
     // Body click selects the track (declared first so controls stay on top).
     body-ta := TouchArea { clicked => { if (!root.master) { Studio.select-track(root.s.id); } } }
-    // Name bar (track colour)
+    // Group bar: 3 px in the group's colour across the tops of its strips (joined to the next
+    // strip until the group's last track).
+    if !root.master && root.s.bar: Rectangle {
+        x: 0; y: 0; width: root.width + (root.s.bar-end ? 0 : 1 * root.u); height: 3 * root.u; background: root.s.bar-color;
+    }
+    // Name bar (track colour); a group's starts with its fold button.
     Rectangle {
-        y: 0; height: 20 * root.u;
+        y: root.lanes-h; height: 20 * root.u;
         background: root.master ? Tokens.track-master : root.s.color;
+        if !root.master && root.s.is-group: Rectangle {
+            x: 0; y: 0; width: 20 * root.u; height: 20 * root.u;
+            accessible-role: button;
+            accessible-label: (root.s.folded ? "Expand " : "Collapse ") + root.s.name;
+            opacity: fold-ta.has-hover ? 1 : 0.75;
+            fold-ta := TouchArea { clicked => { Studio.group-fold(root.s.id); } }
+            Icon {
+                x: 5 * root.u; y: 5 * root.u; width: 10 * root.u; height: 10 * root.u; stroke-width: 1.4px;
+                d: root.s.folded ? Icons.chevron-right : Icons.chevron-down; ink: root.s.color.darker(4.5);
+            }
+        }
         Text {
-            x: 8 * root.u; width: parent.width - 16 * root.u; text: root.master ? "Master" : root.s.name;
+            x: (!root.master && root.s.is-group ? 20 : 8) * root.u; width: parent.width - self.x - 8 * root.u; text: root.master ? "Master" : root.s.name;
             color: root.master ? #111215 : root.s.color.darker(4.5); font-size: 12 * root.u; font-weight: 700;
             letter-spacing: -0.48 * root.u; vertical-alignment: center; overflow: elide;
         }
     }
     // Insert list: the empty "add insert" pill (plugin inserts are on the Devices tab).
     Rectangle {
-        x: 8 * root.u; y: 28 * root.u; width: 92 * root.u; height: 20 * root.u; border-radius: 10 * root.u;
+        x: 8 * root.u; y: 28 * root.u + root.lanes-h; width: 92 * root.u; height: 20 * root.u; border-radius: 10 * root.u;
         background: #34353a;
         drop-shadow-offset-y: 0.75 * root.u; drop-shadow-blur: 3 * root.u; drop-shadow-color: #00000040;
         Rectangle { y: 0.38 * root.u; height: parent.height - 0.38 * root.u; border-radius: parent.border-radius; background: ins-ta.has-hover ? #2f3035 : #292a2f; }
@@ -204,7 +222,7 @@ export component MixerPanel inherits Panel {
     strips := Rectangle {
         x: 0; y: 26.5px; width: root.width - root.strip-w; height: root.height - 26.5px;
         clip: true;
-        property <length> content-w: Studio.strips.length * root.strip-w + root.strip-w;
+        property <length> content-w: Studio.strip-columns * root.strip-w + root.strip-w;
         property <length> max-scroll: max(0px, self.content-w - self.width);
         property <length> scroll: 0px;
         TouchArea {
@@ -214,11 +232,14 @@ export component MixerPanel inherits Panel {
             }
         }
         for st[i] in Studio.strips: Strip {
-            x: i * root.strip-w - parent.scroll; y: 0; height: parent.height;
+            visible: !st.hidden;
+            // A muted group dims its tracks' strips.
+            opacity: st.group-muted ? (st.selected ? 0.55 : 0.4) : 1;
+            x: st.column * root.strip-w - parent.scroll; y: 0; height: parent.height;
             s: st; m: Studio.strip-meters[i]; gain-text: st.gain-text;
         }
         add-col := Rectangle {
-            x: Studio.strips.length * root.strip-w - parent.scroll; y: 0; width: root.strip-w; height: parent.height;
+            x: Studio.strip-columns * root.strip-w - parent.scroll; y: 0; width: root.strip-w; height: parent.height;
             property <color> ink: add-ta.has-hover ? #ffffffb3 : #ffffff66;
             Icon { x: (parent.width - 13px) / 2; y: parent.height / 2 - 14 * root.u; width: 13px; height: 13px; d: Icons.plus; ink: add-col.ink; stroke-width: 1.4px; }
             Text { x: 0; y: parent.height / 2 + 1 * root.u; width: parent.width; height: 16 * root.u; text: "Add track"; color: add-col.ink; font-size: 12 * root.u; font-weight: 700;

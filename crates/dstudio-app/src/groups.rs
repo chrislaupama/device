@@ -185,6 +185,48 @@ impl Controller {
         ok
     }
 
+    /// Bars for the group lanes: every clip of each track of a group, one row per track that
+    /// holds clips, in the track's colour while the group is folded and grey while it is open.
+    pub fn group_summary(&self) -> Vec<crate::timeline::SummaryBlock> {
+        use dstudio_core::PPQ;
+        const OPEN: [f32; 3] = [158.0 / 255.0, 160.65 / 255.0, 170.85 / 255.0];
+        let p = self.project();
+        let mut out = Vec::new();
+        for (gi, g) in p.tracks.iter().enumerate().filter(|(_, t)| t.is_group()) {
+            let folded = self.collapsed.contains(&g.id);
+            let members: Vec<&Track> = p.group_members(g.id).filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty()).collect();
+            let rows = members.len();
+            for (row, t) in members.into_iter().enumerate() {
+                let rgb = if folded { crate::controller::track_color(t.color) } else { OPEN };
+                let clips = t
+                    .clips
+                    .iter()
+                    .map(|c| (c.id, c.start, p.clip_length_ticks(c), c.disabled))
+                    .chain(t.midi_clips.iter().map(|c| (c.id, c.start, c.length, c.disabled)));
+                for (id, start, len, disabled) in clips {
+                    let silent = t.mute || g.mute || disabled;
+                    let alpha = match (folded, self.is_clip_selected(id), silent) {
+                        (true, true, _) => 1.0,
+                        (true, false, true) => 0.3,
+                        (true, false, false) => 0.75,
+                        (false, true, _) => 0.55,
+                        (false, false, true) => 0.14,
+                        (false, false, false) => 0.3,
+                    };
+                    out.push(crate::timeline::SummaryBlock {
+                        track_index: gi,
+                        start_beats: start as f64 / PPQ as f64,
+                        len_beats: len as f64 / PPQ as f64,
+                        row,
+                        rows,
+                        color: [rgb[0], rgb[1], rgb[2], alpha],
+                    });
+                }
+            }
+        }
+        out
+    }
+
     /// Fold or unfold group `group` (its tracks' rows hide).
     pub fn toggle_group_folded(&mut self, group: TrackId) {
         if !self.collapsed.remove(&group) && self.project().track(group).is_some_and(|t| t.is_group()) {

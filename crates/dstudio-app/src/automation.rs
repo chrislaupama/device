@@ -1612,13 +1612,16 @@ impl Controller {
                 let target = self.auto_target(Some(t.id));
                 let (cat, param) = target.labels();
                 let (gain, va, pan, pa) = self.track_feedback(t.id);
+                let group = t.output.and_then(|g| p.track(g)).filter(|g| g.is_group());
                 TrackRow {
                     id: t.id.0 as i32,
                     number: i as i32 + 1,
                     is_return: t.is_return(),
                     is_group: t.is_group(),
                     folded: self.collapsed.contains(&t.id),
-                    in_group: t.output.and_then(|g| p.track(g)).is_some_and(|g| g.is_group()),
+                    in_group: group.is_some(),
+                    group_color: group.map(|g| crate::controller::slint_color(crate::controller::track_color(g.color))).unwrap_or_default(),
+                    group_muted: group.is_some_and(|g| g.mute),
                     letter: if t.is_return() {
                         dstudio_core::return_letter(i - first_return).to_string().into()
                     } else {
