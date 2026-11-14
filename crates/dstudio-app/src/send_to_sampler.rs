@@ -67,4 +67,52 @@ mod tests {
         assert_eq!(sample_range(500, 1000, 1000), (0.5, 1.0));
         assert_eq!(sample_range(0, 10, 0), (0.0, 1.0));
     }
+
+    #[test]
+    fn send_to_sampler_adds_a_sampler_track_below() {
+        use dstudio_core::{Asset, AssetId, Clip, PPQ, Project};
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let asset = Asset {
+            id: AssetId(0),
+            relative_path: None,
+            absolute_path: "/nonexistent/t.wav".into(),
+            sample_rate: 48_000.0,
+            channels: 2,
+            frames: 48_000 * 10,
+        };
+        assert!(c.execute(Command::AddAsset { asset }));
+        let a = c.project().assets[0].id;
+        let track = c.project().tracks[0].id;
+        let clip = Clip {
+            id: ClipId(0),
+            asset: a,
+            name: "Loop".into(),
+            start: 4 * PPQ,
+            source_offset: 48_000,
+            source_length: 48_000 * 4,
+            gain: 1.0,
+            warp: Default::default(),
+            disabled: false,
+            clip_loop: None,
+            fades: Default::default(),
+            takes: Vec::new(),
+        };
+        assert!(c.execute(Command::AddClip { track, clip }));
+        let id = c.project().tracks[0].clips[0].id;
+        let n = c.project().tracks.len();
+        let new = c.send_to_sampler(id).expect("sent");
+        let p = c.project();
+        assert_eq!(p.tracks.len(), n + 1);
+        let t = &p.tracks[1];
+        assert_eq!((t.id, t.kind, t.name.as_str()), (new, TrackKind::Instrument, "Loop"));
+        let d = t.instrument_plugin.as_ref().expect("instrument");
+        assert_eq!(d.plugin.id, "sampler-steam");
+        assert_eq!(d.samples.first().map(|s| s.asset), Some(a));
+        assert_eq!((d.params.get("start").copied(), d.params.get("end").copied()), (Some(0.1), Some(0.5)));
+        assert_eq!(c.selected_track, Some(new));
+        assert_eq!(c.doc.undo_label(), Some("Send to Sampler"));
+        c.undo();
+        assert_eq!(c.project().tracks.len(), n);
+    }
 }

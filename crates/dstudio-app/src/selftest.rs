@@ -13506,6 +13506,7 @@ fn clip_render_steps() -> Vec<Step> {
         assets_now: usize,
         undo_now: Option<String>,
         sampler_tracks: usize,
+        sampler_clip: u64,
     }
     let st = Rc::new(RefCell::new(St::default()));
     let k: Vec<Rc<RefCell<St>>> = (0..40).map(|_| st.clone()).collect();
@@ -13514,7 +13515,7 @@ fn clip_render_steps() -> Vec<Step> {
     let (s1, s2, s3, s4, s5, s6, s7, s8, s9, s10) = (next(), next(), next(), next(), next(), next(), next(), next(), next(), next());
     let (s11, s12, s13, s14, s15, s16, s17, s18) = (next(), next(), next(), next(), next(), next(), next(), next());
     let (s19, s20, s21, s22, s23, s24, s25, s26) = (next(), next(), next(), next(), next(), next(), next(), next());
-    let (s27, s28, s29, s30, s31, s32) = (next(), next(), next(), next(), next(), next());
+    let (s27, s28, s29, s30, s31, s32, s33) = (next(), next(), next(), next(), next(), next(), next());
     vec![
         DoC(
             "clip render: scratch folder, two 2 s sine WAVs; import the first at beat 4 on a new track",
@@ -13833,7 +13834,8 @@ fn clip_render_steps() -> Vec<Step> {
         ),
         Check(
             "send to sampler: Resample and Send to Sampler follow Rename on an audio clip; no Export MIDI",
-            Box::new(|c, _| {
+            Box::new(move |c, _| {
+                s33.borrow_mut().sampler_clip = c.menu.clip.map_or(0, |k| k.0);
                 let labels: Vec<&str> = c.menu.items.iter().map(|(a, _)| a.label()).collect();
                 let at = |l: &str| labels.iter().position(|x| *x == l);
                 let ok = c.menu.open
@@ -13848,7 +13850,8 @@ fn clip_render_steps() -> Vec<Step> {
             Box::new(move |c, _| {
                 let s = s30.borrow();
                 let p = c.project();
-                let (ti, ci) = p.find_clip(ClipId(s.first)).ok_or("clip gone")?;
+                // The clip under the pointer (the menu's clip).
+                let (ti, ci) = p.find_clip(ClipId(s.sampler_clip)).ok_or("clip gone")?;
                 let clip = &p.tracks[ti].clips[ci];
                 let t = p.tracks.get(ti + 1).ok_or("no track below")?;
                 let d = t.instrument_plugin.as_ref().ok_or("no instrument")?;
@@ -13858,7 +13861,17 @@ fn clip_render_steps() -> Vec<Step> {
                     && d.samples.first().is_some_and(|x| x.asset == clip.asset)
                     && c.selected_track == Some(t.id)
                     && c.doc.undo_label() == Some("Send to Sampler");
-                ok.then_some(()).ok_or(format!("{} tracks, plugin {}, undo {:?}", p.tracks.len(), d.plugin.id, c.doc.undo_label()))
+                ok.then_some(()).ok_or(format!(
+                    "{} tracks (was {}), plugin {}, sample {:?} clip asset {:?}, selected {:?} new {:?}, undo {:?}",
+                    p.tracks.len(),
+                    s.sampler_tracks,
+                    d.plugin.id,
+                    d.samples.first().map(|x| x.asset),
+                    clip.asset,
+                    c.selected_track,
+                    t.id,
+                    c.doc.undo_label()
+                ))
             }),
         ),
         Do("send to sampler: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
