@@ -547,6 +547,12 @@ export global Studio {
     callback master-volume(float);
     callback sel-fader-moved(float);
     callback lane-pointer(int, length, length, bool, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd, alt
+    // Selection box drawn by dragging over empty lane space (lane coordinates; src/selection.rs).
+    in property <bool> marquee-on;
+    in property <length> marquee-x;
+    in property <length> marquee-y;
+    in property <length> marquee-w;
+    in property <length> marquee-h;
     callback lane-hover(length, length);
     callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
     callback key(string, bool, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl, auto-repeat

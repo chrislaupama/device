@@ -818,8 +818,8 @@ fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automat
     }
 }
 
-/// MIDI clip: track-colour title strip, light lavender body (drawn
-/// the same selected or not), grid lines inside the body and a mini note view.
+/// MIDI clip: track-colour title strip, light lavender body (lifted when selected), grid lines
+/// inside the body and a mini note view.
 fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 4]], (x, y, cw, ch): (f32, f32, f32, f32)) {
     let r = 3.0;
     // On a track that isn't selected the body is drawn in the plain track colour
@@ -835,8 +835,13 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     } else {
         c.color
     };
-    // 0.5 pt outline (greyish), then title strip and body inset by it.
-    out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
+    // Selected clips: the body lifted toward white and a light outline, so several selected
+    // clips stand out from the rest (src/selection.rs).
+    let selected = c.selected && !c.muted;
+    let body = if selected { mix(body, WHITE, 0.45) } else { body };
+    // 0.5 pt outline (greyish; light when selected), then title strip and body inset by it.
+    let outline = if selected { rgba(WHITE, 0.85) } else { rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0) };
+    out.push(px.rounded(x, y, cw, ch, r, outline));
     out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(head, 1.0)));
     let by = y + CLIP_HEADER + 0.5;
     out.push(px.rect(x + 0.5, by, cw - 1.0, ch - CLIP_HEADER - 0.5 - r, rgba(body, 1.0)));

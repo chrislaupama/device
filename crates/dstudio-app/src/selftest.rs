@@ -12268,6 +12268,160 @@ fn ruler_zoom_steps() -> Vec<Step> {
     v
 }
 
+/// Several clips selected at once (src/selection.rs): Shift-click, moving, duplicating and
+/// deleting them together, and the selection box.
+fn clip_selection_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{ClipId, Command, MidiClip, Track, TrackId};
+    fn clips(c: &Controller) -> Vec<(u64, i64)> {
+        c.project().tracks.first().map(|t| t.midi_clips.iter().map(|k| (k.id.0, k.start)).collect()).unwrap_or_default()
+    }
+    fn clip_xy(c: &Controller, id: u64) -> (f32, f32) {
+        let i = c.clip_ids.iter().position(|&k| k == ClipId(id)).unwrap_or(0);
+        let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
+        (lane_x() + x + w / 2.0, lane_y0() + y + h * 0.7)
+    }
+    // A point on track 0's lane at `beat`, low in the row (clear of the clip name).
+    fn lane_at(c: &Controller, beat: f64) -> (f32, f32) {
+        (lane_x() + c.view.x_of(beat), lane_y0() + c.view.track_top(0) + c.view.pitch(0) * 0.8)
+    }
+    fn selected(c: &Controller) -> Vec<u64> {
+        let mut v: Vec<u64> = c.selected_clips().iter().map(|k| k.0).collect();
+        v.sort();
+        v
+    }
+    let ids = Rc::new(Cell::new((0u64, 0u64)));
+    let (i1, i2, i3, i4, i5, i6, i7) = (ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone());
+    const B: i64 = dstudio_core::PPQ;
+    vec![
+        DoC(
+            "selection: an instrument track on top with MIDI clips at beats 0-4 and 8-12",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                let n = c.project().next_id;
+                let (t, a, k) = (n, n + 1, n + 2);
+                c.execute(Command::Batch {
+                    label: "selection test".into(),
+                    commands: vec![
+                        Command::AddTrack {
+                            index: Some(0),
+                            track: Track::new(TrackId(t), dstudio_core::TrackKind::Instrument, "Select", dstudio_core::ColorIndex::FIRST),
+                        },
+                        Command::AddMidiClip { track: TrackId(t), clip: MidiClip { id: ClipId(a), ..MidiClip::empty(0, 4 * B) } },
+                        Command::AddMidiClip { track: TrackId(t), clip: MidiClip { id: ClipId(k), ..MidiClip::empty(8 * B, 4 * B) } },
+                    ],
+                });
+                i1.set((a, k));
+                c.view.scroll_y = 0.0;
+                c.view.start_beats = 0.0;
+                c.select_clip(None);
+                c.ui_dirty = true;
+            }),
+        ),
+        DoC(
+            "selection: click the first clip, Shift-click the second",
+            Box::new(move |a, ctl| {
+                let (x0, y0) = clip_xy(&ctl.borrow(), i2.get().0);
+                click(a, x0, y0);
+                let (x1, y1) = clip_xy(&ctl.borrow(), i2.get().1);
+                with_shift(a, || click(a, x1, y1));
+            }),
+        ),
+        Check(
+            "selection: both clips selected, the second focused",
+            Box::new(move |c, _| {
+                let (a, k) = i3.get();
+                (selected(c) == [a, k] && c.selected_clip == Some(ClipId(k))).then_some(()).ok_or(format!(
+                    "{:?} focus {:?}",
+                    selected(c),
+                    c.selected_clip
+                ))
+            }),
+        ),
+        DoC(
+            "selection: drag the first clip four beats right",
+            Box::new(move |a, ctl| {
+                let ((x, y), dx) = {
+                    let c = ctl.borrow();
+                    (clip_xy(&c, i4.get().0), 4.0 * c.view.px_per_beat as f32)
+                };
+                drag(a, x, y, x + dx, y);
+            }),
+        ),
+        Check(
+            "selection: both moved four beats in one undo step, still selected",
+            Box::new(move |c, _| {
+                let (a, k) = i5.get();
+                let ok = clips(c) == [(a, 4 * B), (k, 12 * B)] && c.doc.undo_label() == Some("Move 2 Clips") && selected(c) == [a, k];
+                ok.then_some(()).ok_or(format!("{:?} undo {:?} sel {:?}", clips(c), c.doc.undo_label(), selected(c)))
+            }),
+        ),
+        Do("selection: Cmd+D", Box::new(|a| key(a, "d", true, false))),
+        Check(
+            "selection: copies of both after the span (beats 16 and 24), the copies selected",
+            Box::new(|c, _| {
+                let starts: Vec<i64> = clips(c).iter().map(|k| k.1).collect();
+                let sel = c.selected_clips();
+                let ok = starts == [4 * B, 12 * B, 16 * B, 24 * B]
+                    && c.doc.undo_label() == Some("Duplicate 2 Clips")
+                    && sel.len() == 2
+                    && sel.iter().all(|s| c.project().midi_clip(*s).is_some_and(|m| m.start >= 16 * B));
+                ok.then_some(()).ok_or(format!("{starts:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        Do("selection: Delete", Box::new(|a| key(a, Key::Delete, false, false))),
+        Check(
+            "selection: both copies deleted in one undo step",
+            Box::new(move |c, _| {
+                let (a, k) = i6.get();
+                (clips(c) == [(a, 4 * B), (k, 12 * B)] && c.doc.undo_label() == Some("Delete 2 Clips") && c.selected_clips().is_empty())
+                    .then_some(())
+                    .ok_or(format!("{:?} undo {:?}", clips(c), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "selection: drag a box over both clips from empty lane space",
+            Box::new(|a, ctl| {
+                let ((x0, y0), (x1, _)) = {
+                    let c = ctl.borrow();
+                    (lane_at(&c, 20.0), lane_at(&c, 2.0))
+                };
+                drag(a, x0, y0, x1, y0 - 20.0);
+            }),
+        ),
+        Check(
+            "selection: the box selected both clips and is gone after release",
+            Box::new(move |c, a| {
+                let (x, k) = i7.get();
+                (selected(c) == [x, k] && !a.global::<Studio>().get_marquee_on()).then_some(()).ok_or(format!("{:?}", selected(c)))
+            }),
+        ),
+        DoC(
+            "selection: Shift-click the first clip to take it out",
+            Box::new(move |a, ctl| {
+                let (x, y) = clip_xy(&ctl.borrow(), ids.get().0);
+                with_shift(a, || click(a, x, y));
+            }),
+        ),
+        Check(
+            "selection: only the second clip left",
+            Box::new(|c, _| (c.selected_clips().len() == 1).then_some(()).ok_or(format!("{:?}", selected(c)))),
+        ),
+        DoC(
+            "selection: remove the test track",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.select_clip(None);
+                let t = c.project().tracks[0].id;
+                c.execute(Command::RemoveTrack { track: t });
+            }),
+        ),
+    ]
+}
+
 fn clip_menu_steps() -> Vec<Step> {
     use Step::*;
     use dstudio_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId};
@@ -14130,6 +14284,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(minimap_steps());
     all.extend(devminimap_steps());
     all.extend(clip_menu_steps());
+    all.extend(clip_selection_steps());
     all.extend(clip_render_steps());
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());

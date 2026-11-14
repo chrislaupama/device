@@ -66,7 +66,7 @@ impl Controller {
             MenuAction::TrackDuplicate => self.duplicate_track(id, false),
             MenuAction::TrackDuplicateClips => self.duplicate_track(id, true),
             MenuAction::TrackDelete => {
-                self.selected_clip = None;
+                self.select_clip(None);
                 self.selected_section = None;
                 self.selected_track = Some(id);
                 self.delete_selection();

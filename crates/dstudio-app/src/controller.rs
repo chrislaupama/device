@@ -377,6 +377,10 @@ pub struct Controller {
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
     pub selected_clip: Option<ClipId>,
+    /// The other selected clips besides `selected_clip` (src/selection.rs).
+    pub extra_clips: Vec<ClipId>,
+    /// Selection box being drawn over the lanes (src/selection.rs).
+    pub(crate) marquee: Option<crate::selection::Marquee>,
     pub view: View,
     pub lanes_size: (f32, f32),
     drag: Option<Drag>,
@@ -448,6 +452,8 @@ pub struct Controller {
     pub typing: crate::typing::Typing,
     pub menu: MenuState,
     pub clipboard: Option<ClipboardItem>,
+    /// The other clips of a copied group, pasted at the same offset on their own tracks.
+    pub(crate) clipboard_rest: Vec<ClipboardItem>,
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
     pub rename_section: Option<dstudio_core::SectionId>,
@@ -560,6 +566,8 @@ impl Controller {
             peaks: PeakStore::default(),
             selected_track: None,
             selected_clip: None,
+            extra_clips: Vec::new(),
+            marquee: None,
             view: View::default(),
             lanes_size: (983.0, 398.5),
             drag: None,
@@ -610,6 +618,7 @@ impl Controller {
             typing: Default::default(),
             menu: MenuState::default(),
             clipboard: None,
+            clipboard_rest: Vec::new(),
             rename: None,
             rename_section: None,
             press_epoch: 0,
@@ -868,6 +877,11 @@ impl Controller {
         {
             self.selected_clip = None;
         }
+        let gone: Vec<ClipId> = self.extra_clips.iter().copied().filter(|&c| !p.clip_id_in_use(c)).collect();
+        self.extra_clips.retain(|c| !gone.contains(c));
+        if self.selected_clip.is_none() && !self.extra_clips.is_empty() {
+            self.selected_clip = Some(self.extra_clips.remove(0));
+        }
         if self.selected_section.is_some_and(|s| p.section_index(s).is_none()) {
             self.selected_section = None;
         }
@@ -1073,6 +1087,7 @@ impl Controller {
                 && self.clip_track(c) != Some(id)
             {
                 self.selected_clip = None;
+                self.extra_clips.clear();
             }
             self.sel_peak_hold = 0.0;
             self.meter_disp = (0.0, 0.0);
@@ -1137,6 +1152,8 @@ impl Controller {
     pub fn delete_selection(&mut self) {
         if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
             self.delete_section(s);
+        } else if !self.extra_clips.is_empty() {
+            self.delete_clips();
         } else if let Some(c) = self.selected_clip.take() {
             let cmd = if self.project().find_midi_clip(c).is_some() {
                 Command::RemoveMidiClip { clip: c }
@@ -1486,6 +1503,7 @@ impl Controller {
         if self.execute(Command::Batch { label: "Import Audio".into(), commands: cmds }) {
             self.selected_track = Some(track_id);
             self.selected_clip = Some(clip_id);
+            self.extra_clips.clear();
             self.ui_dirty = true;
         } else {
             self.asset_map.remove(&asset_id);
@@ -1508,6 +1526,7 @@ impl Controller {
         self.devices.modu.bases_pending = true;
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
+        self.extra_clips.clear();
         self.published_rev = None;
         self.after_change();
     }
@@ -1561,6 +1580,7 @@ impl Controller {
         self.remember_recent(dir);
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
+        self.extra_clips.clear();
         self.view = View::default();
         self.published_rev = None;
         self.after_change();
@@ -1659,11 +1679,15 @@ impl Controller {
                     Hit::Clip { index, zone } => {
                         let id = self.clip_ids[index];
                         self.pr.focused = false;
+                        if shift {
+                            self.toggle_clip_selection(id);
+                            return;
+                        }
                         if let Some((ti, ci)) = self.project().find_midi_clip(id) {
                             let (track, c) = (self.project().tracks[ti].id, &self.project().tracks[ti].midi_clips[ci]);
                             let (start, len) = (c.start, c.length);
+                            self.focus_clip(id);
                             self.select_track(track);
-                            self.select_clip(Some(id));
                             self.drag = Some(match zone {
                                 Zone::Body => Drag::Move {
                                     clip: id,
@@ -1680,8 +1704,8 @@ impl Controller {
                             return;
                         }
                         let Some((track, start, off, len, _, _)) = self.clip_region(id) else { return };
+                        self.focus_clip(id);
                         self.select_track(track);
-                        self.select_clip(Some(id));
                         self.drag = Some(match zone {
                             Zone::Body => Drag::Move {
                                 clip: id,
@@ -1701,19 +1725,29 @@ impl Controller {
                     Hit::Track(i) => {
                         let id = self.project().tracks[i].id;
                         self.select_track(id);
-                        self.select_clip(None);
+                        if !shift {
+                            self.select_clip(None);
+                        }
                         self.pr.focused = false;
                         self.seek_beats(beat);
+                        self.marquee_press(x, y, shift);
                     }
                     Hit::Empty => {
-                        self.select_clip(None);
+                        if !shift {
+                            self.select_clip(None);
+                        }
                         self.pr.focused = false;
+                        self.marquee_press(x, y, shift);
                     }
                     Hit::Master => {}
                 }
                 self.ui_dirty = true;
             }
             1 => {
+                if self.marquee.is_some() {
+                    self.marquee_move(x, y);
+                    return;
+                }
                 let Some(drag) = self.drag.clone() else { return };
                 let (steps, on) = (self.ruler_steps(), self.snap_active());
                 let snap = |b: f64| (if on { steps.snap(b) } else { b.max(0.0) } * PPQ as f64).round() as Ticks;
@@ -1796,7 +1830,18 @@ impl Controller {
                 self.ui_dirty = true;
             }
             _ => {
+                if self.marquee_release() {
+                    return;
+                }
                 match self.drag.take() {
+                    Some(Drag::Move { orig_track, orig_start, track, start, .. }) if !self.extra_clips.is_empty() => {
+                        if (track, start) != (orig_track, orig_start) {
+                            self.finish_group_move(orig_track, orig_start, track, start);
+                        } else if !shift && let Some(c) = self.selected_clip {
+                            // A click (no drag) on one of several selected clips selects it alone.
+                            self.set_clip_selection(vec![c]);
+                        }
+                    }
                     Some(Drag::Move { clip, orig_track, orig_start, track, start, .. }) if (track, start) != (orig_track, orig_start) => {
                         let midi = self.project().find_midi_clip(clip).is_some();
                         self.execute(if midi {
@@ -1883,6 +1928,7 @@ impl Controller {
         self.track_vis = p.tracks.iter().map(|t| TrackVis { selected: Some(t.id) == self.selected_track }).collect();
         self.section_vis = self.build_section_vis();
         let p = self.doc.project();
+        let group = self.group_previews();
         self.clip_vis.clear();
         self.clip_ids.clear();
         for (ti, t) in p.tracks.iter().enumerate() {
@@ -1890,6 +1936,7 @@ impl Controller {
                 let (mut track_index, mut start, mut off, mut len) = (ti, c.start, c.source_offset, c.source_length);
                 let mut clip_loop = c.clip_loop;
                 match &self.drag {
+                    _ if group.contains_key(&c.id) => (track_index, start) = group[&c.id],
                     Some(Drag::Move { clip, track, start: s, .. }) if *clip == c.id => {
                         track_index = p.track_index(*track).unwrap_or(ti);
                         start = *s;
@@ -1910,7 +1957,7 @@ impl Controller {
                     start_beats: start as f64 / PPQ as f64,
                     len_beats,
                     color: track_color(t.color),
-                    selected: Some(c.id) == self.selected_clip,
+                    selected: self.is_clip_selected(c.id),
                     muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave,
@@ -1922,6 +1969,7 @@ impl Controller {
             for c in &t.midi_clips {
                 let (mut track_index, mut start, mut len) = (ti, c.start, c.length);
                 match &self.drag {
+                    _ if group.contains_key(&c.id) => (track_index, start) = group[&c.id],
                     Some(Drag::Move { clip, track, start: s, .. }) if *clip == c.id => {
                         track_index = p.track_index(*track).unwrap_or(ti);
                         start = *s;
@@ -1944,7 +1992,7 @@ impl Controller {
                     start_beats: start as f64 / PPQ as f64,
                     len_beats: len as f64 / PPQ as f64,
                     color: track_color(t.color),
-                    selected: Some(c.id) == self.selected_clip,
+                    selected: self.is_clip_selected(c.id),
                     muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave: None,
@@ -1957,6 +2005,14 @@ impl Controller {
         self.rebuild_live();
     }
 
+    /// The clip move in progress: (original track, original start, track, start).
+    pub(crate) fn move_drag(&self) -> Option<(TrackId, Ticks, TrackId, Ticks)> {
+        match &self.drag {
+            Some(Drag::Move { orig_track, orig_start, track, start, .. }) => Some((*orig_track, *orig_start, *track, *start)),
+            _ => None,
+        }
+    }
+
     /// Track that holds a clip (audio or MIDI).
     pub fn clip_track(&self, id: ClipId) -> Option<TrackId> {
         let p = self.project();
@@ -1966,6 +2022,7 @@ impl Controller {
     /// Select a clip (or none). Selecting a MIDI clip opens the Clip tab (piano roll).
     pub fn select_clip(&mut self, id: Option<ClipId>) {
         self.selected_clip = id;
+        self.extra_clips.clear();
         if id.is_some() {
             self.selected_section = None;
         }
@@ -2307,6 +2364,7 @@ impl Controller {
         self.push_files(&s);
         self.push_automation(&s);
         self.push_track_drag(&s);
+        self.push_marquee(&s);
         s.set_bottom_h(self.bottom_h());
         s.set_bottom_collapsed(self.bottom_collapsed());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
