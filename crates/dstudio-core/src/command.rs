@@ -574,7 +574,7 @@ impl Command {
                 }
                 // Ordinary tracks come first, then the returns.
                 let ordinary = p.ordinary_track_count();
-                let (lo, hi) = if track.is_return() {
+                if track.is_bus() {
                     if !track.clips.is_empty()
                         || !track.midi_clips.is_empty()
                         || track.instrument_plugin.is_some()
@@ -582,15 +582,14 @@ impl Command {
                         || track.monitor
                         || track.input.is_some()
                     {
-                        return Err(invalid("track", "a return track has no clips, instrument or input"));
+                        return Err(invalid("track", "a return or group track has no clips, instrument or input"));
                     }
-                    if p.returns().count() >= MAX_RETURNS {
-                        return Err(invalid("track", format!("at most {MAX_RETURNS} return tracks")));
+                    // Returns and groups each take one of the engine's buses.
+                    if p.tracks.iter().filter(|t| t.is_bus()).count() >= MAX_RETURNS {
+                        return Err(invalid("track", format!("at most {MAX_RETURNS} return and group tracks")));
                     }
-                    (ordinary, p.tracks.len())
-                } else {
-                    (0, ordinary)
-                };
+                }
+                let (lo, hi) = if track.is_return() { (ordinary, p.tracks.len()) } else { (0, ordinary) };
                 let idx = index.unwrap_or(hi);
                 if idx < lo || idx > hi {
                     return Err(invalid("index", format!("{idx} is outside {lo}..={hi}")));
@@ -799,7 +798,7 @@ impl Command {
             Command::AddClip { track, mut clip } => {
                 match p.track(track) {
                     None => return Err(EditError::TrackNotFound(track)),
-                    Some(t) if t.is_return() => return Err(invalid("track", "return tracks take no clips")),
+                    Some(t) if t.is_bus() => return Err(invalid("track", "return and group tracks take no clips")),
                     Some(_) => {}
                 }
                 if clip.id.0 == 0 {
@@ -1081,8 +1080,8 @@ impl Command {
             Command::SetTrackArm { track, arm } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
                 // Audio tracks record their input; instrument tracks record MIDI; returns record nothing.
-                if arm && t.kind == TrackKind::Return {
-                    return Err(invalid("track", "return tracks cannot be armed"));
+                if arm && t.is_bus() {
+                    return Err(invalid("track", "return and group tracks cannot be armed"));
                 }
                 let old = std::mem::replace(&mut t.arm, arm);
                 Ok(Command::SetTrackArm { track, arm: old })
@@ -1090,8 +1089,8 @@ impl Command {
             Command::SetTrackMonitor { track, monitor } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
                 // Audio tracks hear their input; instrument tracks hear MIDI input; returns have no input.
-                if monitor && t.kind == TrackKind::Return {
-                    return Err(invalid("track", "return tracks have no input to monitor"));
+                if monitor && t.is_bus() {
+                    return Err(invalid("track", "return and group tracks have no input to monitor"));
                 }
                 let old = std::mem::replace(&mut t.monitor, monitor);
                 Ok(Command::SetTrackMonitor { track, monitor: old })
@@ -1543,16 +1542,19 @@ fn kind_name(k: TrackKind) -> &'static str {
         TrackKind::Audio => "Audio",
         TrackKind::Instrument => "Instrument",
         TrackKind::Return => "Return",
+        TrackKind::Group => "Group",
     }
 }
 
 /// Sends and output of track `id` (of `kind`; id 0 = a track not added yet): sends only from
 /// ordinary tracks, each into a different return track at 0 ..= +6 dB; the output is the master
-/// or, for ordinary tracks, a return track.
+/// or, for ordinary tracks, a return or group track. Returns and groups play into the master and
+/// send nothing (groups don't nest).
 fn validate_routing(p: &Project, id: TrackId, kind: TrackKind, sends: &[TrackSend], output: Option<TrackId>) -> Result<(), EditError> {
     let is_return_track = |t: TrackId| t != id && p.track(t).is_some_and(|t| t.is_return());
-    if kind == TrackKind::Return && (!sends.is_empty() || output.is_some()) {
-        return Err(invalid("track", "a return track has no sends and plays into the master"));
+    let is_bus_track = |t: TrackId| t != id && p.track(t).is_some_and(|t| t.is_bus());
+    if matches!(kind, TrackKind::Return | TrackKind::Group) && (!sends.is_empty() || output.is_some()) {
+        return Err(invalid("track", "a return or group track has no sends and plays into the master"));
     }
     for (i, s) in sends.iter().enumerate() {
         if !is_return_track(s.target) {
@@ -1566,9 +1568,9 @@ fn validate_routing(p: &Project, id: TrackId, kind: TrackKind, sends: &[TrackSen
         }
     }
     if let Some(o) = output
-        && !is_return_track(o)
+        && !is_bus_track(o)
     {
-        return Err(invalid("output", format!("{} is not a return track", o.0)));
+        return Err(invalid("output", format!("{} is not a return or group track", o.0)));
     }
     Ok(())
 }

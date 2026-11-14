@@ -593,7 +593,10 @@ impl Controller {
         let extra: Vec<f32> = if self.auto.shown {
             let ids: Vec<TrackId> = self.project().tracks.iter().take(pinned_from).map(|t| t.id).collect();
             ids.iter()
-                .map(|id| if self.auto.expanded.contains(id) { self.extra_targets(*id).len() as f32 * EXTRA_PITCH } else { 0.0 })
+                .map(|id| {
+                    let shown = self.project().track(*id).is_some_and(|t| !self.hidden_by_fold(t));
+                    if shown && self.auto.expanded.contains(id) { self.extra_targets(*id).len() as f32 * EXTRA_PITCH } else { 0.0 }
+                })
                 .collect()
         } else {
             Vec::new()
@@ -605,7 +608,14 @@ impl Controller {
             .tracks
             .iter()
             .take(n)
-            .map(|t| timeline::pitch_for_scale(preview.filter(|(id, _)| *id == t.id).map_or(t.height, |(_, s)| s)))
+            .map(|t| {
+                // Tracks of a folded group have no row.
+                if self.hidden_by_fold(t) {
+                    0.0
+                } else {
+                    timeline::pitch_for_scale(preview.filter(|(id, _)| *id == t.id).map_or(t.height, |(_, s)| s))
+                }
+            })
             .collect();
         self.view.master_h = if self.auto.shown { timeline::MASTER_H_AUTO } else { timeline::MASTER_H };
         self.view.pinned_from = if pinned_from < n { pinned_from } else { usize::MAX };
@@ -1606,6 +1616,9 @@ impl Controller {
                     id: t.id.0 as i32,
                     number: i as i32 + 1,
                     is_return: t.is_return(),
+                    is_group: t.is_group(),
+                    folded: self.collapsed.contains(&t.id),
+                    in_group: t.output.and_then(|g| p.track(g)).is_some_and(|g| g.is_group()),
                     letter: if t.is_return() {
                         dstudio_core::return_letter(i - first_return).to_string().into()
                     } else {

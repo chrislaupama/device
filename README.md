@@ -66,7 +66,8 @@ wgpu.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Each
   track's channel strip adds a trim (±24 dB), a stereo width knob (0 to 200 %) and a mono switch. Return
   tracks share one effect between many tracks: every track has a send knob for each return, pre- or post-fader, and
-  delay compensation keeps the direct and the returned signal aligned.
+  delay compensation keeps the direct and the returned signal aligned. Group tracks (⌘G, or Add track › Group
+  track) play their tracks through one set of effects and one fader, and fold away to a single row.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight

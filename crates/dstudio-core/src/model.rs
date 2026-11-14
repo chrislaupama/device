@@ -50,6 +50,10 @@ pub enum TrackKind {
     /// A return track: no clips or input; it plays what other tracks send to it
     /// ([Track::sends], [Track::output]). Return tracks come after every other track.
     Return,
+    /// A group (folder) track: no clips or input; it plays the tracks whose [Track::output] is
+    /// the group, through its own inserts, volume and pan, into the master. Its tracks follow it
+    /// in the track list. Groups sit among the ordinary tracks and don't nest.
+    Group,
 }
 
 /// One send of a track into a return track (spec 002).
@@ -448,6 +452,15 @@ impl Track {
     pub fn is_return(&self) -> bool {
         self.kind == TrackKind::Return
     }
+
+    pub fn is_group(&self) -> bool {
+        self.kind == TrackKind::Group
+    }
+
+    /// Return and group tracks: a bus of what other tracks play into it, with no source of its own.
+    pub fn is_bus(&self) -> bool {
+        matches!(self.kind, TrackKind::Return | TrackKind::Group)
+    }
 }
 
 /// Most return tracks a project can have (the engine's SE_MAX_RETURNS).
@@ -552,6 +565,16 @@ impl Project {
         self.tracks.iter().take_while(|t| !t.is_return()).count()
     }
 
+    /// Tracks of group `group`, in order (the tracks that play into it).
+    pub fn group_members(&self, group: TrackId) -> impl Iterator<Item = &Track> {
+        self.tracks.iter().filter(move |t| t.output == Some(group))
+    }
+
+    /// Name for a new group track: "Group 1", "Group 2", ..., the first number not in use.
+    pub fn next_group_name(&self) -> String {
+        (1..).map(|n| format!("Group {n}")).find(|n| !self.tracks.iter().any(|t| &t.name == n)).unwrap_or_default()
+    }
+
     /// The return tracks, in order.
     pub fn returns(&self) -> impl Iterator<Item = &Track> {
         self.tracks.iter().filter(|t| t.is_return())
@@ -587,6 +610,26 @@ impl Project {
         }
         let returns = kept;
         let return_ids: Vec<TrackId> = returns.iter().map(|t| t.id).collect();
+        // Groups: kept while they hold no content and there is room for their bus next to the
+        // returns; otherwise they load as ordinary tracks.
+        let mut buses = returns.len();
+        for t in &mut ordinary {
+            if t.is_group() {
+                let has_content = !t.clips.is_empty() || !t.midi_clips.is_empty() || t.instrument_plugin.is_some();
+                if has_content || buses == MAX_RETURNS {
+                    t.kind =
+                        if t.midi_clips.is_empty() && t.instrument_plugin.is_none() { TrackKind::Audio } else { TrackKind::Instrument };
+                } else {
+                    buses += 1;
+                    t.input = None;
+                    t.arm = false;
+                    t.monitor = false;
+                    t.sends.clear();
+                    t.output = None;
+                }
+            }
+        }
+        let group_ids: Vec<TrackId> = ordinary.iter().filter(|t| t.is_group()).map(|t| t.id).collect();
         for t in &mut ordinary {
             let mut seen = Vec::new();
             t.sends.retain(|s| {
@@ -597,7 +640,7 @@ impl Project {
             for s in &mut t.sends {
                 s.level = if s.level.is_finite() { s.level.clamp(0.0, TrackSend::MAX_LEVEL) } else { 0.0 };
             }
-            if t.output.is_some_and(|o| !return_ids.contains(&o)) {
+            if t.output.is_some_and(|o| !return_ids.contains(&o) && (t.is_group() || !group_ids.contains(&o))) {
                 t.output = None;
             }
         }

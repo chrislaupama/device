@@ -63,7 +63,7 @@ pub fn consolidate_group(p: &Project, id: ClipId) -> Option<ClipSpan> {
     let ids: Vec<ClipId> = match span.kind {
         TrackKind::Audio => t.clips.iter().map(|c| c.id).collect(),
         TrackKind::Instrument => t.midi_clips.iter().map(|c| c.id).collect(),
-        TrackKind::Return => Vec::new(),
+        TrackKind::Return | TrackKind::Group => Vec::new(),
     };
     let all: Vec<(ClipId, Ticks, Ticks)> = ids.into_iter().filter_map(|c| one(p, c).map(|(_, _, s, e)| (c, s, e))).collect();
     let mut joined = vec![id];

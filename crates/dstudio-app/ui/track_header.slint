@@ -365,7 +365,7 @@ export component TrackHeaderRow inherits Rectangle {
     property <length> top-y: root.minimal ? (root.row-h - 13.6px) / 2 : (root.show-auto ? 8.5px : 21.25px) + root.centre-shift;
     property <length> bottom-y: root.top-y + 18.7px;
     accessible-role: list-item;
-    accessible-label: root.t.is-return ? "Return track " + root.t.letter + " " + root.t.name : "Track " + root.t.number + " " + root.t.name;
+    accessible-label: root.t.is-return ? "Return track " + root.t.letter + " " + root.t.name : (root.t.is-group ? "Group track " : "Track ") + root.t.number + " " + root.t.name;
     ta := TouchArea {
         clicked => { Studio.select-track(root.t.id); }
         pointer-event(e) => {
@@ -383,9 +383,12 @@ export component TrackHeaderRow inherits Rectangle {
         background: root.t.selected ? Tokens.bg-track-header-selected : ta.has-hover ? #ffffff04 : transparent;
     }
     // Colour chip: 6 px wide, flush left, 8 px from the top and bottom, rounded on the right.
+    // A track inside a group: a guide line down the left edge, the chip set in beside it.
+    if root.t.in-group: Rectangle { x: 0; y: 0; width: 1.7px; height: root.row-h + 0.5px; background: #ffffff1f; }
     Rectangle {
-        x: 0; y: 6.8px; width: 5.1px; height: root.row-h - 13.6px;
+        x: root.t.in-group ? 3.4px : 0; y: 6.8px; width: root.t.in-group ? 3.4px : 5.1px; height: root.row-h - 13.6px;
         border-top-right-radius: 3.4px; border-bottom-right-radius: 3.4px;
+        border-top-left-radius: root.t.in-group ? 1.7px : 0; border-bottom-left-radius: root.t.in-group ? 1.7px : 0;
         background: root.t.color;
     }
     Text {
@@ -393,10 +396,21 @@ export component TrackHeaderRow inherits Rectangle {
         text: root.t.is-return ? root.t.letter : root.t.number; color: #ffffff; font-size: 8.5px; font-weight: 700; letter-spacing: -0.34px;
         horizontal-alignment: center; vertical-alignment: center;
     }
-    Icon {
+    if !root.t.is-group: Icon {
         x: 27.2px; y: root.top-y; width: 13.6px; height: 13.6px;
         d: root.t.is-return ? Icons.returns : root.t.instrument ? Icons.track-instrument : Icons.track-audio;
         filled: root.t.instrument; stroke-width: 1.1px; ink: Tokens.text-tertiary;
+    }
+    // A group folds its tracks away with the chevron in place of the track icon.
+    if root.t.is-group: Rectangle {
+        x: 27.2px; y: root.top-y; width: 13.6px; height: 13.6px;
+        accessible-role: button;
+        accessible-label: root.t.folded ? "Show the group's tracks" : "Hide the group's tracks";
+        group-ta := TouchArea { clicked => { Studio.group-fold(root.t.id); } }
+        Icon {
+            x: 1.7px; y: 1.7px; width: 10.2px; height: 10.2px; stroke-width: 1.3px;
+            d: root.t.folded ? Icons.chevron-right : Icons.chevron-down; ink: group-ta.has-hover ? #ffffff : Tokens.text-secondary;
+        }
     }
     TrackName {
         x: 43.35px; y: root.top-y; width: root.width - self.x - 6.8px; height: 13.6px;
@@ -413,8 +427,8 @@ export component TrackHeaderRow inherits Rectangle {
         x: 41.65px; y: root.bottom-y + 1.7px; text: "S"; label: root.t.solo ? "Unsolo track" : "Solo track";
         on: root.t.solo; on-color: Tokens.track-solo-on; on-text: #1a1a1a; pressed => { Studio.track-solo(root.t.id); }
     }
-    // Return tracks record nothing: no R.
-    if !root.minimal && !root.t.is-return: TrackButton {
+    // Return and group tracks record nothing: no R.
+    if !root.minimal && !root.t.is-return && !root.t.is-group: TrackButton {
         x: 55.25px; y: root.bottom-y + 1.7px; text: "R"; label: root.t.arm ? "Disarm track for recording" : "Arm track for recording";
         on: root.t.arm; on-color: Tokens.track-arm-on; pressed => { Studio.track-arm(root.t.id); }
     }
