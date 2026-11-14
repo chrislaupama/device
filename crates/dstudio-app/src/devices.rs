@@ -1671,6 +1671,7 @@ impl Controller {
             .take(9)
             .enumerate()
             .map(|(i, it)| MenuItem {
+                swatch: Default::default(),
                 label: it.name().into(),
                 shortcut: match it {
                     Item::BuiltinSynth | Item::Builtin(_) => "Built-in".into(),
@@ -1684,6 +1685,7 @@ impl Controller {
             .collect();
         if results.is_empty() && !self.devices.add_search.trim().is_empty() {
             results.push(MenuItem {
+                swatch: Default::default(),
                 label: "No matches".into(),
                 shortcut: "".into(),
                 enabled: false,
@@ -1702,6 +1704,7 @@ impl Controller {
                     .iter()
                     .enumerate()
                     .map(|(i, (label, right, item, sep))| MenuItem {
+                        swatch: Default::default(),
                         label: label.clone().into(),
                         shortcut: right.clone().into(),
                         enabled: item.is_some(),

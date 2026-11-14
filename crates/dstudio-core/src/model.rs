@@ -403,6 +403,65 @@ impl Project {
         p
     }
 
+    /// A copy of track `id` for Duplicate track: the same name, colour, mix settings, devices,
+    /// automation and sends, with fresh ids for the track, its devices and (with `with_clips`)
+    /// its clips, so the copy can be added next to the original with `Command::AddTrack`. The
+    /// copy is not armed or soloed, and links, chains and automation lanes that name one of the
+    /// original's devices name the copy's device instead. None when there is no such track.
+    pub fn track_copy(&self, id: TrackId, with_clips: bool) -> Option<Track> {
+        use crate::automation::AutomationTarget;
+        let src = self.track(id)?;
+        let mut next = self.next_id;
+        let mut fresh = || {
+            let id = next;
+            next += 1;
+            id
+        };
+        let mut t = src.clone();
+        t.id = TrackId(fresh());
+        t.arm = false;
+        t.solo = false;
+        if with_clips {
+            for c in &mut t.clips {
+                c.id = ClipId(fresh());
+            }
+            for c in &mut t.midi_clips {
+                c.id = ClipId(fresh());
+            }
+        } else {
+            t.clips.clear();
+            t.midi_clips.clear();
+        }
+        let mut map = std::collections::HashMap::new();
+        for d in t.devices.iter_mut().chain(t.instrument_plugin.as_mut()) {
+            let new = DeviceId(fresh());
+            map.insert(d.id, new);
+            d.id = new;
+        }
+        let remap = |d: &mut DeviceId| {
+            if let Some(n) = map.get(d) {
+                *d = *n;
+            }
+        };
+        for d in t.devices.iter_mut().chain(t.instrument_plugin.as_mut()) {
+            if let Some(c) = d.chain.as_mut() {
+                remap(c);
+            }
+            for l in &mut d.links {
+                remap(&mut l.target);
+            }
+        }
+        for lane in &mut t.automation {
+            match &mut lane.target {
+                AutomationTarget::Plugin { device, .. }
+                | AutomationTarget::Builtin { device, .. }
+                | AutomationTarget::DeviceOn { device, .. } => remap(device),
+                _ => {}
+            }
+        }
+        Some(t)
+    }
+
     pub fn alloc_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;

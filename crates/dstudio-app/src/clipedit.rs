@@ -73,6 +73,11 @@ impl MenuAction {
             MenuAction::SectionInsert => "Insert",
             MenuAction::SectionDelete => "Delete section",
             MenuAction::SectionClear => "Clear all sections",
+            MenuAction::TrackRename => "Rename…",
+            MenuAction::TrackDuplicate => "Duplicate track",
+            MenuAction::TrackDuplicateClips => "Duplicate track with clips",
+            MenuAction::TrackColor => "Color",
+            MenuAction::TrackDelete => "Delete track",
         }
     }
     fn shortcut(self) -> &'static str {
@@ -87,7 +92,8 @@ impl MenuAction {
             MenuAction::Ask => "⌘ K",
             MenuAction::Paste => "⌘ V",
             MenuAction::InsertMidiClip => "⇧⌘ M",
-            MenuAction::SectionDelete => "Del",
+            MenuAction::SectionDelete | MenuAction::TrackDelete => "Del",
+            MenuAction::TrackRename => "⌘ R",
             _ => "",
         }
     }
@@ -104,10 +110,15 @@ impl MenuAction {
                 | MenuAction::SectionRename
                 | MenuAction::SectionDelete
                 | MenuAction::SectionClear
+                | MenuAction::TrackDuplicate
+                | MenuAction::TrackDelete
         )
     }
     fn submenu(self) -> bool {
-        matches!(self, MenuAction::Bounce | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert)
+        matches!(
+            self,
+            MenuAction::Bounce | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert | MenuAction::TrackColor
+        )
     }
 }
 
@@ -120,7 +131,7 @@ const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true),
 const TRANSPOSE: [(&str, &str, i32); 4] =
     [("Octave up", "+12", 12), ("Semitone up", "+1", 1), ("Semitone down", "−1", -1), ("Octave down", "−12", -12)];
 
-fn layout_items(items: impl Iterator<Item = (String, String, bool, bool, bool)>) -> (Vec<MenuItem>, f32) {
+pub(crate) fn layout_items(items: impl Iterator<Item = (String, String, bool, bool, bool)>) -> (Vec<MenuItem>, f32) {
     let mut y = MENU_PAD;
     let mut out = Vec::new();
     for (i, (label, shortcut, enabled, separator, submenu)) in items.enumerate() {
@@ -128,7 +139,7 @@ fn layout_items(items: impl Iterator<Item = (String, String, bool, bool, bool)>)
         if separator {
             y += MENU_SEP;
         }
-        out.push(MenuItem { label: label.into(), shortcut: shortcut.into(), enabled, separator, submenu, y });
+        out.push(MenuItem { swatch: Default::default(), label: label.into(), shortcut: shortcut.into(), enabled, separator, submenu, y });
         y += MENU_ROW;
     }
     (out, y + MENU_PAD)
@@ -630,6 +641,7 @@ impl Controller {
         self.menu.clip = None;
         self.menu.section = None;
         self.menu.lane = None;
+        self.menu.track = None;
         self.ui_dirty = true;
     }
 
@@ -640,6 +652,7 @@ impl Controller {
             self.menu.clip = None;
             self.menu.section = None;
             self.menu.lane = None;
+            self.menu.track = None;
             self.ui_dirty = true;
         }
     }
@@ -651,6 +664,10 @@ impl Controller {
         }
         if let Some(id) = self.menu.section {
             self.section_menu_activate(id, action);
+            return;
+        }
+        if let Some(id) = self.menu.track {
+            self.track_menu_activate(id, action);
             return;
         }
         if let Some((track, at)) = self.menu.lane {
@@ -730,6 +747,10 @@ impl Controller {
     }
 
     pub fn submenu_activate(&mut self, index: usize) {
+        if let Some(track) = self.menu.track {
+            self.track_color_pick(track, index);
+            return;
+        }
         let Some(id) = self.menu.clip else { return };
         if self.menu.sub_for == Some(MenuAction::Bounce) {
             if BOUNCE.get(index).is_some_and(|b| b.2) {
@@ -1068,13 +1089,20 @@ impl Controller {
             s.set_menu_y(self.menu.pos.1);
             s.set_menu_h(h);
             s.set_sub_open(self.menu.sub_open);
-            s.set_sub_y(sub_y - MENU_PAD);
-            let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Bounce {
-                BOUNCE.iter().map(|&(l, k, on)| (l.to_string(), k.to_string(), on)).collect()
+            let (sub, sub_h) = if sub_for == MenuAction::TrackColor {
+                self.track_color_rows()
             } else {
-                TRANSPOSE.iter().map(|(l, k, _)| (l.to_string(), k.to_string(), true)).collect()
+                let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Bounce {
+                    BOUNCE.iter().map(|&(l, k, on)| (l.to_string(), k.to_string(), on)).collect()
+                } else {
+                    TRANSPOSE.iter().map(|(l, k, _)| (l.to_string(), k.to_string(), true)).collect()
+                };
+                layout_items(rows.into_iter().map(|(l, k, on)| (l, k, on, false, false)))
             };
-            let (sub, sub_h) = layout_items(rows.into_iter().map(|(l, k, on)| (l, k, on, false, false)));
+            // A tall submenu (track colours) moves up to stay inside the window.
+            let win_h = self.devices.win.1;
+            let room = if win_h > 0.0 { win_h - 4.0 - sub_h - self.menu.pos.1 } else { f32::MAX };
+            s.set_sub_y((sub_y - MENU_PAD).min(room));
             sync_model(&self.sub_model, sub);
             s.set_sub_h(sub_h);
         }

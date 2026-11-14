@@ -11759,6 +11759,169 @@ fn transport_fields_steps() -> Vec<Step> {
 
 /// Track rename: double-click the selected track's name in the inspector, type, Enter. An
 /// empty name and Escape leave the name alone; undo restores it.
+/// Track header menu and reorder drag (src/track_menu.rs).
+fn track_menu_steps() -> Vec<Step> {
+    use Step::*;
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        dispatch(w, WindowEvent::PointerMoved { position: p });
+        dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    fn menu_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let s = a.global::<Studio>();
+        let items = s.get_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .find(|m| m.label == label && m.enabled)
+            .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0))
+    }
+    fn sub_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let s = a.global::<Studio>();
+        let items = s.get_sub_items();
+        (0..slint::Model::row_count(&items)).filter_map(|i| slint::Model::row_data(&items, i)).find(|m| m.label == label).map(|m| {
+            (s.get_menu_x() + crate::clipedit::MENU_W - 4.0 + 40.0, s.get_menu_y() + s.get_sub_y() + m.y + crate::clipedit::MENU_ROW / 2.0)
+        })
+    }
+    // Middle of track `i`'s header row, over its number (no control there).
+    fn row_xy(c: &Controller, i: usize) -> (f32, f32) {
+        (tracks_x() + 15.0, track0_y() + c.view.track_offset(i) + c.view.pitch(i) / 2.0 - c.view.scroll_y as f32)
+    }
+    fn ids(c: &Controller) -> Vec<u64> {
+        c.project().tracks.iter().map(|t| t.id.0).collect()
+    }
+    let before: Rc<RefCell<Vec<u64>>> = Rc::new(RefCell::new(Vec::new()));
+    let (b0, b1, b2, b3, b4) = (before.clone(), before.clone(), before.clone(), before.clone(), before.clone());
+    vec![
+        DoC(
+            "track menu: mixer closed, lanes scrolled to the top, two ordinary tracks",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                if c.project().ordinary_track_count() < 2 {
+                    c.add_audio_track();
+                }
+                c.view.scroll_y = 0.0;
+                c.ui_dirty = true;
+                *b0.borrow_mut() = ids(&c);
+            }),
+        ),
+        DoC(
+            "track menu: right-click track 1's header",
+            Box::new(|a, ctl| {
+                let (x, y) = row_xy(&ctl.borrow(), 0);
+                right_click(a, x, y);
+            }),
+        ),
+        Check(
+            "track menu: Rename, Duplicate track, Duplicate track with clips, Color, Delete track; track 1 selected",
+            Box::new(|c, a| {
+                let labels = ["Rename…", "Duplicate track", "Duplicate track with clips", "Color", "Delete track"];
+                let ok = a.global::<Studio>().get_menu_open()
+                    && labels.iter().all(|l| menu_row(a, l).is_some())
+                    && c.selected_track == c.project().tracks.first().map(|t| t.id);
+                ok.then_some(()).ok_or(format!("open {} selected {:?}", a.global::<Studio>().get_menu_open(), c.selected_track))
+            }),
+        ),
+        Do(
+            "track menu: choose Duplicate track with clips",
+            Box::new(|a| {
+                if let Some((x, y)) = menu_row(a, "Duplicate track with clips") {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "track menu: the copy sits below track 1 with its name, colour and clips, selected, one undo step",
+            Box::new(move |c, _| {
+                let p = c.project();
+                let n = b1.borrow().len();
+                let (src, copy) = (&p.tracks[0], &p.tracks[1]);
+                let ok = p.tracks.len() == n + 1
+                    && copy.id != src.id
+                    && copy.name == src.name
+                    && copy.color == src.color
+                    && copy.clips.len() == src.clips.len()
+                    && copy.midi_clips.len() == src.midi_clips.len()
+                    && c.selected_track == Some(copy.id)
+                    && c.doc.undo_label() == Some("Duplicate Track with Clips");
+                ok.then_some(()).ok_or(format!("{} tracks (was {n}), undo {:?}", p.tracks.len(), c.doc.undo_label()))
+            }),
+        ),
+        Do("track menu: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "track menu: undo removes the copy",
+            Box::new(move |c, _| (ids(c) == *b2.borrow()).then_some(()).ok_or(format!("{:?}", ids(c)))),
+        ),
+        DoC(
+            "track menu: right-click track 1, open Color",
+            Box::new(|a, ctl| {
+                let (x, y) = row_xy(&ctl.borrow(), 0);
+                right_click(a, x, y);
+                if let Some((x, y)) = menu_row(a, "Color") {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "track menu: the Color submenu lists 13 swatches",
+            Box::new(|_, a| {
+                let s = a.global::<Studio>();
+                let items = s.get_sub_items();
+                let n = slint::Model::row_count(&items);
+                let swatches = (0..n).filter_map(|i| slint::Model::row_data(&items, i)).all(|m| m.swatch != slint::Color::default());
+                (s.get_sub_open() && n == 13 && swatches).then_some(()).ok_or(format!("open {} rows {n}", s.get_sub_open()))
+            }),
+        ),
+        Do(
+            "track menu: pick Teal",
+            Box::new(|a| {
+                if let Some((x, y)) = sub_row(a, "Teal") {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "track menu: track 1 is teal (palette 6), one undo step, menu closed",
+            Box::new(|c, a| {
+                let col = c.project().tracks[0].color.0;
+                (col == 6 && c.doc.undo_label() == Some("Track Color Change") && !a.global::<Studio>().get_menu_open())
+                    .then_some(())
+                    .ok_or(format!("colour {col} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        Do("track menu: Cmd+Z the colour", Box::new(|a| key(a, "z", true, false))),
+        DoC(
+            "reorder: drag track 1's header below track 2",
+            Box::new(|a, ctl| {
+                let ((x, y0), (_, y1)) = {
+                    let c = ctl.borrow();
+                    (row_xy(&c, 0), row_xy(&c, 1))
+                };
+                drag(a, x, y0, x, y1 + crate::timeline::TRACK_PITCH * 0.3);
+            }),
+        ),
+        Check(
+            "reorder: track 1 moved to second place (Move Track), the drop line gone",
+            Box::new(move |c, a| {
+                let b = b3.borrow();
+                let now = ids(c);
+                (now[0] == b[1] && now[1] == b[0] && c.doc.undo_label() == Some("Move Track") && !a.global::<Studio>().get_track_drop_on())
+                    .then_some(())
+                    .ok_or(format!("{now:?} (was {b:?}) undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        Do("reorder: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "reorder: undo puts the tracks back in order",
+            Box::new(move |c, _| (ids(c) == *b4.borrow()).then_some(()).ok_or(format!("{:?}", ids(c)))),
+        ),
+    ]
+}
+
 fn track_rename_steps() -> Vec<Step> {
     use Step::*;
     let name0 = |c: &Controller| c.project().tracks.first().map(|t| t.name.clone()).unwrap_or_default();
@@ -13973,6 +14136,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(snap_steps());
     all.extend(transport_fields_steps());
     all.extend(track_rename_steps());
+    all.extend(track_menu_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

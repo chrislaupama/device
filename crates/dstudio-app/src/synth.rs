@@ -3014,6 +3014,7 @@ impl Controller {
                 .iter()
                 .enumerate()
                 .map(|(k, (label, hint, a))| MenuItem {
+                    swatch: Default::default(),
                     label: label.clone().into(),
                     shortcut: hint.clone().into(),
                     enabled: a.is_some(),

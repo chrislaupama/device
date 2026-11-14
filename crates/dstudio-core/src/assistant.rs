@@ -295,6 +295,8 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
         Command::SetTrackMono { track, mono } => {
             format!("Turned mono {} on {}.", if *mono { "on" } else { "off" }, track_name(after, *track))
         }
+        Command::MoveTrack { track, index } => format!("Moved {} to position {}.", track_name(after, *track), index + 1),
+        Command::SetTrackColor { track, .. } => format!("Changed the colour of {}.", track_name(after, *track)),
         Command::SetTrackMute { track, mute } => format!("{} {}.", if *mute { "Muted" } else { "Unmuted" }, track_name(after, *track)),
         Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),
         Command::SetMasterGain { gain } => format!("Set master volume to {:.1} dB.", gain_to_db(*gain)),

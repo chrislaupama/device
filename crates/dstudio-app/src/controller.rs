@@ -154,6 +154,11 @@ pub(crate) fn fmt_pan(p: f32) -> String {
 const TRACK_PALETTE: [u32; 13] =
     [0x72b5d7, 0x8092eb, 0x9b88f6, 0xc770f7, 0xec5c9f, 0xde7e36, 0x56b5ab, 0xec6e45, 0xe3aa4b, 0xc3cc47, 0xa9de4d, 0x78ea8e, 0x67c9c0];
 
+/// Number of track colours (the Color submenu's entries).
+pub fn track_palette_len() -> usize {
+    TRACK_PALETTE.len()
+}
+
 pub fn track_color(c: ColorIndex) -> [f32; 3] {
     timeline::rgb(TRACK_PALETTE[c.0 as usize % TRACK_PALETTE.len()])
 }
@@ -331,6 +336,12 @@ pub enum MenuAction {
     SectionInsert,
     SectionDelete,
     SectionClear,
+    /// Track header menu (src/track_menu.rs).
+    TrackRename,
+    TrackDuplicate,
+    TrackDuplicateClips,
+    TrackColor,
+    TrackDelete,
 }
 
 #[derive(Debug, Default)]
@@ -341,6 +352,8 @@ pub struct MenuState {
     pub section: Option<dstudio_core::SectionId>,
     /// Empty-lane menu: the track and timeline position (ticks) it was opened at.
     pub lane: Option<(TrackId, Ticks)>,
+    /// Track header menu: the track it was opened on.
+    pub track: Option<TrackId>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
@@ -369,6 +382,8 @@ pub struct Controller {
     drag: Option<Drag>,
     /// Track-height drag preview (src/splitters.rs).
     pub(crate) track_resize: Option<crate::splitters::TrackResize>,
+    /// Track header press that may become a reorder drag (src/track_menu.rs).
+    pub(crate) track_drag: Option<crate::track_menu::TrackDrag>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
     /// Saved height (None = default) each bottom panel kind had before its collapse button shut
@@ -549,6 +564,7 @@ impl Controller {
             lanes_size: (983.0, 398.5),
             drag: None,
             track_resize: None,
+            track_drag: None,
             bottom_drag: None,
             bottom_restore: Default::default(),
             chat_drag: None,
@@ -2290,6 +2306,7 @@ impl Controller {
         self.push_devices(&s);
         self.push_files(&s);
         self.push_automation(&s);
+        self.push_track_drag(&s);
         s.set_bottom_h(self.bottom_h());
         s.set_bottom_collapsed(self.bottom_collapsed());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };

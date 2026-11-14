@@ -346,7 +346,8 @@ export struct MidiInputRow { name: string, on: bool, lit: bool }
 // Edit › Undo History row; state 0 applied, 1 current, 2 undone.
 export struct UndoHistoryRow { number: int, label: string, date: string, time: string, state: int }
 
-export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length }
+// swatch: a colour chip before the label (track colour menu); transparent for none.
+export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length, swatch: color }
 
 export global Studio {
     // ---- project / status ----
@@ -537,6 +538,12 @@ export global Studio {
     callback bottom-collapse-toggle();
     callback bottom-resize(int, length);
     callback track-resize(int, int, length);                // track id, phase, window y
+    // Track header: right press opens the track menu (window x, y); a press and drag reorders
+    // (track id, phase 0 press / 1 move / 2 release / 3 cancel, window y; src/track_menu.rs).
+    callback track-menu(int, length, length);
+    callback track-drag(int, int, length);
+    in property <bool> track-drop-on;                      // a reorder drag shows its drop line
+    in property <length> track-drop-y;                     // at this content y of the header list
     callback master-volume(float);
     callback sel-fader-moved(float);
     callback lane-pointer(int, length, length, bool, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd, alt

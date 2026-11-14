@@ -81,6 +81,16 @@ pub enum Command {
         track: TrackId,
         name: String,
     },
+    /// Move a track to `index` within its group (ordinary tracks first, then the returns).
+    MoveTrack {
+        track: TrackId,
+        index: usize,
+    },
+    /// A track's colour, an index into the app's track palette.
+    SetTrackColor {
+        track: TrackId,
+        color: ColorIndex,
+    },
     /// The undo of `RenameTrack`: puts the previous name back exactly as it was, even one a
     /// rename would refuse (an imported name over 128 characters). Not accepted from outside.
     #[serde(skip_deserializing)]
@@ -437,6 +447,8 @@ impl Command {
             Command::AddTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
             Command::RemoveTrack { .. } => "Delete Track".into(),
             Command::RenameTrack { .. } | Command::RestoreTrackName { .. } => "Rename Track".into(),
+            Command::MoveTrack { .. } => "Move Track".into(),
+            Command::SetTrackColor { .. } => "Track Color Change".into(),
             Command::InsertSection { .. } => "Add Section".into(),
             Command::RemoveSection { .. } => "Delete Section".into(),
             Command::RenameSection { .. } => "Rename Section".into(),
@@ -705,6 +717,22 @@ impl Command {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
                 let old = std::mem::replace(&mut t.mono, mono);
                 Ok(Command::SetTrackMono { track, mono: old })
+            }
+            Command::MoveTrack { track, index } => {
+                let i = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                let ordinary = p.ordinary_track_count();
+                let (lo, hi) = if p.tracks[i].is_return() { (ordinary, p.tracks.len()) } else { (0, ordinary) };
+                if index < lo || index >= hi {
+                    return Err(invalid("index", format!("{index} is outside {lo}..{hi}")));
+                }
+                let t = p.tracks.remove(i);
+                p.tracks.insert(index, t);
+                Ok(Command::MoveTrack { track, index: i })
+            }
+            Command::SetTrackColor { track, color } => {
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                let old = std::mem::replace(&mut t.color, color);
+                Ok(Command::SetTrackColor { track, color: old })
             }
             Command::SetTrackMute { track, mute } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;

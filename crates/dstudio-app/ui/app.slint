@@ -712,6 +712,11 @@ component Timeline inherits Panel {
             t: t; level: Studio.track-levels[i];
             edit-done => { root.focus-main(); }
         }
+        // Reorder drag: the drop line between two rows (src/track_menu.rs).
+        if Studio.track-drop-on: Rectangle {
+            x: 0; y: Studio.track-drop-y - Studio.scroll-y - 1px; width: parent.width; height: 2px;
+            background: Tokens.accent;
+        }
         // Expanded automation rows (src/automation.rs, EXTRA_H + separator): well fill, a 1 px
         // white 5 % top rule, and the pill 48 px in.
         for e in Studio.auto-extras: Rectangle {
