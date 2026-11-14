@@ -42,7 +42,8 @@ serde.workspace = true
 # and to place the window buttons (window_buttons.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSUserDefaults", "NSDictionary", "NSString", "NSValue", "NSGeometry"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSUserDefaults", "NSDictionary", "NSString", "NSValue", "NSGeometry", "objc2-core-foundation"] }
 
 [build-dependencies]
 slint-build = "=1.18.1"

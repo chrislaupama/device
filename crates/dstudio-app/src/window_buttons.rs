@@ -8,8 +8,13 @@
 //! inset follows the zoom like the rest of the header.
 //!
 //! AppKit lays the titlebar out again when the window resizes, changes display or
-//! focus, or leaves full screen, so `place` runs again on those window events. It
-//! only reads frames when the buttons are already where they belong.
+//! focus, or leaves full screen, so `place` runs again on those window events and
+//! when AppKit reports that the window left full screen (winit's last resize of
+//! that transition arrives while the window is still in full screen). It only
+//! reads frames when the buttons are already where they belong.
+
+// The placement maths is only called from the macOS path (and the tests).
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 /// Centre of the close button from the window's left and top edges, in points at
 /// 100 % interface zoom (the header's title row is centred 23.5 pt down).
@@ -39,7 +44,7 @@ pub fn place(window: &slint::Window, percent: u32) {
             // SAFETY: winit hands out the window's live NSView; everything below runs
             // on the main thread (the event loop) and only messages AppKit objects
             // reached from that view.
-            unsafe { mac::place(h.ns_view.as_ptr().cast(), close_center(percent)) };
+            unsafe { mac::place(h.ns_view.as_ptr().cast(), percent) };
         }
     });
 }
@@ -49,9 +54,59 @@ pub fn place(_window: &slint::Window, _percent: u32) {}
 
 #[cfg(target_os = "macos")]
 mod mac {
-    use objc2::msg_send;
+    use std::cell::Cell;
+    use std::ptr::NonNull;
+    use std::time::Duration;
+
     use objc2::runtime::AnyObject;
-    use objc2_foundation::{NSPoint, NSRect};
+    use objc2::{class, msg_send};
+    use objc2_foundation::{NSPoint, NSRect, ns_string};
+
+    thread_local! {
+        /// Interface zoom the buttons were last placed for.
+        static PERCENT: Cell<u32> = const { Cell::new(100) };
+        /// The NSWindow whose full-screen exit is observed (null: none yet).
+        static OBSERVED: Cell<*mut AnyObject> = const { Cell::new(std::ptr::null_mut()) };
+    }
+
+    /// Places the buttons for `percent` and, the first time it sees `view`'s window,
+    /// asks AppKit to say when that window leaves full screen.
+    pub(super) unsafe fn place(view: *mut AnyObject, percent: u32) {
+        PERCENT.with(|p| p.set(percent));
+        unsafe {
+            let window: *mut AnyObject = msg_send![view, window];
+            if window.is_null() {
+                return;
+            }
+            if OBSERVED.with(|o| o.get()) != window {
+                OBSERVED.with(|o| o.set(window));
+                observe_full_screen_exit(window, view);
+            }
+            place_buttons(window, super::close_center(percent));
+        }
+    }
+
+    /// On NSWindowDidExitFullScreenNotification, places the buttons again now and once
+    /// more after AppKit's next layout pass.
+    unsafe fn observe_full_screen_exit(window: *mut AnyObject, view: *mut AnyObject) {
+        let block = block2::RcBlock::new(move |_note: NonNull<AnyObject>| {
+            // SAFETY: the observer only fires on the main thread for this window, which
+            // the app keeps open for its whole run.
+            unsafe { place(view, PERCENT.with(|p| p.get())) };
+            slint::Timer::single_shot(Duration::from_millis(50), move || unsafe { place(view, PERCENT.with(|p| p.get())) });
+        });
+        unsafe {
+            let center: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
+            // The returned token stays registered with the centre for the app's lifetime.
+            let _token: *mut AnyObject = msg_send![
+                center,
+                addObserverForName: ns_string!("NSWindowDidExitFullScreenNotification"),
+                object: window,
+                queue: std::ptr::null_mut::<AnyObject>(),
+                usingBlock: &*block
+            ];
+        }
+    }
 
     /// NSWindowStyleMaskFullScreen.
     const FULL_SCREEN: usize = 1 << 14;
@@ -63,12 +118,8 @@ mod mac {
         (a - b).abs() > 0.5
     }
 
-    pub(super) unsafe fn place(view: *mut AnyObject, center: (f64, f64)) {
+    unsafe fn place_buttons(window: *mut AnyObject, center: (f64, f64)) {
         unsafe {
-            let window: *mut AnyObject = msg_send![view, window];
-            if window.is_null() {
-                return;
-            }
             let mask: usize = msg_send![window, styleMask];
             if mask & FULL_SCREEN != 0 {
                 return;
