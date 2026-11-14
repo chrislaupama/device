@@ -16,6 +16,8 @@ pub struct FadeDrag {
     len: Ticks,
     orig: ClipFades,
     pub cur: ClipFades,
+    /// Pointer tick minus the fade's edge at the press, so the fade doesn't jump to the pointer.
+    grab: Ticks,
 }
 
 /// The fades while the `out` handle (or the fade-in one) is at tick `at` on the timeline of a
@@ -70,15 +72,22 @@ impl Controller {
             }
             self.select_clip(Some(id));
         }
-        self.fade_drag = Some(FadeDrag { clip: id, out, start, len, orig, cur: orig.clamped(len) });
+        let cur = orig.clamped(len);
+        let edge = if out { start + len - cur.fade_out } else { start + cur.fade_in };
+        let grab = self.pointer_tick(x) - edge;
+        self.fade_drag = Some(FadeDrag { clip: id, out, start, len, orig, cur, grab });
         self.ui_dirty = true;
         true
+    }
+
+    fn pointer_tick(&self, x: f32) -> Ticks {
+        (self.view.beat_at(x) * PPQ as f64).round() as Ticks
     }
 
     /// Drag a fade handle to lane x (follows the pointer; no snapping).
     pub(crate) fn fade_move(&mut self, x: f32) {
         let Some(mut d) = self.fade_drag else { return };
-        let at = (self.view.beat_at(x) * PPQ as f64).round() as Ticks;
+        let at = self.pointer_tick(x) - d.grab;
         d.cur = dragged_fades(d.cur, d.out, d.start, d.len, at);
         self.fade_drag = Some(d);
         self.ui_dirty = true;

@@ -613,8 +613,18 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 const float* fl = ctx.fade_l();
                 const float* fr = ctx.fade_r();
                 const auto off = static_cast<uint32_t>(from - block_start);
-                for (int64_t i = 0; i < to - from; ++i) {
-                    const float g = clip_fade_gain(*clip, from + i - clip->timeline_start);
+                const auto n = static_cast<uint32_t>(to - from);
+                // Linear ramps as multiplies (clip_fade_gain, without its divides per frame).
+                const float r0 = static_cast<float>(from - clip->timeline_start);
+                const float left0 = static_cast<float>(clip->timeline_end - from);
+                const float fi = static_cast<float>(clip->fade_in);
+                const float fo = static_cast<float>(clip->fade_out);
+                const float inv_in = clip->fade_in > 0 ? 1.0f / fi : 0.0f;
+                const float inv_out = clip->fade_out > 0 ? 1.0f / fo : 0.0f;
+                for (uint32_t i = 0; i < n; ++i) {
+                    const float r = r0 + static_cast<float>(i);
+                    const float left = left0 - static_cast<float>(i);
+                    const float g = (r < fi ? r * inv_in : 1.0f) * (left < fo ? left * inv_out : 1.0f);
                     tl[off + i] += fl[i] * g;
                     tr[off + i] += fr[i] * g;
                 }
