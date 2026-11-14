@@ -21,25 +21,31 @@ bundled Inter font. `mark.svg` is the mark: one cycle of a sine wave on the app'
 
 ## The app views
 
-`shots/` holds the app views the pages frame. They are rendered by the app itself at 2x, with the Linux
-menu bar (the top 88 pixels) cropped off:
+`shots/` holds the app views the pages frame. They show a whole song, "Night Drive", rather than a
+test state: `tools/art/demo_song.py` writes it (six sections, six tracks and two returns, every sound
+synthesised by the script, the same output every run), and the app's `--showcase <view>` option puts
+the opened project into a view. The shots are rendered by the app itself at 2x, with the Linux menu bar
+(the top 88 pixels) cropped off:
 
 ```sh
+python3 tools/art/demo_song.py "/tmp/Night Drive"   # the app titles the project after the folder
 SLINT_SCALE_FACTOR=2 SLINT_WGPU_CPU=1 WGPU_BACKEND=vulkan xvfb-run -a -s "-screen 0 3200x2000x24" \
-  target/release/device-studio --no-audio --zoom 85 --state review-automation \
-  --screenshot /tmp/automation.png --exit-after-frames 5
-magick /tmp/automation.png -gravity north -chop 0x88 docs/art/shots/automation.png
+  target/release/device-studio --no-audio --zoom 85 --open "/tmp/Night Drive" --timeline-zoom 52 \
+  --showcase arrange --screenshot /tmp/arrange.png --exit-after-frames 40
+magick /tmp/arrange.png -gravity north -chop 0x88 docs/art/shots/arrange.png
 ```
 
-| Cropped shot | `--state` |
+| Cropped shot | `--showcase` |
 |---|---|
-| `docs/art/shots/automation.png` | `review-automation` |
-| `docs/art/shots/analyzers.png` | `review-analyzers` |
-| `docs/art/shots/lfo.png` | `reference-lfo` |
+| `docs/art/shots/arrange.png` | `arrange` (the whole song, the Lead's Synth below) |
+| `docs/art/shots/analyzers.png` | `analyzers` (Pitch Corrector, Tuner and Spectrum on the vocal) |
+| `docs/art/shots/lfo.png` | `lfo` (an LFO on the FX track's Auto Filter) |
 
-`--zoom 85` makes the interface scale exactly 2, so the layout matches a 1440×820 window. For the other shots, swap the
-`--state` and file names from the table. When a view changes visibly, render its shot again, crop it into
-`docs/art/shots/` the same way and re-run `render.mjs`.
+The other views, `pianoroll`, `mixer`, `export` and `recording`, are the ones the website's tour uses.
+`--zoom 85` makes the interface scale exactly 2, so the layout matches a 1440×820 window, and
+`--timeline-zoom 52` fits the 36 bars. `--exit-after-frames 40` lets the start-up status messages
+clear. When a view changes visibly, render its shot again, crop it into `docs/art/shots/` the same
+way and re-run `render.mjs`.
 
 ## Fine Signal material
 

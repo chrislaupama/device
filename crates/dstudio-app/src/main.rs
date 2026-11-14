@@ -73,6 +73,7 @@ mod sections;
 mod selftest;
 mod settings;
 mod shape_rack;
+mod showcase;
 mod snap;
 mod splitters;
 mod stepseq;
@@ -249,6 +250,8 @@ struct Args {
     /// one step (controller update + view-model sync) before each render; devmm adds and removes
     /// a device every 24 renders so the Devices minimap fades and glides (devmm-still: the same without the motion, as a baseline).
     drag_bench: Option<String>,
+    /// --showcase <view>: after --open, one of the artwork views (src/showcase.rs).
+    showcase: Option<String>,
     self_test: bool,
 }
 
@@ -593,6 +596,13 @@ fn parse_args() -> Result<Args, String> {
                     ));
                 }
             },
+            "--showcase" => {
+                let view = value(&mut i)?;
+                if !showcase::VIEWS.contains(&view.as_str()) {
+                    return Err(format!("--showcase: want one of {}, got {view}", showcase::VIEWS.join(", ")));
+                }
+                a.showcase = Some(view);
+            }
             "--synth-page" => a.synth_page = Some(value(&mut i)?.parse().map_err(|e| format!("--synth-page: {e}"))?),
             "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
@@ -2882,6 +2892,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = ctl.borrow_mut();
         c.view.px_per_beat = (timeline::DEFAULT_PX_PER_BEAT * pct / 100.0).clamp(timeline::MIN_PX_PER_BEAT, timeline::MAX_PX_PER_BEAT);
         c.ui_dirty = true;
+    }
+    // After --open (and --timeline-zoom), which reset the view.
+    if let Some(view) = &args.showcase {
+        let mut c = ctl.borrow_mut();
+        showcase::apply(&mut c, view)?;
+        c.show_status = false;
+        // Builds conditional panels (the piano roll) for the first frame.
+        c.update_ui(&app);
     }
     // After --open, so the held voice sounds on the project's own Synth.
     if let Some(pitch) = args.hold_note {
