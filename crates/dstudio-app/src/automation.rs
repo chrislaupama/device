@@ -1700,6 +1700,7 @@ impl Controller {
         let cats = self.pick_categories(pk.key);
         let current = self.auto_target(pk.key);
         let item = |label: String, submenu: bool, enabled: bool, checked: bool, i: usize, top: f32| MenuItem {
+            swatch: Default::default(),
             label: label.into(),
             shortcut: if checked { "✓".into() } else { "".into() },
             enabled,

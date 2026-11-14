@@ -366,7 +366,18 @@ export component TrackHeaderRow inherits Rectangle {
     property <length> bottom-y: root.top-y + 18.7px;
     accessible-role: list-item;
     accessible-label: root.t.is-return ? "Return track " + root.t.letter + " " + root.t.name : "Track " + root.t.number + " " + root.t.name;
-    ta := TouchArea { clicked => { Studio.select-track(root.t.id); } }
+    ta := TouchArea {
+        clicked => { Studio.select-track(root.t.id); }
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                Studio.track-menu(root.t.id, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
+            }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-drag(root.t.id, 0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+            if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-drag(root.t.id, 1, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.track-drag(root.t.id, 2, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+            if (e.kind == PointerEventKind.cancel) { Studio.track-drag(root.t.id, 3, 0); }
+        }
+    }
     Rectangle {
         height: root.row-h;
         background: root.t.selected ? Tokens.bg-track-header-selected : ta.has-hover ? #ffffff04 : transparent;

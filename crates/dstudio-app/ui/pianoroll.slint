@@ -627,7 +627,10 @@ export component ContextMenu inherits Rectangle {
         Rectangle { background: ta.has-hover && it.enabled ? #ffffff12 : transparent; }
         Rectangle {
             opacity: it.enabled ? 1 : 0.4;
-            Text { x: 10.2px; text: it.label; color: #ffffff; font-size: 10.2px; font-weight: 600; letter-spacing: -0.306px; vertical-alignment: center; }
+            if it.swatch != transparent: Rectangle {
+                x: 10.2px; y: (parent.height - self.height) / 2; width: 10.2px; height: 10.2px; border-radius: 2.55px; background: it.swatch;
+            }
+            Text { x: it.swatch != transparent ? 27.2px : 10.2px; text: it.label; color: #ffffff; font-size: 10.2px; font-weight: 600; letter-spacing: -0.306px; vertical-alignment: center; }
             Text { x: parent.width - 10.2px - self.preferred-width; text: it.shortcut; color: #ffffff80; font-size: 11.9px; font-weight: 600; letter-spacing: -0.476px; vertical-alignment: center; }
             if it.submenu: Icon { x: parent.width - 10.2px - 11.8px; y: 5.2px; width: 10px; height: 10px; d: Icons.chevron-right; ink: #ffffff80; }
         }

@@ -81,6 +81,7 @@ mod stepseq;
 mod synth;
 mod text_measure;
 mod timeline;
+mod track_menu;
 mod transport_fields;
 mod typing;
 mod warpedit;
@@ -196,6 +197,9 @@ struct Args {
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
+    /// review-track-menu: track 1's header menu open with its Color submenu.
+    /// review-track-drag: track 1's header dragged below track 2, the drop line showing.
+    track_menu_review: u8,
     /// review-returns: the default project with two return tracks (Audio sends to A post-fader
     /// and B pre-fader, Instrument to A), the mixer open with the Sends sections expanded.
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
@@ -559,6 +563,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.snap_menu_review = true;
                 }
+                st @ ("review-track-menu" | "review-track-drag") => {
+                    a.reference_default = true;
+                    a.track_menu_review = if st.ends_with("menu") { 1 } else { 2 };
+                }
                 st @ ("review-transport-sig" | "review-transport-key") => {
                     a.reference_default = true;
                     a.transport_review = if st.ends_with("sig") { 1 } else { 2 };
@@ -605,7 +613,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-track-menu, review-track-drag, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1860,6 +1868,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.rename_track(id, "Lead vox");
         app.global::<Studio>().set_review_rename(true);
     }
+    if args.track_menu_review > 0 {
+        let mut c = ctl.borrow_mut();
+        c.devices.win = (1440.0, 820.0);
+        let id = c.project().tracks[0].id;
+        let top = 78.2 + 66.5;
+        if args.track_menu_review == 1 {
+            c.open_track_menu(id, 120.0, top + 30.0);
+            if let Some(i) = c.menu.items.iter().position(|(a, _)| *a == controller::MenuAction::TrackColor) {
+                c.menu_activate(i);
+            }
+        } else {
+            let (y0, y1) = (top + c.view.pitch(0) / 2.0, top + c.view.track_offset(1) + c.view.pitch(1) * 0.8);
+            c.track_drag(id, 0, y0);
+            c.track_drag(id, 1, y1);
+        }
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -2297,6 +2321,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_settings_test, |c| c.settings_test());
     on!(on_add_track, |c| c.add_audio_track());
     on!(on_select_track, |c, id: i32| c.select_track(TrackId(id as u64)));
+    on!(on_track_menu, |c, id: i32, x: f32, y: f32| c.open_track_menu(TrackId(id as u64), x, y));
+    on!(on_track_drag, |c, id: i32, phase: i32, y: f32| c.track_drag(TrackId(id as u64), phase, y));
     on!(on_track_mute, |c, id: i32| c.toggle_mute(TrackId(id as u64)));
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
