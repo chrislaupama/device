@@ -89,6 +89,7 @@ impl Controller {
         self.midi_scan(false);
         self.midi_poll_pass();
         self.count_in_tick();
+        self.takes_tick();
     }
 
     /// Rescan the MIDI ports (every 2 s, or 10 times a second while Settings › MIDI shows,
@@ -210,7 +211,7 @@ impl Controller {
     }
 
     /// The loop range in frames while the loop is on.
-    fn loop_frames(&self) -> Option<(i64, i64)> {
+    pub(crate) fn loop_frames(&self) -> Option<(i64, i64)> {
         let p = self.project();
         p.transport
             .loop_enabled

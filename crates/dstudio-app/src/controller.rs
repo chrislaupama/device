@@ -228,6 +228,8 @@ pub enum JobResult {
         midi: Vec<dstudio_core::Command>,
         /// The pass's punch-in frame after a count-in.
         punch: Option<i64>,
+        /// The loop that was on for the whole pass (its passes become takes).
+        rec_loop: Option<(i64, i64)>,
     },
     /// Settings › Audio "Test" tone loaded into the engine.
     TestTone(Result<AssetInfo, String>),
@@ -317,6 +319,8 @@ pub enum MenuAction {
     Split,
     Consolidate,
     Bounce,
+    /// Submenu of a looped recording's takes (Take 1, Take 2, ...).
+    Takes,
     Delete,
     Disable,
     Enable,
@@ -1422,7 +1426,9 @@ impl Controller {
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
-                JobResult::Recorded { doc_epoch, takes, midi, punch } => self.finish_recorded(doc_epoch, takes, midi, punch),
+                JobResult::Recorded { doc_epoch, takes, midi, punch, rec_loop } => {
+                    self.finish_recorded(doc_epoch, takes, midi, punch, rec_loop)
+                }
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
@@ -1511,6 +1517,7 @@ impl Controller {
                 disabled: false,
                 clip_loop: None,
                 fades: Default::default(),
+                takes: Vec::new(),
             },
         });
         // Engine asset must be known before the snapshot is published.
@@ -1986,7 +1993,10 @@ impl Controller {
                     color: track_color(t.color),
                     selected: self.is_clip_selected(c.id),
                     muted: t.mute || c.disabled,
-                    name: c.name.clone(),
+                    name: match c.current_take() {
+                        Some(i) if c.takes.len() > 1 => format!("{} · Take {}", c.name, i + 1),
+                        _ => c.name.clone(),
+                    },
                     wave,
                     midi: None,
                     live: None,
@@ -2653,6 +2663,7 @@ mod tests {
                         disabled: false,
                         clip_loop: None,
                         fades: Default::default(),
+                        takes: Vec::new(),
                     },
                 },
             ],

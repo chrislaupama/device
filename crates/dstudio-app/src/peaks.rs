@@ -227,6 +227,7 @@ mod tests {
             disabled: false,
             clip_loop: None,
             fades: Default::default(),
+            takes: Vec::new(),
         };
         (p, clip)
     }

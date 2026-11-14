@@ -35,6 +35,7 @@ fn doc() -> (Document, ClipId, AssetId) {
         disabled: false,
         clip_loop: None,
         fades: Default::default(),
+        takes: Vec::new(),
     };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let id = d.project().tracks[0].clips[0].id;

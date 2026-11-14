@@ -298,6 +298,11 @@ pub enum Command {
         clip: ClipId,
         fades: crate::model::ClipFades,
     },
+    /// Which take of a looped recording an audio clip plays (index into `Clip::takes`).
+    SetClipTake {
+        clip: ClipId,
+        take: usize,
+    },
     /// The piano roll's scale view of a MIDI clip (root, type, highlight, scale rows).
     SetClipScale {
         clip: ClipId,
@@ -494,6 +499,7 @@ impl Command {
             Command::SetMidiLoop { .. } | Command::SetClipLoop { .. } => "Clip Loop".into(),
             Command::SetClipScale { .. } => "Clip Scale".into(),
             Command::SetClipFades { .. } => "Clip Fade Change".into(),
+            Command::SetClipTake { .. } => "Choose Take".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
             Command::SetTrackInput { .. } => "Input Change".into(),
@@ -858,6 +864,17 @@ impl Command {
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let old = std::mem::replace(&mut p.tracks[ti].clips[ci].fades, fades);
                 Ok(Command::SetClipFades { clip, fades: old })
+            }
+            Command::SetClipTake { clip, take } => {
+                let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let c = &p.tracks[ti].clips[ci];
+                let old = c.current_take().ok_or_else(|| invalid("take", format!("clip {} has no takes", clip.0)))?;
+                let frames = p.asset(c.asset).map(|a| a.frames).ok_or(EditError::AssetNotFound(c.asset))?;
+                let (offset, takes) = c.with_take(take, frames).map_err(|r| invalid("take", r))?;
+                let c = &mut p.tracks[ti].clips[ci];
+                c.source_offset = offset;
+                c.takes = takes;
+                Ok(Command::SetClipTake { clip, take: old })
             }
             Command::SetClipGain { clip, gain } => {
                 validate_gain("clip_gain", gain)?;

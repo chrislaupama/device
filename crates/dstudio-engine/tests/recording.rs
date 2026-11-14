@@ -153,6 +153,7 @@ fn record_armed_track_then_play_back_the_take() {
                         disabled: false,
                         clip_loop: None,
                         fades: Default::default(),
+                        takes: Vec::new(),
                     },
                 },
             ],
