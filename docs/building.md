@@ -174,10 +174,12 @@ A **lint** job checks the workflows (actionlint, which also runs shellcheck on
 their scripts), the scripts in `tools/`, the change detection below and the
 agent skills, in under a minute.
 
-The required checks are **build-test (macOS)**, **build-test (Windows)** and
-**build-test (Linux)**. Each passes only when lint and every tests and app job
-passed, so a failure on one system turns all three red; the failing job is
-named in the check list.
+The required checks are **build-test (macOS)**, **build-test (Windows)**,
+**build-test (Linux)**, **lint** and the performance gate **Instructions (Linux,
+Callgrind)** (below). Each build-test check passes only when lint and every
+tests and app job passed, so a failure on one system turns all three red; the
+failing job is named in the check list. The Security workflow's checks and the
+timing jobs are advisory.
 
 Pull requests run only what their changes can reach
 ([`tools/ci/changes.sh`](../tools/ci/changes.sh), tested by
@@ -265,10 +267,12 @@ To update a pin:
 
 ### Performance checks
 
-[`.github/workflows/perf.yml`](../.github/workflows/perf.yml) runs on pull
+[`.github/workflows/perf.yml`](../.github/workflows/perf.yml) compares on pull
 requests that touch `engine/`, `crates/dstudio-core/`, `Cargo.lock`,
 `tools/perf/` or the workflow itself, and on
-pushes to `main`. It builds every engine benchmark (`engine/bench/`) and the
+pushes to `main`. It starts on every pull request, because the Instructions
+check is required: for any other change its `changes` job skips both
+comparisons, and a skipped job counts as passed. It builds every engine benchmark (`engine/bench/`) and the
 core's Rust benchmarks (`crates/dstudio-core/benches/`) twice on the same
 runner, at the base commit and with the change, and compares them row by row
 with [`tools/perf/bench_gate.py`](../tools/perf/bench_gate.py):

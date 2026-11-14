@@ -23,15 +23,15 @@ name: Performance
 #
 # Locally: python3 tools/perf/bench_gate.py all --base origin/main
 
+#
+# The Callgrind job is a required check on main, so it has to report on every pull request:
+# pull requests run this workflow whatever they change, and the `changes` job skips both
+# comparisons when nothing they measure changed (a skipped job counts as passed). Pushes to
+# main keep their path filter.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
-    paths:
-      - 'engine/**'
-      - 'crates/dstudio-core/**'
-      - 'Cargo.lock'
-      - 'tools/perf/**'
-      - '.github/workflows/perf.yml'
   push:
     branches: [main]
     paths:
@@ -60,8 +60,38 @@ env:
   PERF_ACCEPT: ${{ contains(github.event.pull_request.labels.*.name, 'perf-regression-accepted') && '1' || '' }}
 
 jobs:
+  changes:
+    name: Benchmarked code changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      perf: ${{ steps.changes.outputs.perf }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Paths the benchmarks depend on
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # Pushes and manual runs always compare. A pull request compares when it touches
+          # what the benchmarks build, or when the diff can't be read.
+          perf=true
+          if [ "$EVENT" = pull_request ] && files=$(git diff --name-only "$BASE_REF" HEAD); then
+            if ! printf '%s\n' "$files" | grep -qE '^(engine/|crates/dstudio-core/|Cargo\.lock$|tools/perf/|\.github/workflows/perf\.yml$)'; then
+              perf=false
+            fi
+          fi
+          echo "perf=$perf" | tee -a "$GITHUB_OUTPUT"
+
   instructions:
     name: Instructions (Linux, Callgrind)
+    needs: changes
+    # Skipped (which counts as passed) only when the changes job said so; if it failed, compare anyway.
+    if: ${{ !cancelled() && needs.changes.outputs.perf != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -102,8 +132,9 @@ jobs:
 
   time:
     name: Time (${{ matrix.name }})
+    needs: changes
     # Adding or removing the accept label only matters to the gate above.
-    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
+    if: ${{ !cancelled() && needs.changes.outputs.perf != 'false' && github.event.action != 'labeled' && github.event.action != 'unlabeled' }}
     strategy:
       fail-fast: false
       matrix:
