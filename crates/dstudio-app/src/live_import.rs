@@ -662,6 +662,7 @@ pub fn build(
                     warp: warp.clone(),
                     disabled: c.disabled,
                     clip_loop,
+                    fades: Default::default(),
                 });
                 report.clips += 1;
             }

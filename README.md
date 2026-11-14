@@ -45,7 +45,8 @@ wgpu.
   use Create › MIDI Clip), import audio, move and trim clips, loop a range, and play against a metronome.
   Right-click a track header to rename, recolour, delete or duplicate the track (with or without its clips), and
   drag headers up and down to reorder the tracks. Shift-click clips, or drag a box over empty lane space, to select
-  several and move, duplicate, copy, paste, disable or delete them together. Set the tempo in the
+  several and move, duplicate, copy, paste, disable or delete them together. Drag the square handles at an audio
+  clip's top corners to fade it in and out. Set the tempo in the
   transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
   Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
   Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected

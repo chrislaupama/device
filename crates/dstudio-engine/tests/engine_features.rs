@@ -40,6 +40,11 @@ fn engine() -> Engine {
 
 /// One hard-left track (L = source exactly, R = 0) with a single clip.
 fn publish_ramp(e: &Engine, dir: &Path, frames: u32) -> Vec<f32> {
+    publish_ramp_faded(e, dir, frames, (0, 0))
+}
+
+/// [publish_ramp] with the clip's (fade-in, fade-out) in frames.
+fn publish_ramp_faded(e: &Engine, dir: &Path, frames: u32, fades: (i64, i64)) -> Vec<f32> {
     let path = dir.join("ramp.wav");
     let src = write_ramp_wav(&path, frames);
     let info = e.load_file(&path).unwrap();
@@ -74,6 +79,7 @@ fn publish_ramp(e: &Engine, dir: &Path, frames: u32) -> Vec<f32> {
                 gain: 1.0,
                 warp: None,
                 clip_loop: None,
+                fades,
             }],
         }],
         master_gain: 1.0,
@@ -103,6 +109,20 @@ fn render(e: &Engine, total: usize) -> Vec<f32> {
 fn onsets(inter: &[f32]) -> Vec<usize> {
     let l: Vec<f32> = inter.iter().step_by(2).copied().collect();
     (0..l.len()).filter(|&i| l[i] != 0.0 && (i == 0 || l[i - 1] == 0.0)).collect()
+}
+
+#[test]
+fn clip_fades_ramp_the_clip_in_and_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let e = engine();
+    let src = publish_ramp_faded(&e, dir.path(), 10_000, (1_000, 4_000));
+    e.play().unwrap();
+    let out = render(&e, 10_000);
+    let l: Vec<f32> = out.iter().step_by(2).copied().collect();
+    for (r, (&got, &s)) in l.iter().zip(&src).enumerate() {
+        let g = (r as f32 / 1_000.0).min(1.0) * ((10_000 - r) as f32 / 4_000.0).min(1.0);
+        assert!((got - s * g).abs() < 1e-6, "frame {r}: {got} vs {}", s * g);
+    }
 }
 
 #[test]
@@ -236,6 +256,7 @@ fn export_excludes_loop_and_metronome() {
                 gain: 1.0,
                 warp: None,
                 clip_loop: None,
+                fades: Default::default(),
             }],
         }],
         master_gain: 1.0,

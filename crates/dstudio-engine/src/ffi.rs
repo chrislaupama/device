@@ -609,6 +609,27 @@ pub struct se_session_desc_v10 {
     pub _pad: u32,
 }
 
+// ---- audio clip fades (se_session_publish_v11)
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct se_clip_fade_desc {
+    pub clip_id: u64,
+    /// Timeline frames from the clip start.
+    pub fade_in: i64,
+    /// Timeline frames back from the clip end.
+    pub fade_out: i64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v11 {
+    pub v10: se_session_desc_v10,
+    pub fades: *const se_clip_fade_desc,
+    pub fade_count: u32,
+    pub _pad: u32,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct se_onset {
@@ -943,6 +964,7 @@ unsafe extern "C" {
     pub fn se_session_publish_v8(engine: *mut se_engine, session: *const se_session_desc_v8) -> i32;
     pub fn se_session_publish_v9(engine: *mut se_engine, session: *const se_session_desc_v9) -> i32;
     pub fn se_session_publish_v10(engine: *mut se_engine, session: *const se_session_desc_v10) -> i32;
+    pub fn se_session_publish_v11(engine: *mut se_engine, session: *const se_session_desc_v11) -> i32;
     pub fn se_warp_renders_pending(engine: *const se_engine, out_count: *mut usize) -> i32;
     pub fn se_asset_detect_onsets(engine: *mut se_engine, asset_id: u64, out: *mut se_onset, capacity: usize, out_count: *mut usize)
     -> i32;
@@ -1400,6 +1422,9 @@ mod abi_layout {
         assert_eq!([offset_of!(se_track_strip, trim), offset_of!(se_track_strip, width), offset_of!(se_track_strip, mono)], [8, 12, 16]);
         assert_eq!((size_of::<se_session_desc_v10>(), align_of::<se_session_desc_v10>()), (104, 8));
         assert_eq!([offset_of!(se_session_desc_v10, strips), offset_of!(se_session_desc_v10, strip_count)], [88, 96]);
+        assert_eq!((size_of::<se_clip_fade_desc>(), align_of::<se_clip_fade_desc>()), (24, 8));
+        assert_eq!((size_of::<se_session_desc_v11>(), align_of::<se_session_desc_v11>()), (120, 8));
+        assert_eq!([offset_of!(se_session_desc_v11, fades), offset_of!(se_session_desc_v11, fade_count)], [104, 112]);
         assert_eq!([offset_of!(se_onset, strength), offset_of!(se_onset, percussive)], [8, 12]);
         assert_eq!((size_of::<se_plugin_param_info>(), align_of::<se_plugin_param_info>()), (272, 4));
         assert_eq!(

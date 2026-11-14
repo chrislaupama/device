@@ -30,7 +30,7 @@ compensation `SE_PDC_MAX_DELAY_FRAMES`, `se_pdc_set_enabled`,
 described in [Plugins](#plugins), delay compensation in
 [Plugin delay compensation](#plugin-delay-compensation), automation in
 [Automation](#automation), clip warping in [Clip warping](#clip-warping), clip
-looping in [Clip looping](#clip-looping).
+looping in [Clip looping](#clip-looping), clip fades in [Clip fades](#clip-fades).
 
 ## Build, test, bench
 
@@ -1710,6 +1710,24 @@ clip plays content frame `r` while `r < loop_end`, then
   so a long looped clip renders no more than its content. Live stretch voices
   restart at every wrap (the folded position jumps).
 - Wraps are hard cuts with no crossfade, like the transport loop.
+
+## Clip fades
+
+`se_session_publish_v11` adds a fade-in and a fade-out to any audio clip
+(`se_clip_fade_desc`: clip id, fade-in and fade-out in timeline frames). At
+clip-relative frame r of a clip whose played range is `len` frames, the clip
+is scaled by `min(1, r / fade_in)` and by `min(1, (len - r) / fade_out)`: a
+linear ramp from silence (`clip_fade_gain` in render_graph.hpp). Fades follow
+the timeline, so looped and warped clips fade where they play.
+
+- Each fade is clamped to the clip's played range, and the fade-out to what
+  the fade-in leaves.
+- A block that touches a clip's fades renders the clip into a scratch pair
+  (`RenderContext::fade_l/fade_r`) and adds it with the per-frame gain; other
+  blocks, and clips without fades, take the usual path. Nothing allocates or
+  locks.
+- Overlapping clips on one track still sum, so a fade-out over a fade-in is a
+  linear crossfade. `dstudio_clip_fade_bench` measures the cost.
 
 ## Placeholders and known gaps
 

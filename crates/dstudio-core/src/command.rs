@@ -293,6 +293,11 @@ pub enum Command {
         clip: ClipId,
         clip_loop: Option<AudioLoop>,
     },
+    /// An audio clip's fade-in and fade-out (ticks).
+    SetClipFades {
+        clip: ClipId,
+        fades: crate::model::ClipFades,
+    },
     /// The piano roll's scale view of a MIDI clip (root, type, highlight, scale rows).
     SetClipScale {
         clip: ClipId,
@@ -488,6 +493,7 @@ impl Command {
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
             Command::SetMidiLoop { .. } | Command::SetClipLoop { .. } => "Clip Loop".into(),
             Command::SetClipScale { .. } => "Clip Scale".into(),
+            Command::SetClipFades { .. } => "Clip Fade Change".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
             Command::SetTrackInput { .. } => "Input Change".into(),
@@ -846,6 +852,12 @@ impl Command {
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let old = std::mem::replace(&mut p.tracks[ti].clips[ci].clip_loop, clip_loop);
                 Ok(Command::SetClipLoop { clip, clip_loop: old })
+            }
+            Command::SetClipFades { clip, fades } => {
+                fades.validate().map_err(|r| invalid("fades", r))?;
+                let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let old = std::mem::replace(&mut p.tracks[ti].clips[ci].fades, fades);
+                Ok(Command::SetClipFades { clip, fades: old })
             }
             Command::SetClipGain { clip, gain } => {
                 validate_gain("clip_gain", gain)?;
@@ -1590,9 +1602,20 @@ fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Resul
             (p.clip_source_at(&c, (at - c.start) as f64).round() as u64).clamp(c.source_offset + 1, c.source_offset + c.source_length - 1);
         let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
         p.next_id = p.next_id.max(new_id.0 + 1);
-        let right = Clip { id: new_id, start: at, source_offset: cut, source_length: c.source_offset + c.source_length - cut, ..c.clone() };
+        // The left part keeps the fade-in, the right part the fade-out (each within its part).
+        let fades = c.fades.clamped(p.clip_length_ticks(&c));
+        let right_fades = ClipFades { fade_in: 0, fade_out: fades.fade_out };
+        let right = Clip {
+            id: new_id,
+            start: at,
+            source_offset: cut,
+            source_length: c.source_offset + c.source_length - cut,
+            fades: right_fades,
+            ..c.clone()
+        };
         let t = &mut p.tracks[ti];
         t.clips[ci].source_length = cut - c.source_offset;
+        t.clips[ci].fades = ClipFades { fade_in: fades.fade_in, fade_out: 0 };
         t.clips.push(right);
         t.clips.sort_by_key(|c| (c.start, c.id));
         return Ok(Command::Batch {
@@ -1600,6 +1623,7 @@ fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Resul
             commands: vec![
                 Command::RemoveClip { clip: new_id },
                 Command::TrimClip { clip, start: c.start, source_offset: c.source_offset, source_length: c.source_length },
+                Command::SetClipFades { clip, fades: c.fades },
             ],
         });
     }

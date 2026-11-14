@@ -226,6 +226,7 @@ mod tests {
             warp: warp.unwrap_or_default(),
             disabled: false,
             clip_loop: None,
+            fades: Default::default(),
         };
         (p, clip)
     }

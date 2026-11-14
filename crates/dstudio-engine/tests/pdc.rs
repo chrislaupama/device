@@ -102,6 +102,7 @@ fn latency_plugin_on_one_of_two_tracks_is_compensated_and_toggle_off_restores_th
                     warp: Default::default(),
                     disabled: false,
                     clip_loop: None,
+                    fades: Default::default(),
                 },
             },
             Origin::User,

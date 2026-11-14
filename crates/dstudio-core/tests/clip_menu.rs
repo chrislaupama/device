@@ -26,6 +26,7 @@ fn audio_doc() -> (Document, TrackId, ClipId) {
         warp: Default::default(),
         disabled: false,
         clip_loop: None,
+        fades: Default::default(),
     };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let c = d.project().tracks[0].clips[0].id;
@@ -157,6 +158,7 @@ fn audio_clip(id: u64, asset: AssetId, start: Ticks, secs: u64) -> Clip {
         warp: Default::default(),
         disabled: false,
         clip_loop: None,
+        fades: Default::default(),
     }
 }
 

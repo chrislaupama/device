@@ -739,6 +739,7 @@ mod tests {
             warp,
             disabled: false,
             clip_loop: None,
+            fades: Default::default(),
         }
     }
 
