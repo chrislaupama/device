@@ -601,4 +601,15 @@ the same material in its own repository.
   `mp3lame-sys`, LGPL), quality setting 2, with LAME's Info tag in the first frame so decoders trim the encoder delay
   and padding and the file has exactly the rendered length.
 - Tests: `mp3::tests` encodes one second of a sine at both bitrates and reads it back through the engine's MP3
-  decoder (same frame count, peak within 0.05 of the source, size within 5 % of the estimate).
+  decoder (same frame count, peak within 0.05 of the source, size within four MP3 frames of the estimate).
+
+### 2026-11-14: Resample in the audio clip editor
+
+- The Resample button in the audio clip editor's title row (a placeholder until now) renders the open clip through its
+  track's devices, as Bounce to new track (⌘B) does: rendering onto the same track would run the devices twice, so the
+  printed clip lands on a new "<track> (Bounce)" track below, at the same time and with the track's fader and pan, and
+  the source clip is disabled. The source file stays on disk, the render covers the whole clip (not only the visible
+  range) and runs in the background, and the result is one undo step.
+- `Controller::resample_open_clip` (src/clip_render.rs). Self-test: the audio clip editor section presses Resample,
+  checks the new track, the disabled source and the undo label, then undoes it in one step.
+

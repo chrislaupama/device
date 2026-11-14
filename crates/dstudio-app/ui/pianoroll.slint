@@ -105,13 +105,14 @@ export component ClipSidebar inherits Rectangle {
         Text { x: 0; y: 193px; width: root.width; height: 15px; text: "Patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
         Text { x: 0; y: 210px; width: root.width; height: 14px; text: "Select a clip to create some patterns."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    // Audio clip: Resample in the title row, clip chip with Fits / Similar / Variations
+    // Audio clip: Resample in the title row (renders the clip through its track's devices to a
+    // new track, as Bounce to new track), clip chip with Fits / Similar / Variations
     // (PLACEHOLDERS: no sample search behind them).
     if Studio.ac-visible: Rectangle {
         Rectangle {
             x: 191.25px; y: 4.85px; width: 53.5px; height: 17.85px; border-radius: 8.9px; background: #292a2f;
             Text { text: "Resample"; color: #d0d0d1; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-            TouchArea { clicked => { Studio.chat-placeholder("Resample"); } }
+            TouchArea { clicked => { Studio.ac-resample(); } }
         }
         Rectangle {
             x: 10.5px; y: 38px; width: 234px; height: 60.5px; border-radius: 8px; background: #212227;
