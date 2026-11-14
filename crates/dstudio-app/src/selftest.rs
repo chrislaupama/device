@@ -12288,6 +12288,109 @@ fn group_steps() -> Vec<Step> {
         ),
     ]
 }
+/// Zoom to fit: W fits the song, then the selected clip, to the lanes' width; H sizes the
+/// track rows to fill the lanes' height. The view and row heights are put back at the end.
+fn zoom_fit_steps() -> Vec<Step> {
+    use Step::*;
+    type Saved = (f64, f64, f64, Vec<(dstudio_core::TrackId, f32)>);
+    let saved: Rc<std::cell::RefCell<Option<Saved>>> = Rc::new(std::cell::RefCell::new(None));
+    let (s1, s2) = (saved.clone(), saved.clone());
+    fn span_ok(c: &Controller, range: (f64, f64)) -> Result<(), String> {
+        let w = c.lanes_size.0;
+        let (a, b) = (c.view.x_of(range.0), c.view.x_of(range.1));
+        // Inside the lanes and filling most of them.
+        (a >= -0.5 && b <= w + 0.5 && b - a > 0.9 * w)
+            .then_some(())
+            .ok_or(format!("range {range:?} at x {a}..{b} of {w}, start {} ppb {}", c.view.start_beats, c.view.px_per_beat))
+    }
+    vec![
+        DoC(
+            "zoom fit: zoom far in and scroll to beat 40, then press W",
+            Box::new(move |a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    let heights = c.project().tracks.iter().map(|t| (t.id, t.height)).collect();
+                    *s1.borrow_mut() = Some((c.view.start_beats, c.view.px_per_beat, c.view.scroll_y, heights));
+                    c.select_clip(None);
+                    c.view.px_per_beat = 400.0;
+                    c.view.start_beats = 40.0;
+                    c.ui_dirty = true;
+                }
+                key(a, "w", false, false);
+            }),
+        ),
+        Check(
+            "zoom fit: the whole song spans the lanes",
+            Box::new(|c, _| {
+                let end = crate::minimap::content_end(&c.clip_vis);
+                if end <= 0.0 {
+                    return Err("no clips in the project".into());
+                }
+                span_ok(c, (0.0, end))
+            }),
+        ),
+        DoC(
+            "zoom fit: select the first clip, press W",
+            Box::new(|a, ctl| {
+                {
+                    let mut c = ctl.borrow_mut();
+                    let id = c
+                        .project()
+                        .tracks
+                        .iter()
+                        .flat_map(|t| t.clips.iter().map(|cl| cl.id).chain(t.midi_clips.iter().map(|m| m.id)))
+                        .next();
+                    c.select_clip(id);
+                    c.rebuild_vis();
+                }
+                key(a, "w", false, false);
+            }),
+        ),
+        Check(
+            "zoom fit: the selected clip spans the lanes",
+            Box::new(|c, _| {
+                let sel: Vec<_> = c.clip_vis.iter().filter(|v| v.selected).collect();
+                let [v] = sel[..] else { return Err(format!("{} clips selected", sel.len())) };
+                span_ok(c, (v.start_beats, v.start_beats + v.len_beats.max(4.0)))
+            }),
+        ),
+        Do("zoom fit: press H", Box::new(|a| key(a, "h", false, false))),
+        Check(
+            "zoom fit: every shown row has the same height and together they fill the lanes",
+            Box::new(|c, _| {
+                let p = c.project();
+                let n = p.tracks.len().min(c.view.pinned_from);
+                let shown: Vec<_> = (0..n).filter(|&i| !c.hidden_by_fold(&p.tracks[i])).collect();
+                let h0 = p.tracks[shown[0]].height;
+                let same = shown.iter().all(|&i| p.tracks[i].height == h0);
+                let (lo, hi) = dstudio_core::Track::HEIGHT_RANGE;
+                let bottom = c.view.track_top(n.saturating_sub(1)) + c.view.track_span(n.saturating_sub(1));
+                let limit = c.lanes_size.1 - c.view.footer_h();
+                let fills = h0 == lo || h0 == hi || (bottom <= limit + 0.5 && bottom > limit - 2.0 * shown.len() as f32);
+                (same && fills && c.view.scroll_y == 0.0).then_some(()).ok_or(format!(
+                    "heights {:?} bottom {bottom} limit {limit}",
+                    shown.iter().map(|&i| p.tracks[i].height).collect::<Vec<_>>()
+                ))
+            }),
+        ),
+        DoC(
+            "zoom fit: put the view and row heights back",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if let Some((start, ppb, scroll, heights)) = s2.borrow_mut().take() {
+                    c.view.start_beats = start;
+                    c.view.px_per_beat = ppb;
+                    c.view.scroll_y = scroll;
+                    for (id, h) in heights {
+                        let _ = c.doc.set_track_height(id, h);
+                    }
+                }
+                c.select_clip(None);
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
 
 /// Track rename: double-click the selected track's name in the inspector, type, Enter. An
 /// empty name and Escape leave the name alone; undo restores it.
@@ -14964,6 +15067,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(track_rename_steps());
     all.extend(track_menu_steps());
     all.extend(group_steps());
+    all.extend(zoom_fit_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());

@@ -1,0 +1,126 @@
+//! Zoom to fit (View menu, W and H): W fits the song (or the selected clips) to the width of
+//! the lanes, H fits every track row into their height. View state only: not undoable.
+
+use crate::controller::Controller;
+use crate::timeline::{ClipVis, MAX_PX_PER_BEAT, MIN_PX_PER_BEAT, RULER_H, TRACK_PITCH};
+use dstudio_core::Track;
+
+/// Shortest span W zooms to (one 4/4 bar), so a single short clip doesn't fill the screen.
+const MIN_FIT_BEATS: f64 = 4.0;
+/// Empty project: W shows the first eight bars.
+const EMPTY_FIT_BEATS: f64 = 32.0;
+/// Room left on each side of the fitted range, as a fraction of the lanes' width.
+const MARGIN: f64 = 0.02;
+
+/// The range W fits (start, end beats): the selected clips if any, else every clip from the
+/// song start.
+pub fn fit_range(clips: &[ClipVis]) -> (f64, f64) {
+    let sel: Vec<&ClipVis> = clips.iter().filter(|c| c.selected).collect();
+    if !sel.is_empty() {
+        let start = sel.iter().map(|c| c.start_beats).fold(f64::INFINITY, f64::min);
+        let end = sel.iter().map(|c| c.start_beats + c.len_beats).fold(0.0, f64::max);
+        return (start, end);
+    }
+    let end = crate::minimap::content_end(clips);
+    (0.0, if end > 0.0 { end } else { EMPTY_FIT_BEATS })
+}
+
+/// Start beat and pixels per beat that show beats `range` across `lanes_w` px.
+pub fn fit_horizontal(range: (f64, f64), lanes_w: f32) -> (f64, f64) {
+    let w = lanes_w.max(1.0) as f64;
+    let span = (range.1 - range.0).max(MIN_FIT_BEATS);
+    let ppb = (w * (1.0 - 2.0 * MARGIN) / span).clamp(MIN_PX_PER_BEAT, MAX_PX_PER_BEAT);
+    // Centre the range, never before the song start.
+    let start = (range.0 + (range.1 - range.0) / 2.0 - w / ppb / 2.0).max(0.0);
+    (start, ppb)
+}
+
+/// Height scale for each of `rows` rows (with `extra` px of automation rows between them) to
+/// fill `room` px, within [Track::HEIGHT_RANGE].
+pub fn fit_vertical(rows: usize, extra: f32, room: f32) -> f32 {
+    let (lo, hi) = Track::HEIGHT_RANGE;
+    if rows == 0 {
+        return 1.0;
+    }
+    ((room - extra).max(0.0) / rows as f32 / TRACK_PITCH).clamp(lo, hi)
+}
+
+impl Controller {
+    /// W: the song (or the selected clips) across the lanes.
+    pub fn zoom_to_fit_width(&mut self) {
+        let (start, ppb) = fit_horizontal(fit_range(&self.clip_vis), self.lanes_size.0);
+        self.view.start_beats = start;
+        self.view.px_per_beat = ppb;
+        self.ui_dirty = true;
+    }
+
+    /// H: every shown track row (not the pinned return rows, not the rows of folded groups)
+    /// sized to fill the lanes' height, scrolled to the top.
+    pub fn zoom_to_fit_height(&mut self) {
+        let p = self.project();
+        let n = p.tracks.len().min(self.view.pinned_from);
+        let shown: Vec<_> = p.tracks[..n].iter().enumerate().filter(|(_, t)| !self.hidden_by_fold(t)).map(|(i, t)| (i, t.id)).collect();
+        let extra: f32 = shown.iter().map(|&(i, _)| self.view.extra.get(i).copied().unwrap_or(0.0)).sum();
+        // Lanes height less the ruler, the master and pinned rows, and the room under the last row.
+        let room = self.lanes_size.1 - RULER_H - self.view.footer_h() - 1.0;
+        let scale = fit_vertical(shown.len(), extra, room);
+        for (_, id) in shown {
+            let _ = self.doc.set_track_height(id, scale);
+        }
+        self.view.scroll_y = 0.0;
+        self.ui_dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clip(start: f64, len: f64, selected: bool) -> ClipVis {
+        ClipVis {
+            track_index: 0,
+            start_beats: start,
+            len_beats: len,
+            color: [1.0; 3],
+            selected,
+            muted: false,
+            name: String::new(),
+            wave: None,
+            midi: None,
+            live: None,
+            fades: (0.0, 0.0),
+            fade_handles: false,
+        }
+    }
+
+    #[test]
+    fn w_fits_the_song_or_the_selection() {
+        let clips = [clip(0.0, 16.0, false), clip(32.0, 32.0, false)];
+        assert_eq!(fit_range(&clips), (0.0, 64.0));
+        let clips = [clip(0.0, 16.0, false), clip(32.0, 32.0, true)];
+        assert_eq!(fit_range(&clips), (32.0, 64.0));
+        assert_eq!(fit_range(&[]), (0.0, EMPTY_FIT_BEATS));
+    }
+
+    #[test]
+    fn the_fitted_range_spans_the_lanes_with_a_margin() {
+        let (start, ppb) = fit_horizontal((0.0, 64.0), 1000.0);
+        assert_eq!(start, 0.0);
+        assert!((ppb * 64.0 - 960.0).abs() < 1e-9, "{ppb}");
+        // A selection in the middle is centred.
+        let (start, ppb) = fit_horizontal((32.0, 48.0), 1000.0);
+        assert!((start + 1000.0 / ppb / 2.0 - 40.0).abs() < 1e-9);
+        // A one-beat clip still shows a bar.
+        let (_, ppb) = fit_horizontal((8.0, 9.0), 1000.0);
+        assert!((ppb * MIN_FIT_BEATS - 960.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn h_shares_the_height_within_the_row_limits() {
+        assert!((fit_vertical(2, 0.0, 2.0 * TRACK_PITCH * 1.5) - 1.5).abs() < 1e-6);
+        assert!((fit_vertical(2, TRACK_PITCH, 3.0 * TRACK_PITCH) - 1.0).abs() < 1e-6);
+        assert_eq!(fit_vertical(100, 0.0, 300.0), Track::HEIGHT_RANGE.0);
+        assert_eq!(fit_vertical(1, 0.0, 1e6), Track::HEIGHT_RANGE.1);
+        assert_eq!(fit_vertical(0, 0.0, 300.0), 1.0);
+    }
+}
