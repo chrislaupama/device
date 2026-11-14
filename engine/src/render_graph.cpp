@@ -615,19 +615,30 @@ int32_t build_render_graph(const se_session_desc_v11& desc11, const AssetLookup&
         err = "session has fade_count > 0 but fades == NULL";
         return SE_ERR_INVALID_ARG;
     }
-    std::unordered_map<uint64_t, const se_clip_fade_desc*> fade_of;
+    // Faded clips sorted by id, each with the number of clips that use it. Nearly every
+    // session has none, so this stays empty and costs nothing per clip.
+    struct FadeEntry {
+        const se_clip_fade_desc* desc;
+        uint32_t hits;
+    };
+    std::vector<FadeEntry> fade_of;
+    fade_of.reserve(desc11.fade_count);
     for (uint32_t i = 0; i < desc11.fade_count; ++i) {
         const se_clip_fade_desc& f = desc11.fades[i];
         if (f.fade_in < 0 || f.fade_out < 0) {
             err = "clip " + std::to_string(f.clip_id) + " fades: needs fade_in >= 0 and fade_out >= 0";
             return SE_ERR_INVALID_ARG;
         }
-        if (!fade_of.emplace(f.clip_id, &f).second) {
-            err = "clip " + std::to_string(f.clip_id) + " has fades more than once";
+        fade_of.push_back({&f, 0});
+    }
+    std::sort(fade_of.begin(), fade_of.end(),
+              [](const FadeEntry& x, const FadeEntry& y) { return x.desc->clip_id < y.desc->clip_id; });
+    for (std::size_t i = 1; i < fade_of.size(); ++i) {
+        if (fade_of[i].desc->clip_id == fade_of[i - 1].desc->clip_id) {
+            err = "clip " + std::to_string(fade_of[i].desc->clip_id) + " has fades more than once";
             return SE_ERR_INVALID_ARG;
         }
     }
-    std::unordered_map<uint64_t, uint32_t> fade_hits;
     if (desc.master_lane_count > 0 && desc.master_lanes == nullptr) {
         err = "session has master_lane_count > 0 but master_lanes == NULL";
         return SE_ERR_INVALID_ARG;
@@ -741,9 +752,13 @@ int32_t build_render_graph(const se_session_desc_v11& desc11, const AssetLookup&
 
             // Fades (se_session_publish_v11), clamped to the clip's played range once it is known.
             const se_clip_fade_desc* fade = nullptr;
-            if (auto ft = fade_of.find(cd.clip_id); ft != fade_of.end()) {
-                ++fade_hits[cd.clip_id];
-                fade = ft->second;
+            if (!fade_of.empty()) {
+                const auto ft = std::lower_bound(fade_of.begin(), fade_of.end(), cd.clip_id,
+                                                 [](const FadeEntry& e, uint64_t id) { return e.desc->clip_id < id; });
+                if (ft != fade_of.end() && ft->desc->clip_id == cd.clip_id) {
+                    ++ft->hits;
+                    fade = ft->desc;
+                }
             }
             const auto set_fades = [fade](ClipNode& node_clip) {
                 if (fade == nullptr) return;
@@ -1033,14 +1048,13 @@ int32_t build_render_graph(const se_session_desc_v11& desc11, const AssetLookup&
             return SE_ERR_INVALID_ARG;
         }
     }
-    for (const auto& [id, f] : fade_of) {
-        const auto hit = fade_hits.find(id);
-        if (hit == fade_hits.end()) {
-            err = "fades name unknown clip " + std::to_string(id);
+    for (const FadeEntry& e : fade_of) {
+        if (e.hits == 0) {
+            err = "fades name unknown clip " + std::to_string(e.desc->clip_id);
             return SE_ERR_INVALID_ARG;
         }
-        if (hit->second > 1) {
-            err = "faded clip id " + std::to_string(id) + " is used by more than one clip";
+        if (e.hits > 1) {
+            err = "faded clip id " + std::to_string(e.desc->clip_id) + " is used by more than one clip";
             return SE_ERR_INVALID_ARG;
         }
     }

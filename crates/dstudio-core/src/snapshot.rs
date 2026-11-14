@@ -222,9 +222,10 @@ pub fn build_full(
                         cs.clip_loop = (le > ls).then_some((ls, le));
                     }
                     // Fades follow the clip on the timeline (a reversed clip keeps its fades where they are).
-                    let len_ticks = project.clip_length_ticks(c);
-                    let f = c.fades.clamped(len_ticks);
-                    if !f.is_default() {
+                    // Clips without fades (nearly all of them) skip the length lookup.
+                    if !c.fades.is_default() {
+                        let len_ticks = project.clip_length_ticks(c);
+                        let f = c.fades.clamped(len_ticks);
                         let fade_in = frames_at(f.fade_in).clamp(0, cs.length);
                         let fade_out = (frames_at(len_ticks) - frames_at(len_ticks - f.fade_out)).clamp(0, cs.length - fade_in);
                         cs.fades = (fade_in, fade_out);
