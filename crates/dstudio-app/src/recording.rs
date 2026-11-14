@@ -423,6 +423,7 @@ impl Controller {
                 warp: Default::default(),
                 disabled: false,
                 clip_loop: None,
+                fades: Default::default(),
             };
             cmds.push(Command::AddAsset { asset });
             cmds.push(Command::AddClip { track, clip });

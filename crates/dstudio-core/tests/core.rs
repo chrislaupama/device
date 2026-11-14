@@ -18,6 +18,7 @@ fn clip(asset: AssetId, start: Ticks, len: u64) -> Clip {
         warp: Default::default(),
         disabled: false,
         clip_loop: None,
+        fades: Default::default(),
     }
 }
 

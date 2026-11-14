@@ -499,6 +499,7 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_frame_ring.cpp
     tests/test_warp.cpp
     tests/test_clip_loop.cpp
+    tests/test_clip_fade.cpp
     tests/test_preview.cpp
     tests/test_decode.cpp
     tests/devices/test_builtin.cpp

@@ -208,6 +208,45 @@ pub struct Clip {
     /// Clip looping (the editor's Loop switch). Clips saved before it existed load without it.
     #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
     pub clip_loop: Option<AudioLoop>,
+    /// Fade-in and fade-out (the handles at the clip's top corners). Clips saved before
+    /// fades existed load without them.
+    #[serde(default, skip_serializing_if = "ClipFades::is_default")]
+    pub fades: ClipFades,
+}
+
+/// An audio clip's fades: lengths on the timeline, in ticks, from the clip's start (fade-in)
+/// and back from its end (fade-out). The gain ramps linearly from silence to the clip's gain
+/// over the fade-in and back to silence over the fade-out. Lengths beyond the clip are kept
+/// and clamped where they are used ([ClipFades::clamped]), so trimming a clip shorter and
+/// back again keeps its fades.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipFades {
+    #[serde(default, rename = "in")]
+    pub fade_in: Ticks,
+    #[serde(default, rename = "out")]
+    pub fade_out: Ticks,
+}
+
+impl ClipFades {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The fades of a clip `len` ticks long: each within the clip, the fade-out shortened
+    /// so the two don't overlap.
+    pub fn clamped(self, len: Ticks) -> Self {
+        let len = len.max(0);
+        let fade_in = self.fade_in.clamp(0, len);
+        Self { fade_in, fade_out: self.fade_out.clamp(0, len - fade_in) }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.fade_in < 0 || self.fade_out < 0 {
+            Err(format!("fades {} / {} must not be negative", self.fade_in, self.fade_out))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// An audio clip's loop, like a MIDI clip's: the range of the clip's content that repeats,

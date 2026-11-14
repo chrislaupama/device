@@ -102,6 +102,7 @@ impl Rig {
                 gain: 1.0,
                 warp: None,
                 clip_loop: None,
+                fades: Default::default(),
             }],
             instrument: false,
             notes: vec![],

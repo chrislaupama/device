@@ -127,7 +127,26 @@ struct ClipNode {
     // loop_end == 0: plays once.
     int64_t loop_start = 0;
     int64_t loop_end = 0;
+    // Fades (se_session_publish_v11), in timeline frames from timeline_start
+    // and back from timeline_end; 0 = none. fade_in + fade_out <= the clip.
+    int64_t fade_in = 0;
+    int64_t fade_out = 0;
 };
+
+// A clip's fade gain at clip-relative frame r (see se_session_publish_v11).
+inline float clip_fade_gain(const ClipNode& c, int64_t r) noexcept {
+    float g = 1.0f;
+    if (r < c.fade_in) g = static_cast<float>(r) / static_cast<float>(c.fade_in);
+    const int64_t left = c.timeline_end - c.timeline_start - r;
+    if (left < c.fade_out) g *= static_cast<float>(left) / static_cast<float>(c.fade_out);
+    return g;
+}
+
+// Whether a clip's fades touch the timeline frames [from, to).
+inline bool clip_fades_in(const ClipNode& c, int64_t from, int64_t to) noexcept {
+    return (c.fade_in > 0 && from < c.timeline_start + c.fade_in) ||
+           (c.fade_out > 0 && to > c.timeline_end - c.fade_out);
+}
 
 // Content frame a clip plays at clip-relative frame r (see se_session_publish_v8).
 inline int64_t clip_content(const ClipNode& c, int64_t r) noexcept {
@@ -377,6 +396,8 @@ void strip_matrix(float trim, float width, bool mono, float& a, float& b) noexce
 // Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
 // is sized and null. Plugin slots are created with null instances (the
 // engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v11& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v10& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v9& desc, const AssetLookup& lookup,

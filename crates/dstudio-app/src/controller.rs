@@ -1495,6 +1495,7 @@ impl Controller {
                 warp: Default::default(),
                 disabled: false,
                 clip_loop: None,
+                fades: Default::default(),
             },
         });
         // Engine asset must be known before the snapshot is published.
@@ -2618,6 +2619,7 @@ mod tests {
                         warp: Default::default(),
                         disabled: false,
                         clip_loop: None,
+                        fades: Default::default(),
                     },
                 },
             ],

@@ -12498,6 +12498,7 @@ fn clip_menu_steps() -> Vec<Step> {
                                 warp: Default::default(),
                                 disabled: false,
                                 clip_loop: None,
+                                fades: Default::default(),
                             },
                         },
                         Command::AddMidiClip {

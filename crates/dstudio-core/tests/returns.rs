@@ -77,6 +77,7 @@ fn return_tracks_refuse_clips_input_and_sends() {
         warp: Default::default(),
         disabled: false,
         clip_loop: None,
+        fades: Default::default(),
     };
     let audio = d.project().tracks[0].id;
     for cmd in [

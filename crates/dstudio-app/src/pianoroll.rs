@@ -1952,6 +1952,7 @@ mod tests {
             composer: None,
             scale: None,
             clip_loop: None,
+            fades: Default::default(),
         };
         let Some(Command::Batch { commands, .. }) = midi_left_resize(&clip, 3840 + 480) else { panic!() };
         assert_eq!(commands[0], Command::ResizeMidiClip { clip: ClipId(5), start: 4320, length: 3360 });

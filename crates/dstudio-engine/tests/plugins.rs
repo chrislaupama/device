@@ -129,6 +129,7 @@ fn clap_gain_from_the_model_halves_the_signal_and_survives_undo_and_persist() {
                     warp: Default::default(),
                     disabled: false,
                     clip_loop: None,
+                    fades: Default::default(),
                 },
             },
             Origin::User,

@@ -78,6 +78,7 @@ impl Rig {
             warp: ClipWarp::default(),
             disabled: false,
             clip_loop: None,
+            fades: Default::default(),
         };
         doc.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
         let clip = doc.project().tracks[0].clips[0].id;

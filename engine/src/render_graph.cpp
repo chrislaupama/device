@@ -559,8 +559,16 @@ int32_t build_render_graph(const se_session_desc_v9& desc, const AssetLookup& lo
     return build_render_graph(d10, lookup, out, err);
 }
 
-int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup& lookup,
+int32_t build_render_graph(const se_session_desc_v10& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err) {
+    se_session_desc_v11 d11{};
+    d11.v10 = desc;
+    return build_render_graph(d11, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v11& desc11, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    const se_session_desc_v10& desc10 = desc11.v10;
     const se_session_desc_v9& desc9 = desc10.v9;
     const se_session_desc_v8& desc8 = desc9.v8;
     const se_session_desc_v7& desc7 = desc8.v7;
@@ -603,6 +611,23 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
         }
     }
     std::unordered_map<uint64_t, uint32_t> loop_hits;
+    if (desc11.fade_count > 0 && desc11.fades == nullptr) {
+        err = "session has fade_count > 0 but fades == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    std::unordered_map<uint64_t, const se_clip_fade_desc*> fade_of;
+    for (uint32_t i = 0; i < desc11.fade_count; ++i) {
+        const se_clip_fade_desc& f = desc11.fades[i];
+        if (f.fade_in < 0 || f.fade_out < 0) {
+            err = "clip " + std::to_string(f.clip_id) + " fades: needs fade_in >= 0 and fade_out >= 0";
+            return SE_ERR_INVALID_ARG;
+        }
+        if (!fade_of.emplace(f.clip_id, &f).second) {
+            err = "clip " + std::to_string(f.clip_id) + " has fades more than once";
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    std::unordered_map<uint64_t, uint32_t> fade_hits;
     if (desc.master_lane_count > 0 && desc.master_lanes == nullptr) {
         err = "session has master_lane_count > 0 but master_lanes == NULL";
         return SE_ERR_INVALID_ARG;
@@ -714,6 +739,19 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
                 return SE_ERR_INVALID_ARG;
             }
 
+            // Fades (se_session_publish_v11), clamped to the clip's played range once it is known.
+            const se_clip_fade_desc* fade = nullptr;
+            if (auto ft = fade_of.find(cd.clip_id); ft != fade_of.end()) {
+                ++fade_hits[cd.clip_id];
+                fade = ft->second;
+            }
+            const auto set_fades = [fade](ClipNode& node_clip) {
+                if (fade == nullptr) return;
+                const int64_t len = node_clip.timeline_end - node_clip.timeline_start;
+                node_clip.fade_in = std::clamp<int64_t>(fade->fade_in, 0, len);
+                node_clip.fade_out = std::clamp<int64_t>(fade->fade_out, 0, len - node_clip.fade_in);
+            };
+
             AssetRef asset;
             if (auto it = used.find(cd.asset_id); it != used.end()) {
                 asset = it->second;
@@ -755,6 +793,7 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
                 // A looped clip only ever plays (and renders) content below its loop end.
                 clip.warp = add_warp(*g, *wt->second, asset, cd.timeline_start,
                                      clip.loop_end > 0 ? clip.loop_end : cd.length);
+                set_fades(clip);
                 g->clips.push_back(clip);
                 continue;
             }
@@ -773,6 +812,7 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
             clip.gain = cd.gain;
             clip.source_frames = asset_frames;
             if ((clip.loop_end = loop_end) > 0) clip.loop_start = loop->loop_start;
+            set_fades(clip);
             g->clips.push_back(clip);
         }
 
@@ -990,6 +1030,17 @@ int32_t build_render_graph(const se_session_desc_v10& desc10, const AssetLookup&
         }
         if (hit->second > 1) {
             err = "looped clip id " + std::to_string(id) + " is used by more than one clip";
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    for (const auto& [id, f] : fade_of) {
+        const auto hit = fade_hits.find(id);
+        if (hit == fade_hits.end()) {
+            err = "fades name unknown clip " + std::to_string(id);
+            return SE_ERR_INVALID_ARG;
+        }
+        if (hit->second > 1) {
+            err = "faded clip id " + std::to_string(id) + " is used by more than one clip";
             return SE_ERR_INVALID_ARG;
         }
     }
