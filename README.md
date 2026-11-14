@@ -56,7 +56,8 @@ wgpu.
   renders a clip through its track's devices onto a new track, and Export audio saves one clip as a WAV. Renders run in
   the background while you keep working, and each is one undo step.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
-  compensation is measured with an acoustic loopback test, not guessed.
+  compensation is measured with an acoustic loopback test, not guessed. Right-click the record button for a one- or
+  two-bar count-in: the click plays from that far back and the take starts where you pressed record.
 - **MIDI input.** Plug in a MIDI keyboard, arm (R) or monitor (I) instrument tracks to play them, and record
   what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Each

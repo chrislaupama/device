@@ -508,6 +508,8 @@ export global Studio {
     callback play-toggle();
     callback stop-return();
     callback record();
+    /// Right-click on the record button: the count-in menu (window x, y).
+    callback record-menu(length, length);
     callback add-track();
     callback import-audio();
     callback select-track(int);
@@ -819,6 +821,7 @@ export global Studio {
 
     // ---- recording (src/recording.rs) ----
     in property <bool> recording;               // a recording pass is running (record button red)
+    in property <bool> counting-in;             // a count-in is clicking before the recording point
     in property <bool> record-ready;            // some audio track is armed with an input
     in property <bool> sel-arm;
     in property <bool> sel-monitor;

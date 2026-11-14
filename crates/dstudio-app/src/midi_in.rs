@@ -50,6 +50,9 @@ pub struct MidiPass {
     pub events: Vec<CapturedEvent>,
     /// The instrument tracks armed when the pass started: the ones it records on.
     pub tracks: Vec<TrackId>,
+    /// Count-in: notes played before this frame are not recorded (until the playhead
+    /// passes it or the loop wraps).
+    pub punch: Option<i64>,
 }
 
 #[derive(Debug, Default)]
@@ -85,6 +88,7 @@ impl Controller {
     pub fn midi_tick(&mut self) {
         self.midi_scan(false);
         self.midi_poll_pass();
+        self.count_in_tick();
     }
 
     /// Rescan the MIDI ports (every 2 s, or 10 times a second while Settings › MIDI shows,
@@ -182,7 +186,10 @@ impl Controller {
         let start = self.audible_frames();
         let tracks = self.armed_midi();
         let last_loop = self.loop_frames();
-        self.midi_in.pass = Some(MidiPass { start, wrapped: false, wrap_loop: None, last_loop, events: Vec::new(), tracks });
+        // After a count-in the pass starts at the punch point, not where the playhead started.
+        let punch = self.rec.punch;
+        let start = punch.unwrap_or(start);
+        self.midi_in.pass = Some(MidiPass { start, wrapped: false, wrap_loop: None, last_loop, events: Vec::new(), tracks, punch });
     }
 
     /// Drain the capture ring and notice loop wraps (the engine reports real wraps, so
@@ -196,8 +203,10 @@ impl Controller {
         // Read after the events: a wrap before any of them is already reported.
         let wrapped = self.engine.midi_capture_wrapped();
         let Some(pass) = self.midi_in.pass.as_mut() else { return };
-        let events = got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity });
-        poll_update(pass, events, now_loop, wrapped);
+        let events: Vec<CapturedEvent> =
+            got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity }).collect();
+        let events = crate::count_in::drop_count_in(&mut pass.punch, events, wrapped);
+        poll_update(pass, events.into_iter(), now_loop, wrapped);
     }
 
     /// The loop range in frames while the loop is on.

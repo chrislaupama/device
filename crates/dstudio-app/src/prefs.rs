@@ -85,6 +85,13 @@ pub struct Preferences {
     /// oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugin_folders: Vec<String>,
+    /// Record button menu: bars of metronome before a recording starts (0 = no count-in).
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub count_in_bars: u8,
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
 }
 
 /// Settings › MIDI: MIDI inputs are on by default, including ones plugged in
@@ -208,6 +215,7 @@ mod tests {
             midi: MidiPrefs { disabled_inputs: vec!["coremidi:42".into()] },
             hide_returns: true,
             plugin_folders: vec!["/opt/plugins".into()],
+            count_in_bars: 2,
         };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
@@ -222,6 +230,7 @@ mod tests {
         assert!(!loaded.hide_returns, "files without the Returns pill state show the returns");
         assert!(loaded.midi.disabled_inputs.is_empty(), "MIDI inputs default to on");
         assert!(loaded.plugin_folders.is_empty(), "files without custom plugin folders have none");
+        assert_eq!(loaded.count_in_bars, 0, "files without a count-in record straight away");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

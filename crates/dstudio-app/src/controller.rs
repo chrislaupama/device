@@ -226,6 +226,8 @@ pub enum JobResult {
         doc_epoch: u64,
         takes: Vec<(dstudio_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)>,
         midi: Vec<dstudio_core::Command>,
+        /// The pass's punch-in frame after a count-in.
+        punch: Option<i64>,
     },
     /// Settings › Audio "Test" tone loaded into the engine.
     TestTone(Result<AssetInfo, String>),
@@ -342,6 +344,10 @@ pub enum MenuAction {
     TrackDuplicateClips,
     TrackColor,
     TrackDelete,
+    /// Record button menu (src/count_in.rs): count-in off, one bar, two bars.
+    CountInOff,
+    CountIn1,
+    CountIn2,
 }
 
 #[derive(Debug, Default)]
@@ -354,6 +360,8 @@ pub struct MenuState {
     pub lane: Option<(TrackId, Ticks)>,
     /// Track header menu: the track it was opened on.
     pub track: Option<TrackId>,
+    /// The record button's count-in menu is open.
+    pub count_in: bool,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
     /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
@@ -944,8 +952,9 @@ impl Controller {
         let (start, end) = (p.ticks_to_frames(tr.loop_start, self.rate), p.ticks_to_frames(tr.loop_end, self.rate));
         let beat_ticks = PPQ * 4 / tr.time_signature.denominator as i64;
         let frames_per_beat = p.ticks_to_seconds(beat_ticks) * self.rate;
-        let cfg =
-            MetronomeConfig { enabled: self.metronome_on, gain: 0.5, frames_per_beat, beats_per_bar: tr.time_signature.numerator as u32 };
+        // A count-in clicks whether the metronome is on or not.
+        let enabled = self.metronome_on || self.rec.count_in.is_some();
+        let cfg = MetronomeConfig { enabled, gain: 0.5, frames_per_beat, beats_per_bar: tr.time_signature.numerator as u32 };
         let r = self.engine.set_loop(tr.loop_enabled, start, end).and_then(|_| self.engine.set_metronome(cfg));
         if let Err(e) = r {
             self.set_status(format!("Engine: {e}"), 4);
@@ -1407,7 +1416,7 @@ impl Controller {
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
-                JobResult::Recorded { doc_epoch, takes, midi } => self.finish_recorded(doc_epoch, takes, midi),
+                JobResult::Recorded { doc_epoch, takes, midi, punch } => self.finish_recorded(doc_epoch, takes, midi, punch),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
@@ -2215,6 +2224,9 @@ impl Controller {
         // The record button state follows the engine every frame while recording.
         if s.get_recording() != self.rec.recording {
             s.set_recording(self.rec.recording);
+        }
+        if s.get_counting_in() != self.counting_in() {
+            s.set_counting_in(self.counting_in());
         }
         tp.playing
             || previewing

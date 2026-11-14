@@ -78,9 +78,12 @@ impl MenuAction {
             MenuAction::TrackDuplicateClips => "Duplicate track with clips",
             MenuAction::TrackColor => "Color",
             MenuAction::TrackDelete => "Delete track",
+            MenuAction::CountInOff => "No count-in",
+            MenuAction::CountIn1 => "Count-in: 1 bar",
+            MenuAction::CountIn2 => "Count-in: 2 bars",
         }
     }
-    fn shortcut(self) -> &'static str {
+    pub(crate) fn shortcut(self) -> &'static str {
         match self {
             MenuAction::Cut => "⌘ X",
             MenuAction::Copy => "⌘ C",
@@ -653,6 +656,7 @@ impl Controller {
         self.menu.section = None;
         self.menu.lane = None;
         self.menu.track = None;
+        self.menu.count_in = false;
         self.ui_dirty = true;
     }
 
@@ -664,6 +668,7 @@ impl Controller {
             self.menu.section = None;
             self.menu.lane = None;
             self.menu.track = None;
+            self.menu.count_in = false;
             self.ui_dirty = true;
         }
     }
@@ -679,6 +684,10 @@ impl Controller {
         }
         if let Some(id) = self.menu.track {
             self.track_menu_activate(id, action);
+            return;
+        }
+        if self.menu.count_in {
+            self.count_in_menu_activate(action);
             return;
         }
         if let Some((track, at)) = self.menu.lane {
@@ -1091,7 +1100,7 @@ impl Controller {
         s.set_menu_open(self.menu.open);
         if self.menu.open {
             let (items, h) = layout_items(
-                self.menu.items.iter().map(|&(a, en)| (a.label().to_string(), a.shortcut().to_string(), en, a.separated(), a.submenu())),
+                self.menu.items.iter().map(|&(a, en)| (a.label().to_string(), self.menu_shortcut(a), en, a.separated(), a.submenu())),
             );
             let sub_for = self.menu.sub_for.unwrap_or(MenuAction::Transpose);
             let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == sub_for).map(|(m, _)| m.y).unwrap_or(0.0);
