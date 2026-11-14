@@ -877,6 +877,11 @@ impl Controller {
         {
             self.selected_clip = None;
         }
+        let gone: Vec<ClipId> = self.extra_clips.iter().copied().filter(|&c| !p.clip_id_in_use(c)).collect();
+        self.extra_clips.retain(|c| !gone.contains(c));
+        if self.selected_clip.is_none() && !self.extra_clips.is_empty() {
+            self.selected_clip = Some(self.extra_clips.remove(0));
+        }
         if self.selected_section.is_some_and(|s| p.section_index(s).is_none()) {
             self.selected_section = None;
         }
@@ -1082,6 +1087,7 @@ impl Controller {
                 && self.clip_track(c) != Some(id)
             {
                 self.selected_clip = None;
+                self.extra_clips.clear();
             }
             self.sel_peak_hold = 0.0;
             self.meter_disp = (0.0, 0.0);
@@ -1497,6 +1503,7 @@ impl Controller {
         if self.execute(Command::Batch { label: "Import Audio".into(), commands: cmds }) {
             self.selected_track = Some(track_id);
             self.selected_clip = Some(clip_id);
+            self.extra_clips.clear();
             self.ui_dirty = true;
         } else {
             self.asset_map.remove(&asset_id);
@@ -1519,6 +1526,7 @@ impl Controller {
         self.devices.modu.bases_pending = true;
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
+        self.extra_clips.clear();
         self.published_rev = None;
         self.after_change();
     }
@@ -1572,6 +1580,7 @@ impl Controller {
         self.remember_recent(dir);
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
+        self.extra_clips.clear();
         self.view = View::default();
         self.published_rev = None;
         self.after_change();
@@ -1677,8 +1686,8 @@ impl Controller {
                         if let Some((ti, ci)) = self.project().find_midi_clip(id) {
                             let (track, c) = (self.project().tracks[ti].id, &self.project().tracks[ti].midi_clips[ci]);
                             let (start, len) = (c.start, c.length);
-                            self.select_track(track);
                             self.focus_clip(id);
+                            self.select_track(track);
                             self.drag = Some(match zone {
                                 Zone::Body => Drag::Move {
                                     clip: id,
@@ -1695,8 +1704,8 @@ impl Controller {
                             return;
                         }
                         let Some((track, start, off, len, _, _)) = self.clip_region(id) else { return };
-                        self.select_track(track);
                         self.focus_clip(id);
+                        self.select_track(track);
                         self.drag = Some(match zone {
                             Zone::Body => Drag::Move {
                                 clip: id,

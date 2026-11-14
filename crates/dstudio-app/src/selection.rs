@@ -97,8 +97,12 @@ impl Controller {
     /// Select exactly `clips` (the first is focused).
     pub fn set_clip_selection(&mut self, clips: Vec<ClipId>) {
         let mut it = clips.into_iter();
-        self.select_clip(it.next());
+        let first = it.next();
+        self.select_clip(first);
         self.extra_clips = it.collect();
+        if let Some(t) = first.and_then(|c| self.clip_track(c)) {
+            self.select_track(t);
+        }
         self.ui_dirty = true;
     }
 
@@ -171,7 +175,9 @@ impl Controller {
         let spans: Vec<(Ticks, Ticks)> = self
             .selected_clips()
             .iter()
-            .filter_map(|&id| p.midi_clip(id).map(|c| (c.start, c.end())).or_else(|| p.clip(id).map(|c| (c.start, c.start + p.clip_length_ticks(c)))))
+            .filter_map(|&id| {
+                p.midi_clip(id).map(|c| (c.start, c.end())).or_else(|| p.clip(id).map(|c| (c.start, c.start + p.clip_length_ticks(c))))
+            })
             .collect();
         let (Some(lo), Some(hi)) = (spans.iter().map(|s| s.0).min(), spans.iter().map(|s| s.1).max()) else { return };
         let dt = hi - lo;
@@ -181,10 +187,16 @@ impl Controller {
             let new = ClipId(next);
             if let Some((t, c)) = p.find_midi_clip(id) {
                 let c = &p.tracks[t].midi_clips[c];
-                cmds.push(Command::AddMidiClip { track: p.tracks[t].id, clip: dstudio_core::MidiClip { id: new, start: c.start + dt, ..c.clone() } });
+                cmds.push(Command::AddMidiClip {
+                    track: p.tracks[t].id,
+                    clip: dstudio_core::MidiClip { id: new, start: c.start + dt, ..c.clone() },
+                });
             } else if let Some((t, c)) = p.find_clip(id) {
                 let c = &p.tracks[t].clips[c];
-                cmds.push(Command::AddClip { track: p.tracks[t].id, clip: dstudio_core::Clip { id: new, start: c.start + dt, ..c.clone() } });
+                cmds.push(Command::AddClip {
+                    track: p.tracks[t].id,
+                    clip: dstudio_core::Clip { id: new, start: c.start + dt, ..c.clone() },
+                });
             } else {
                 continue;
             }
@@ -257,7 +269,10 @@ impl Controller {
             let id = ClipId(next);
             match item {
                 ClipboardItem::Audio { track, clip } if p.track(*track).is_some() => {
-                    cmds.push(Command::AddClip { track: *track, clip: dstudio_core::Clip { id, start: (clip.start + dt).max(0), ..clip.clone() } });
+                    cmds.push(Command::AddClip {
+                        track: *track,
+                        clip: dstudio_core::Clip { id, start: (clip.start + dt).max(0), ..clip.clone() },
+                    });
                 }
                 ClipboardItem::Midi { track, clip } if p.track(*track).is_some() => {
                     cmds.push(Command::AddMidiClip {

@@ -532,7 +532,7 @@ impl Controller {
         let Some((ti, _)) = p.find_device(id) else { return };
         let track = p.tracks[ti].id;
         self.select_track(track);
-        self.selected_clip = None;
+        self.select_clip(None);
         self.assistant.context_removed = None;
         self.assistant_open = true;
         self.ui_dirty = true;

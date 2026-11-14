@@ -12334,7 +12334,11 @@ fn clip_selection_steps() -> Vec<Step> {
             "selection: both clips selected, the second focused",
             Box::new(move |c, _| {
                 let (a, k) = i3.get();
-                (selected(c) == [a, k] && c.selected_clip == Some(ClipId(k))).then_some(()).ok_or(format!("{:?} focus {:?}", selected(c), c.selected_clip))
+                (selected(c) == [a, k] && c.selected_clip == Some(ClipId(k))).then_some(()).ok_or(format!(
+                    "{:?} focus {:?}",
+                    selected(c),
+                    c.selected_clip
+                ))
             }),
         ),
         DoC(

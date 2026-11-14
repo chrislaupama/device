@@ -588,10 +588,10 @@ impl Controller {
 
     /// Select clip `id` and open its context menu at window point (wx, wy).
     pub fn open_clip_menu(&mut self, id: ClipId, wx: f32, wy: f32, win: (f32, f32)) {
+        self.focus_clip(id);
         if let Some(t) = self.clip_track(id) {
             self.select_track(t);
         }
-        self.focus_clip(id);
         let p = self.project();
         let midi = p.find_midi_clip(id).is_some();
         let pattern = p.midi_clip(id).is_some_and(|c| c.pattern.is_some());

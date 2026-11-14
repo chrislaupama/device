@@ -201,6 +201,9 @@ struct Args {
     /// review-track-menu: track 1's header menu open with its Color submenu.
     /// review-track-drag: track 1's header dragged below track 2, the drop line showing.
     track_menu_review: u8,
+    /// review-clip-selection: three MIDI clips on the Instrument track, two selected, and a
+    /// selection box being drawn over the third.
+    clip_selection_review: bool,
     /// review-returns: the default project with two return tracks (Audio sends to A post-fader
     /// and B pre-fader, Instrument to A), the mixer open with the Sends sections expanded.
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
@@ -564,6 +567,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.snap_menu_review = true;
                 }
+                "review-clip-selection" => {
+                    a.reference_default = true;
+                    a.clip_selection_review = true;
+                }
                 st @ ("review-track-menu" | "review-track-drag") => {
                     a.reference_default = true;
                     a.track_menu_review = if st.ends_with("menu") { 1 } else { 2 };
@@ -614,7 +621,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-track-menu, review-track-drag, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1868,6 +1875,41 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.select_track(id);
         c.rename_track(id, "Lead vox");
         app.global::<Studio>().set_review_rename(true);
+    }
+    if args.clip_selection_review {
+        let mut c = ctl.borrow_mut();
+        let ppq = dstudio_core::PPQ;
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
+            let n = c.project().next_id;
+            let notes = |k: i64| {
+                (0..8)
+                    .map(|i| dstudio_core::Note {
+                        id: i as u32 + 1,
+                        pitch: 60 + ((i * 5 + k) % 12) as u8,
+                        start: i * ppq / 2,
+                        length: ppq / 2,
+                        velocity: 100,
+                    })
+                    .collect()
+            };
+            let cmds = (0..3)
+                .map(|k| dstudio_core::Command::AddMidiClip {
+                    track: t,
+                    clip: dstudio_core::MidiClip {
+                        id: dstudio_core::ClipId(n + k as u64),
+                        notes: notes(k),
+                        ..dstudio_core::MidiClip::empty(k * 6 * ppq, 4 * ppq)
+                    },
+                })
+                .collect();
+            c.execute(dstudio_core::Command::Batch { label: "review".into(), commands: cmds });
+            c.set_clip_selection(vec![dstudio_core::ClipId(n), dstudio_core::ClipId(n + 1)]);
+            // A box being drawn (Shift held, so it adds to the two) over empty space on track 1.
+            let (x0, x1) = (c.view.x_of(20.0), c.view.x_of(28.0));
+            let y = c.view.track_top(0) + c.view.pitch(0) * 0.2;
+            c.marquee_press(x1, y + 40.0, true);
+            c.marquee_move(x0, y);
+        }
     }
     if args.track_menu_review > 0 {
         let mut c = ctl.borrow_mut();
