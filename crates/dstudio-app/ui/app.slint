@@ -674,6 +674,10 @@ component Timeline inherits Panel {
             x: l.x; y: l.y + 0.75px; height: 13px; text: l.text; font-size: 9.25px; font-weight: 600; vertical-alignment: center;
             color: l.state == 1 ? l.accent : l.state == 2 ? #6a6b6f : l.dim;
         }
+        if Studio.marquee-on: Rectangle {
+            x: Studio.marquee-x; y: Studio.marquee-y; width: Studio.marquee-w; height: Studio.marquee-h;
+            background: #ffffff0f; border-width: 1px; border-color: #ffffff59;
+        }
         TouchArea {
             mouse-cursor: Studio.lane-cursor == 1 ? MouseCursor.ew-resize : Studio.lane-cursor == 2 ? MouseCursor.move : MouseCursor.default;
             pointer-event(e) => {

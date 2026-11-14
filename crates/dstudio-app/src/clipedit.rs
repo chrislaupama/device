@@ -373,6 +373,9 @@ impl Controller {
 
     /// ⌘D: copy of the selected clip right after itself (MIDI or audio). Selects the copy.
     pub fn duplicate_clip(&mut self) {
+        if !self.extra_clips.is_empty() {
+            return self.duplicate_clips();
+        }
         let Some(id) = self.selected_clip else { return };
         let p = self.project();
         let new_id = ClipId(p.next_id);
@@ -421,6 +424,9 @@ impl Controller {
 
     /// 0: disable the selected clip (silent, stays on the timeline), or enable it again.
     pub fn toggle_clip_disabled(&mut self) {
+        if !self.extra_clips.is_empty() {
+            return self.toggle_clips_disabled();
+        }
         let Some(id) = self.selected_clip else { return };
         let p = self.project();
         let disabled = p.find_clip(id).map(|(t, c)| p.tracks[t].clips[c].disabled).or_else(|| p.midi_clip(id).map(|c| c.disabled));
@@ -445,17 +451,13 @@ impl Controller {
         }
     }
 
+    /// ⌘C: the selected clips (the focused one first) to the clipboard.
     pub fn copy_clip(&mut self) -> bool {
-        let Some(id) = self.selected_clip else { return false };
-        let p = self.project();
-        self.clipboard = if let Some((ti, ci)) = p.find_midi_clip(id) {
-            Some(ClipboardItem::Midi { track: p.tracks[ti].id, clip: p.tracks[ti].midi_clips[ci].clone() })
-        } else if let Some((ti, ci)) = p.find_clip(id) {
-            Some(ClipboardItem::Audio { track: p.tracks[ti].id, clip: p.tracks[ti].clips[ci].clone() })
-        } else {
-            None
-        };
-        self.clipboard.is_some()
+        let mut items = self.copy_items().into_iter();
+        let Some(first) = items.next() else { return false };
+        self.clipboard = Some(first);
+        self.clipboard_rest = items.collect();
+        true
     }
 
     pub fn cut_clip(&mut self) {
@@ -492,12 +494,21 @@ impl Controller {
             self.set_status("Paste: no matching track", 3);
             return;
         };
-        let cmd = match item {
-            ClipboardItem::Audio { clip, .. } => Command::AddClip { track, clip: dstudio_core::Clip { id: new_id, start: at, ..clip } },
-            ClipboardItem::Midi { clip, .. } => Command::AddMidiClip { track, clip: MidiClip { id: new_id, start: at, ..clip } },
+        let (cmd, dt) = match item {
+            ClipboardItem::Audio { clip, .. } => {
+                let dt = at - clip.start;
+                (Command::AddClip { track, clip: dstudio_core::Clip { id: new_id, start: at, ..clip } }, dt)
+            }
+            ClipboardItem::Midi { clip, .. } => {
+                let dt = at - clip.start;
+                (Command::AddMidiClip { track, clip: MidiClip { id: new_id, start: at, ..clip } }, dt)
+            }
         };
-        if self.execute(Command::Batch { label: "Paste Clip".into(), commands: vec![cmd] }) {
-            self.select_clip(Some(new_id));
+        // The rest of a copied group lands on its own tracks, as far from the first as before.
+        let (rest, rest_ids) = self.paste_rest(dt, new_id.0 + 1);
+        let label = if rest.is_empty() { "Paste Clip".to_string() } else { format!("Paste {} Clips", rest.len() + 1) };
+        if self.execute(Command::Batch { label, commands: std::iter::once(cmd).chain(rest).collect() }) {
+            self.set_clip_selection(std::iter::once(new_id).chain(rest_ids).collect());
         }
     }
 
@@ -580,7 +591,7 @@ impl Controller {
         if let Some(t) = self.clip_track(id) {
             self.select_track(t);
         }
-        self.select_clip(Some(id));
+        self.focus_clip(id);
         let p = self.project();
         let midi = p.find_midi_clip(id).is_some();
         let pattern = p.midi_clip(id).is_some_and(|c| c.pattern.is_some());

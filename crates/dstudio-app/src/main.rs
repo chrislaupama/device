@@ -71,6 +71,7 @@ mod resample;
 mod routing;
 mod sampler_panel;
 mod sections;
+mod selection;
 mod selftest;
 mod settings;
 mod shape_rack;
