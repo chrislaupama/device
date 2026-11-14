@@ -592,6 +592,17 @@ uses it at lower strength behind feature and architecture cards. App source, scr
 installation identities and settings are unchanged. The website uses compressed versions of
 the same material in its own repository.
 
+### 2026-11-14: export to MP3
+
+- The Export dialog's Format segments now pick WAV or MP3 for Mixdown and Stems. With MP3 the second segments pick the
+  bitrate (192 or 320 kbps, 320 by default) in place of the bit depth; the sample rate and range choices work as for
+  WAV, the Name field ends in ".mp3", and the size estimate follows the bitrate. A Project export (Live set) stays WAV.
+- `src/mp3.rs`: constant-bitrate joint stereo through LAME (`mp3lame-encoder` 0.3.0, LAME built from source by
+  `mp3lame-sys`, LGPL), quality setting 2, with LAME's Info tag in the first frame so decoders trim the encoder delay
+  and padding and the file has exactly the rendered length.
+- Tests: `mp3::tests` encodes one second of a sine at both bitrates and reads it back through the engine's MP3
+  decoder (same frame count, peak within 0.05 of the source, size within four MP3 frames of the estimate).
+
 ### 2026-11-14: Resample in the audio clip editor
 
 - The Resample button in the audio clip editor's title row (a placeholder until now) renders the open clip through its

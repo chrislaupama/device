@@ -1,4 +1,4 @@
-//! Export dialog (mixdown or stems to WAV) and the unsaved-changes prompt shown before
+//! Export dialog (mixdown or stems to WAV or MP3) and the unsaved-changes prompt shown before
 //! File › New Project. DStudio renders with the engine's offline
 //! render at the engine sample rate. A stem is one track played alone: DStudio has no
 //! returns, groups or master devices, so that is the post-effects track
@@ -63,10 +63,13 @@ pub struct ExportUi {
     pub range: ExportRange,
     pub range_menu: bool,
     pub bits24: bool,
+    /// Mixdown and Stems write MP3 (at `kbps`) instead of WAV.
+    pub mp3: bool,
+    pub kbps: u32,
     /// The file's sample rate as picked in the dialog (44.1 or 48 kHz); None until then, which
     /// means the one nearest the engine's.
     pub rate: Option<u32>,
-    /// The Name field: "<name>.wav" when one file is written, the stems folder base otherwise.
+    /// The Name field: "<name>.wav" (or ".mp3") when one file is written, the stems folder base otherwise.
     pub name: String,
     pub dir: PathBuf,
     /// The name the dialog filled in; while the field still holds it, picking one track
@@ -86,6 +89,8 @@ impl Default for ExportUi {
             range: ExportRange::Project,
             range_menu: false,
             bits24: true,
+            mp3: false,
+            kbps: crate::mp3::BITRATES[1],
             rate: None,
             name: "Untitled.wav".into(),
             dir: home.join("Music").join("DStudio Exports"),
@@ -101,18 +106,64 @@ impl ExportUi {
         self.recipe == Recipe::Stems && !matches!(self.stems, StemsPick::Track(_))
     }
 
-    /// The Name field without a ".wav" ending, trimmed, with characters a file name can't hold
-    /// replaced.
+    /// What Mixdown and Stems write.
+    pub fn format(&self) -> FileFormat {
+        if self.mp3 { FileFormat::Mp3 { kbps: self.kbps } } else { FileFormat::Wav { bits: if self.bits24 { 24 } else { 16 } } }
+    }
+
+    /// The Name field without a ".wav" or ".mp3" ending, trimmed, with characters a file name
+    /// can't hold replaced.
     pub fn base_name(&self) -> String {
         let n = self.name.trim();
-        let n = if n.to_lowercase().ends_with(".wav") { &n[..n.len() - 4] } else { n };
+        let lower = n.to_lowercase();
+        let n = if lower.ends_with(".wav") || lower.ends_with(".mp3") { &n[..n.len() - 4] } else { n };
         file_safe(n, usize::MAX)
     }
 
     fn normalize_name(&mut self) {
         let base = self.base_name();
         if !base.is_empty() {
-            self.name = if self.writes_folder() || self.recipe == Recipe::Project { base } else { format!("{base}.wav") };
+            self.name =
+                if self.writes_folder() || self.recipe == Recipe::Project { base } else { format!("{base}.{}", self.format().ext()) };
+        }
+    }
+}
+
+/// The file type and its one setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileFormat {
+    Wav { bits: u16 },
+    Mp3 { kbps: u32 },
+}
+
+impl FileFormat {
+    pub fn ext(self) -> &'static str {
+        match self {
+            FileFormat::Wav { .. } => "wav",
+            FileFormat::Mp3 { .. } => "mp3",
+        }
+    }
+
+    /// "WAV 24-bit", "MP3 320 kbps".
+    pub fn label(self) -> String {
+        match self {
+            FileFormat::Wav { bits } => format!("WAV {bits}-bit"),
+            FileFormat::Mp3 { kbps } => format!("MP3 {kbps} kbps"),
+        }
+    }
+
+    /// Bytes of one stereo file of `frames` at `rate` Hz.
+    pub fn bytes(self, frames: u64, rate: f64) -> f64 {
+        match self {
+            FileFormat::Wav { bits } => frames as f64 * 2.0 * (bits / 8) as f64,
+            FileFormat::Mp3 { kbps } => crate::mp3::estimate_bytes(frames, rate, kbps),
+        }
+    }
+
+    fn write(self, file: std::fs::File, rate: u32, samples: &[f32]) -> std::io::Result<()> {
+        match self {
+            FileFormat::Wav { bits } => wavgen::encode_wav_pcm(file, rate, 2, bits, samples),
+            FileFormat::Mp3 { kbps } => crate::mp3::encode_mp3(file, rate, kbps, samples),
         }
     }
 }
@@ -203,16 +254,22 @@ pub(crate) fn stem_snapshot(mix: &dstudio_core::snapshot::SessionSnapshot, id: T
 
 /// "3.7 MB • 0:14" for "files" stereo PCM files of "frames" each at "bits".
 pub fn estimate_text(frames: u64, rate: f64, bits: u32, files: usize) -> String {
-    let mb = files as f64 * frames as f64 * 2.0 * (bits / 8) as f64 / 1e6;
+    format_estimate_text(frames, rate, FileFormat::Wav { bits: bits as u16 }, files)
+}
+
+/// "3.7 MB • 0:14" for "files" stereo files of "frames" each in `format`.
+pub fn format_estimate_text(frames: u64, rate: f64, format: FileFormat, files: usize) -> String {
+    let mb = files as f64 * format.bytes(frames, rate) / 1e6;
     let secs = (frames as f64 / rate).round() as u64;
     format!("{mb:.1} MB • {}:{:02}", secs / 60, secs % 60)
 }
 
-/// Opens "dir/<stem>.wav", or "<stem> 2.wav", "<stem> 3.wav", … when taken; never an existing file.
-pub(crate) fn create_free_file(dir: &Path, stem: &str) -> Result<(PathBuf, std::fs::File), String> {
+/// Opens "dir/<stem>.<ext>", or "<stem> 2.<ext>", "<stem> 3.<ext>", … when taken; never an
+/// existing file.
+pub(crate) fn create_free_file(dir: &Path, stem: &str, ext: &str) -> Result<(PathBuf, std::fs::File), String> {
     (1..1000)
         .find_map(|n| {
-            let path = dir.join(if n == 1 { format!("{stem}.wav") } else { format!("{stem} {n}.wav") });
+            let path = dir.join(if n == 1 { format!("{stem}.{ext}") } else { format!("{stem} {n}.{ext}") });
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(f) => Some(Ok((path, f))),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
@@ -429,6 +486,19 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// The Format segments: WAV or MP3 (the Name field's ending follows).
+    pub fn export_set_mp3(&mut self, mp3: bool) {
+        self.export.mp3 = mp3;
+        self.export.normalize_name();
+        self.ui_dirty = true;
+    }
+
+    /// The bitrate segments shown for MP3: the higher (320 kbps) or the lower (192 kbps).
+    pub fn export_set_kbps(&mut self, high: bool) {
+        self.export.kbps = crate::mp3::BITRATES[usize::from(high)];
+        self.ui_dirty = true;
+    }
+
     pub fn export_set_name(&mut self, name: &str) {
         self.export.name = name.to_string();
         self.ui_dirty = true;
@@ -446,7 +516,7 @@ impl Controller {
         let base = self.export.base_name();
         let base = if base.is_empty() { "Untitled".to_string() } else { base };
         let result = match self.export.recipe {
-            Recipe::Mixdown => self.export_plan(&self.export.dir.clone(), &[(None, base)], self.export_rate()),
+            Recipe::Mixdown => self.export_plan(&self.export.dir.clone(), &[(None, base)], self.export_rate(), self.export.format()),
             Recipe::Stems => {
                 let tracks = self.export_stem_tracks();
                 if tracks.is_empty() {
@@ -466,9 +536,9 @@ impl Controller {
                         })
                         .collect();
                     free_folder(&self.export.dir, &format!("{base} Stems"))
-                        .and_then(|dir| self.export_plan(&dir, &names, self.export_rate()))
+                        .and_then(|dir| self.export_plan(&dir, &names, self.export_rate(), self.export.format()))
                 } else {
-                    self.export_plan(&self.export.dir.clone(), &[(Some(tracks[0]), base)], self.export_rate())
+                    self.export_plan(&self.export.dir.clone(), &[(Some(tracks[0]), base)], self.export_rate(), self.export.format())
                 }
             }
             Recipe::Project => self.export_project(&base),
@@ -532,7 +602,8 @@ impl Controller {
                 rendered.iter().map(|(id, f)| (Some(*id), f.trim_end_matches(".wav").to_string())).collect();
             // The set records the renders' length and rate as the engine made them.
             let rate = self.engine.sample_rate().round() as u32;
-            self.export_plan(&folder.join(RENDERS), &files, rate)?.1
+            let bits = if self.export.bits24 { 24 } else { 16 };
+            self.export_plan(&folder.join(RENDERS), &files, rate, FileFormat::Wav { bits })?.1
         };
         let p = self.project();
         let rate = self.engine.sample_rate();
@@ -737,19 +808,22 @@ impl Controller {
         dir: &Path,
         files: &[(Option<TrackId>, String)],
         rate: u32,
+        format: FileFormat,
     ) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
         let (start, frames) = self.export_span();
         let frames = frames as usize;
         let engine_rate = self.engine.sample_rate().round() as u32;
         let resampler = Resampler::new(engine_rate, rate).ok_or_else(|| format!("can't convert {engine_rate} Hz to {rate} Hz"))?;
         // WAV sizes are 32-bit: refuse before rendering rather than after.
-        if resampler.out_frames(frames) as u64 * 2 * if self.export.bits24 { 3 } else { 2 } > (u32::MAX - 36) as u64 {
+        if let FileFormat::Wav { bits } = format
+            && resampler.out_frames(frames) as u64 * 2 * (bits / 8) as u64 > (u32::MAX - 36) as u64
+        {
             return Err("too long for a WAV file (4 GB limit)".into());
         }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let mut passes = Vec::with_capacity(files.len());
         for (track, stem) in files {
-            match create_free_file(dir, stem) {
+            match create_free_file(dir, stem, format.ext()) {
                 Ok((path, file)) => passes.push(Pass { track: *track, path, file }),
                 Err(e) => {
                     for p in &passes {
@@ -760,7 +834,7 @@ impl Controller {
             }
         }
         let paths: Vec<PathBuf> = passes.iter().map(|p| p.path.clone()).collect();
-        let (written, restarted) = self.render_passes(passes, start, frames, rate, &resampler);
+        let (written, restarted) = self.render_passes(passes, start, frames, rate, &resampler, format);
         match (written, restarted) {
             (Ok(()), restarted) => Ok((paths, restarted)),
             (Err(e), restarted) => {
@@ -776,7 +850,7 @@ impl Controller {
     }
 
     /// Plays `frames` of the arrangement from engine frame `start` once per pass (no loop, no
-    /// click) and writes it as stereo PCM at `out_rate` Hz, converted by `resampler` when the
+    /// click) and writes it as a stereo `format` file at `out_rate` Hz, converted by `resampler` when the
     /// engine runs at another rate. The audio device is paused for the renders; transport, mutes
     /// and the device are restored afterwards.
     fn render_passes(
@@ -786,9 +860,9 @@ impl Controller {
         frames: usize,
         out_rate: u32,
         resampler: &Resampler,
+        format: FileFormat,
     ) -> (Result<(), String>, Result<(), String>) {
         let rate = self.engine.sample_rate();
-        let bits = if self.export.bits24 { 24 } else { 16 };
         let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
         let solo_passes = passes.iter().any(|p| p.track.is_some());
         let e = self.engine.clone();
@@ -816,7 +890,7 @@ impl Controller {
                 }
                 e.stop().map_err(|e| e.to_string())?;
                 let converted = resampler.process(&out, 2);
-                wavgen::encode_wav_pcm(pass.file, out_rate, 2, bits, &converted).map_err(|e| e.to_string())?;
+                format.write(pass.file, out_rate, &converted).map_err(|e| e.to_string())?;
             }
             Ok::<(), String>(())
         })();
@@ -936,8 +1010,12 @@ impl Controller {
         if !self.export.open {
             return;
         }
-        let bits = if self.export.bits24 { 24 } else { 16 };
-        // Project renders stay at the engine rate; Mixdown and Stems use the picked one.
+        // Project renders stay at the engine rate and WAV; Mixdown and Stems use the picked ones.
+        let format = if self.export.recipe == Recipe::Project {
+            FileFormat::Wav { bits: if self.export.bits24 { 24 } else { 16 } }
+        } else {
+            self.export.format()
+        };
         let (frames, rate) = if self.export.recipe == Recipe::Project {
             (self.export_frames(), self.engine.sample_rate())
         } else {
@@ -953,9 +1031,12 @@ impl Controller {
         });
         s.set_export_bits24(self.export.bits24);
         s.set_export_rate48(self.export_rate() == 48_000);
-        s.set_export_recipe_text(format!("WAV {bits}-bit").into());
+        s.set_export_mp3(self.export.mp3);
+        s.set_export_kbps_high(self.export.kbps == crate::mp3::BITRATES[1]);
+        s.set_export_recipe_text(self.export.format().label().into());
         let plural = if files == 1 { "file" } else { "files" };
-        s.set_export_stems_text(format!("{files} WAV {plural}").into());
+        let kind = if self.export.mp3 { "MP3" } else { "WAV" };
+        s.set_export_stems_text(format!("{files} {kind} {plural}").into());
         s.set_export_files_text(format!("{files} {plural}").into());
         let range = self.export_range();
         s.set_export_bars_text(range_bars_text(p, range).into());
@@ -984,7 +1065,7 @@ impl Controller {
         s.set_export_name(self.export.name.clone().into());
         s.set_export_name_label(if self.export.writes_folder() { "Folder" } else { "Name" }.into());
         s.set_export_dir(self.export.dir.display().to_string().into());
-        s.set_export_estimate(estimate_text(frames, rate, bits, if stems { files } else { 1 }).into());
+        s.set_export_estimate(format_estimate_text(frames, rate, format, if stems { files } else { 1 }).into());
         let tracks_label = match self.export.stems {
             StemsPick::AllTracks => "All individual tracks".to_string(),
             StemsPick::Selected => "Selected tracks only".to_string(),
@@ -1090,6 +1171,32 @@ mod tests {
         assert_eq!(c.export_out_frames() as usize, expect, "{frames} frames at {engine_rate} Hz");
         c.export_set_rate(true);
         assert_eq!(c.export_rate(), 48_000);
+    }
+
+    #[test]
+    fn a_mixdown_exports_as_mp3_with_the_picked_rate_and_length() {
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let dir = std::env::temp_dir().join(format!("dstudio-mp3-export-{}", std::process::id()));
+        c.export_open();
+        c.export_set_dir(dir.clone());
+        c.export_set_mp3(true);
+        assert_eq!((c.export.name.as_str(), c.export.format()), ("Untitled.mp3", FileFormat::Mp3 { kbps: 320 }));
+        c.export_set_kbps(false);
+        assert_eq!(c.export.format().label(), "MP3 192 kbps");
+        c.export_set_rate(false);
+        let frames = c.export_out_frames();
+        c.export_run();
+        let path = dir.join("Untitled.mp3");
+        let info = c.engine.load_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        let info = info.unwrap_or_else(|e| panic!("{e:?}; status {:?}", c.status_message()));
+        assert_eq!(info.source_sample_rate.round() as u32, 44_100);
+        // Loaded at the engine rate: the 44.1 kHz frames converted back.
+        let back = (info.frames as f64 * 44_100.0 / c.engine.sample_rate()).round() as u64;
+        assert!(back.abs_diff(frames) <= 1, "{back} frames back, {frames} written");
+        c.export_set_mp3(false);
+        assert_eq!(c.export.name, "Untitled.wav", "the ending follows the format");
     }
 
     #[test]

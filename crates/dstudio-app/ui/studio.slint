@@ -869,6 +869,8 @@ export global Studio {
     in property <bool> export-open;
     in property <bool> export-bits24: true;
     in property <bool> export-rate48: true;      // the file's rate: 48 kHz (true) or 44.1 kHz
+    in property <bool> export-mp3;               // Format: MP3 (true) or WAV
+    in property <bool> export-kbps-high: true;   // MP3 bitrate: 320 kbps (true) or 192 kbps
     in property <string> export-recipe-text: "WAV 24-bit";
     in property <string> export-bars-text: "Bars 1–1";
     in property <string> export-name: "Untitled.wav";
@@ -896,6 +898,8 @@ export global Studio {
     callback export-choose-dir();
     callback export-bits(bool);                 // true = 24-bit
     callback export-rate(bool);                 // true = 48 kHz, false = 44.1 kHz
+    callback export-format(bool);               // true = MP3, false = WAV
+    callback export-kbps(bool);                 // true = 320 kbps, false = 192 kbps
     callback export-name-edited(string);
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show

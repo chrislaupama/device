@@ -188,3 +188,21 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## App: LAME (MP3 export)
+
+The app (not the engine) links LAME for MP3 export, through the Rust crates
+`mp3lame-encoder` 0.3.0 and `mp3lame-sys` 0.2.0 (crates.io), which compile
+LAME's `libmp3lame` from the sources shipped in the `mp3lame-sys` crate
+(`lame-4.0`) into the app binary. Used in `crates/dstudio-app/src/mp3.rs`.
+
+| Component | Source | Version | License |
+|---|---|---|---|
+| LAME (`libmp3lame`) | https://lame.sourceforge.io/ via https://github.com/DoumanAsh/mp3lame-sys | as bundled in `mp3lame-sys` 0.2.0 | GNU Library (Lesser) General Public License, version 2 or later |
+| `mp3lame-sys`, `mp3lame-encoder` (Rust bindings) | https://github.com/DoumanAsh/mp3lame-encoder | 0.2.0, 0.3.0 | LGPL-3.0 |
+
+The LGPL asks that people receiving the app can relink it against a
+modified LAME. Device's complete source (AGPL-3.0-or-later) is public, so a
+modified LAME can be built into it with `cargo` (for example with a
+`[patch.crates-io]` entry for `mp3lame-sys`). The license texts ship in the
+crates (`COPYING` in `lame-4.0`, `LICENSE` in each crate).
