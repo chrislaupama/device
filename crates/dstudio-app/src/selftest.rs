@@ -5243,8 +5243,14 @@ fn loop_take_steps() -> Vec<Step> {
                     let n = (LOOP * 7 / 2) as usize;
                     let input: Vec<f32> =
                         (0..n).map(|i| AMPS[i / LOOP as usize] * (std::f32::consts::TAU * INJ_FREQ * i as f32 / 48_000.0).sin()).collect();
-                    let mut out = vec![0f32; 2 * n];
-                    let _ = c.engine.render_offline_with_input(&input, 1, &mut out);
+                    // In blocks, with a pause after each, so the recorder's disk writer keeps
+                    // up with the 2 s ring on slow machines (rendering is faster than real time).
+                    const BLOCK: usize = 24_000;
+                    let mut out = vec![0f32; 2 * BLOCK];
+                    for chunk in input.chunks(BLOCK) {
+                        let _ = c.engine.render_offline_with_input(chunk, 1, &mut out[..2 * chunk.len()]);
+                        std::thread::sleep(std::time::Duration::from_millis(30));
+                    }
                 }
                 ctl.borrow_mut().midi_tick();
                 key(a, "r", false, false);
