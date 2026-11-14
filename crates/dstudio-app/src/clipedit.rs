@@ -54,6 +54,7 @@ impl MenuAction {
             MenuAction::Split => "Split",
             MenuAction::Consolidate => "Consolidate",
             MenuAction::Bounce => "Bounce",
+            MenuAction::Takes => "Takes",
             MenuAction::Delete => "Delete",
             MenuAction::Disable => "Disable",
             MenuAction::Enable => "Enable",
@@ -123,9 +124,21 @@ impl MenuAction {
     fn submenu(self) -> bool {
         matches!(
             self,
-            MenuAction::Bounce | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert | MenuAction::TrackColor
+            MenuAction::Bounce
+                | MenuAction::Takes
+                | MenuAction::Transpose
+                | MenuAction::SectionColor
+                | MenuAction::SectionInsert
+                | MenuAction::TrackColor
         )
     }
+}
+
+/// Takes submenu rows: "Take 1", "Take 2", ... with a tick on the take that plays.
+fn take_rows(clip: Option<&dstudio_core::Clip>) -> Vec<(String, String, bool)> {
+    let Some(c) = clip else { return Vec::new() };
+    let cur = c.current_take();
+    (0..c.takes.len()).map(|i| (format!("Take {}", i + 1), if cur == Some(i) { "✓".into() } else { String::new() }, true)).collect()
 }
 
 /// Bounce submenu: (label, shortcut text, enabled). Two entries;
@@ -605,11 +618,13 @@ impl Controller {
             p.find_clip(id).map(|(t, c)| p.tracks[t].clips[c].disabled).or_else(|| p.midi_clip(id).map(|c| c.disabled)).unwrap_or(false);
         let splittable = self.can_split(id);
         use MenuAction::*;
+        let takes = p.clip(id).map_or(0, |c| c.takes.len());
         let mut items = vec![
             Cut,
             Copy,
             Duplicate,
             Split,
+            Takes,
             Consolidate,
             Bounce,
             Delete,
@@ -621,6 +636,9 @@ impl Controller {
             Quantize,
             Humanize,
         ];
+        if takes < 2 {
+            items.retain(|&a| a != Takes);
+        }
         if midi {
             items.push(if pattern { ToMidi } else { ToPattern });
         }
@@ -630,7 +648,7 @@ impl Controller {
             .iter()
             .map(|&a| {
                 let enabled = match a {
-                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable => true,
+                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable | Takes => true,
                     Split => splittable,
                     ShowInFinder => !midi,
                     Consolidate => self.can_render_clip(id, false),
@@ -708,7 +726,7 @@ impl Controller {
             return;
         }
         let Some(id) = self.menu.clip else { return };
-        if matches!(action, MenuAction::Transpose | MenuAction::Bounce) {
+        if matches!(action, MenuAction::Transpose | MenuAction::Bounce | MenuAction::Takes) {
             self.menu.sub_open = !(self.menu.sub_open && self.menu.sub_for == Some(action));
             self.menu.sub_for = Some(action);
             self.ui_dirty = true;
@@ -775,6 +793,14 @@ impl Controller {
             return;
         }
         let Some(id) = self.menu.clip else { return };
+        if self.menu.sub_for == Some(MenuAction::Takes) {
+            if self.project().clip(id).is_some_and(|c| index < c.takes.len()) {
+                self.menu_close();
+                self.selected_clip = Some(id);
+                self.execute(Command::SetClipTake { clip: id, take: index });
+            }
+            return;
+        }
         if self.menu.sub_for == Some(MenuAction::Bounce) {
             if BOUNCE.get(index).is_some_and(|b| b.2) {
                 self.menu_close();
@@ -1115,7 +1141,9 @@ impl Controller {
             let (sub, sub_h) = if sub_for == MenuAction::TrackColor {
                 self.track_color_rows()
             } else {
-                let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Bounce {
+                let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Takes {
+                    take_rows(self.menu.clip.and_then(|id| p.clip(id)))
+                } else if sub_for == MenuAction::Bounce {
                     BOUNCE.iter().map(|&(l, k, on)| (l.to_string(), k.to_string(), on)).collect()
                 } else {
                     TRANSPOSE.iter().map(|(l, k, _)| (l.to_string(), k.to_string(), true)).collect()

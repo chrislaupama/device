@@ -58,7 +58,9 @@ wgpu.
   the background while you keep working, and each is one undo step.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
   compensation is measured with an acoustic loopback test, not guessed. Right-click the record button for a one- or
-  two-bar count-in: the click plays from that far back and the take starts where you pressed record.
+  two-bar count-in: the click plays from that far back and the take starts where you pressed record. Record with the
+  loop on and every pass becomes a take of one clip: pick one from the clip menu's Takes, or split the clip and pick
+  a take for each part to comp.
 - **MIDI input.** Plug in a MIDI keyboard, arm (R) or monitor (I) instrument tracks to play them, and record
   what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute. Each

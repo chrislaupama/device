@@ -5165,7 +5165,208 @@ fn recording_steps() -> Vec<Step> {
     ];
     v.extend(midi_recording_steps());
     v.extend(count_in_steps());
+    v.extend(loop_take_steps());
     v
+}
+
+/// Takes from a looped recording: record track 1 three and a half times round a 2 s loop with a
+/// louder signal each pass, then check the clip covers the loop, plays the last whole pass and
+/// lists every pass under Takes, and that picking Take 1 plays the first pass. Offline only.
+fn loop_take_steps() -> Vec<Step> {
+    use Step::*;
+    const LOOP: i64 = 96_000; // beats 4..8 at 120 bpm, 48 kHz
+    const AMPS: [f32; 4] = [0.2, 0.4, 0.6, 0.8];
+    fn offline(c: &Controller) -> bool {
+        !c.engine.device_running()
+    }
+    fn take_clip(c: &Controller) -> Option<&dstudio_core::Clip> {
+        c.project().tracks[0].clips.iter().find(|cl| !cl.takes.is_empty())
+    }
+    /// RMS of what clip `cl` plays from its file.
+    fn played_rms(c: &Controller, cl: &dstudio_core::Clip) -> Result<f32, String> {
+        let a = c.project().asset(cl.asset).ok_or("no asset")?;
+        let (_, ch, s) = crate::wavgen::read_wav(std::path::Path::new(&a.absolute_path))?;
+        let mono: Vec<f32> = s.chunks(ch as usize).map(|f| f[0]).skip(cl.source_offset as usize).take(cl.source_length as usize).collect();
+        Ok((mono.iter().map(|x| x * x).sum::<f32>() / mono.len().max(1) as f32).sqrt())
+    }
+    fn menu_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let s = a.global::<Studio>();
+        let items = s.get_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .find(|m| m.label == label && m.enabled)
+            .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0))
+    }
+    fn sub_rows(a: &AppWindow) -> Vec<(String, String)> {
+        let items = a.global::<Studio>().get_sub_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .map(|m| (m.label.to_string(), m.shortcut.to_string()))
+            .collect()
+    }
+    fn sub_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let s = a.global::<Studio>();
+        let items = s.get_sub_items();
+        (0..slint::Model::row_count(&items)).filter_map(|i| slint::Model::row_data(&items, i)).find(|m| m.label == label).map(|m| {
+            (s.get_menu_x() + crate::clipedit::MENU_W - 4.0 + 40.0, s.get_menu_y() + s.get_sub_y() + m.y + crate::clipedit::MENU_ROW / 2.0)
+        })
+    }
+    let hist = Rc::new(Cell::new(0usize));
+    let (h1, h2) = (hist.clone(), hist.clone());
+    vec![
+        DoC(
+            "takes: loop beats 4 to 8, track 1 armed on Input 1, playhead at beat 4",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if !offline(&c) {
+                    return;
+                }
+                h1.set(c.doc.history_labels().len());
+                let t = c.project().tracks[0].id;
+                c.execute(dstudio_core::Command::SetLoop { enabled: true, start: 4 * PPQ, end: 8 * PPQ });
+                c.set_track_input(t, Some(dstudio_core::InputSource { channel: 0, stereo: false }));
+                if !c.project().tracks[0].arm {
+                    c.execute(dstudio_core::Command::SetTrackArm { track: t, arm: true });
+                }
+                c.seek_beats(4.0);
+            }),
+        ),
+        Do("takes: press R", Box::new(|a| key(a, "r", false, false))),
+        DoC(
+            "takes: play 3.5 times round the loop, each pass louder, then press R (stop)",
+            Box::new(|a, ctl| {
+                {
+                    let c = ctl.borrow();
+                    if !offline(&c) || !c.rec.recording {
+                        return;
+                    }
+                    let n = (LOOP * 7 / 2) as usize;
+                    let input: Vec<f32> =
+                        (0..n).map(|i| AMPS[i / LOOP as usize] * (std::f32::consts::TAU * INJ_FREQ * i as f32 / 48_000.0).sin()).collect();
+                    // In blocks, with a pause after each, so the recorder's disk writer keeps
+                    // up with the 2 s ring on slow machines (rendering is faster than real time).
+                    const BLOCK: usize = 24_000;
+                    let mut out = vec![0f32; 2 * BLOCK];
+                    for chunk in input.chunks(BLOCK) {
+                        let _ = c.engine.render_offline_with_input(chunk, 1, &mut out[..2 * chunk.len()]);
+                        std::thread::sleep(std::time::Duration::from_millis(30));
+                    }
+                }
+                ctl.borrow_mut().midi_tick();
+                key(a, "r", false, false);
+            }),
+        ),
+        Check(
+            "takes: one Record step; the clip covers the loop, plays the third pass and has three takes",
+            Box::new(|c, a| {
+                if !offline(c) {
+                    return Ok(());
+                }
+                let cl = take_clip(c).ok_or(format!("no clip with takes; undo {:?}", c.doc.undo_label()))?;
+                let len = c.project().clip_length_ticks(cl);
+                let rms = played_rms(c, cl)?;
+                let status = a.global::<Studio>().get_status_text().to_string();
+                (c.doc.undo_label() == Some("Record")
+                    && (cl.start - 4 * PPQ).abs() <= 2
+                    && (len - 4 * PPQ).abs() <= 2
+                    && cl.takes.len() == 3
+                    && cl.current_take() == Some(2)
+                    && (rms - AMPS[2] / 2f32.sqrt()).abs() < 0.02
+                    && status.contains("3 loop takes"))
+                .then_some(())
+                .ok_or(format!(
+                    "start {} len {len} takes {:?} current {:?} rms {rms:.3} status {status:?}",
+                    cl.start,
+                    cl.takes,
+                    cl.current_take()
+                ))
+            }),
+        ),
+        DoC(
+            "takes: open the clip's menu",
+            Box::new(|_, ctl| {
+                let mut c = ctl.borrow_mut();
+                let Some(id) = take_clip(&c).map(|cl| cl.id) else { return };
+                let win = c.devices.win;
+                c.open_clip_menu(id, 500.0, 300.0, win);
+            }),
+        ),
+        Do(
+            "takes: click Takes",
+            Box::new(|a| {
+                if let Some((x, y)) = menu_row(a, "Takes") {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "takes: the submenu lists Take 1 to Take 3 with Take 3 ticked",
+            Box::new(|c, a| {
+                if !offline(c) {
+                    return Ok(());
+                }
+                let rows = sub_rows(a);
+                let want = [("Take 1", ""), ("Take 2", ""), ("Take 3", "✓")];
+                (a.global::<Studio>().get_sub_open() && rows.iter().map(|(l, k)| (l.as_str(), k.as_str())).eq(want.iter().copied()))
+                    .then_some(())
+                    .ok_or(format!("sub open {} rows {rows:?}", a.global::<Studio>().get_sub_open()))
+            }),
+        ),
+        Do(
+            "takes: pick Take 1",
+            Box::new(|a| {
+                if let Some((x, y)) = sub_row(a, "Take 1") {
+                    click(a, x, y);
+                }
+            }),
+        ),
+        Check(
+            "takes: the clip plays the first pass, one Choose Take step, the name shows Take 1",
+            Box::new(|c, _| {
+                if !offline(c) {
+                    return Ok(());
+                }
+                let cl = take_clip(c).ok_or("no clip with takes")?;
+                let rms = played_rms(c, cl)?;
+                let i = c.clip_ids.iter().position(|&k| k == cl.id).ok_or("clip not drawn")?;
+                let name = &c.clip_vis[i].name;
+                (cl.current_take() == Some(0)
+                    && c.doc.undo_label() == Some("Choose Take")
+                    && (rms - AMPS[0] / 2f32.sqrt()).abs() < 0.02
+                    && name.ends_with("Take 1")
+                    && !c.menu.open)
+                    .then_some(())
+                    .ok_or(format!("current {:?} undo {:?} rms {rms:.3} name {name:?}", cl.current_take(), c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "takes: undo back to before the recording, loop off, disarm",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if !offline(&c) {
+                    return;
+                }
+                while c.doc.history_labels().len() > h2.get() && c.doc.undo_label().is_some() {
+                    c.undo();
+                }
+                let _ = c.engine.stop();
+            }),
+        ),
+        Check(
+            "takes: the clip, the loop and the arm are undone",
+            Box::new(|c, _| {
+                if !offline(c) {
+                    return Ok(());
+                }
+                (take_clip(c).is_none() && !c.project().transport.loop_enabled && !c.project().tracks[0].arm).then_some(()).ok_or(format!(
+                    "takes clip {} loop {} arm {}",
+                    take_clip(c).is_some(),
+                    c.project().transport.loop_enabled,
+                    c.project().tracks[0].arm
+                ))
+            }),
+        ),
+    ]
 }
 
 /// MIDI recording (spec 003): arm the Instrument track, play injected notes during a
@@ -12966,6 +13167,7 @@ fn clip_menu_steps() -> Vec<Step> {
                                 disabled: false,
                                 clip_loop: None,
                                 fades: Default::default(),
+                                takes: Vec::new(),
                             },
                         },
                         Command::AddMidiClip {

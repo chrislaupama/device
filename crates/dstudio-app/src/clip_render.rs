@@ -611,6 +611,7 @@ impl Controller {
             disabled: false,
             clip_loop: None,
             fades: Default::default(),
+            takes: Vec::new(),
         };
         let mut cmds = vec![Command::AddAsset { asset }];
         let (label, track, status) = match &op {

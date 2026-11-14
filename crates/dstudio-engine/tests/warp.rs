@@ -79,6 +79,7 @@ impl Rig {
             disabled: false,
             clip_loop: None,
             fades: Default::default(),
+            takes: Vec::new(),
         };
         doc.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
         let clip = doc.project().tracks[0].clips[0].id;

@@ -663,6 +663,7 @@ pub fn build(
                     disabled: c.disabled,
                     clip_loop,
                     fades: Default::default(),
+                    takes: Vec::new(),
                 });
                 report.clips += 1;
             }

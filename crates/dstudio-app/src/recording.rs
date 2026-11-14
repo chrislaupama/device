@@ -55,6 +55,9 @@ pub struct RecState {
     pub count_in: Option<i64>,
     /// The pass's punch-in frame after a count-in: what was recorded before it is dropped.
     pub punch: Option<i64>,
+    /// The loop (frames) that was on when the pass started, while it stays unchanged: each
+    /// time round it makes one take (src/takes.rs).
+    pub rec_loop: Option<(i64, i64)>,
 }
 
 /// Rows of the "In" selector: "None", then "Input k (Mono)" per device input
@@ -284,6 +287,7 @@ impl Controller {
         }
         self.rec.recording = true;
         self.rec.audio = audio_started;
+        self.rec.rec_loop = self.loop_frames();
         match audio_err {
             Some(e) => self.set_status(format!("Recording MIDI only: {e}"), 6),
             None if self.rec.count_in.is_some() => self.set_status("Counting in…", 2),
@@ -295,6 +299,8 @@ impl Controller {
     pub fn stop_recording(&mut self) {
         self.rec.recording = false;
         let punch = self.rec.punch;
+        self.takes_tick();
+        let rec_loop = self.rec.rec_loop.take();
         self.count_in_cancel();
         self.rec.live_vis.clear();
         self.ui_dirty = true;
@@ -338,7 +344,7 @@ impl Controller {
                         (t, r)
                     })
                     .collect();
-                let _ = tx.send(JobResult::Recorded { doc_epoch: epoch, takes, midi, punch });
+                let _ = tx.send(JobResult::Recorded { doc_epoch: epoch, takes, midi, punch, rec_loop });
             })
             .expect("spawn take loader");
         self.set_status("Loading recording…", 30);
@@ -370,6 +376,7 @@ impl Controller {
         takes: Vec<(RecordedTake, Result<(AssetInfo, Pyramid), String>)>,
         midi: Vec<Command>,
         punch: Option<i64>,
+        rec_loop: Option<(i64, i64)>,
     ) {
         if doc_epoch != self.doc_epoch {
             for (_, r) in takes {
@@ -388,6 +395,7 @@ impl Controller {
         let mut cmds = Vec::new();
         let mut loaded = Vec::new();
         let mut errors = Vec::new();
+        let mut passes = 0usize; // the most loop passes one take made
         for (take, res) in takes {
             let (info, pyr) = match res {
                 Ok(v) => v,
@@ -426,22 +434,45 @@ impl Controller {
                 channels: take.channels.max(1),
                 frames,
             };
-            let start = self.project().frames_to_ticks(first, self.rate);
-            let clip = Clip {
-                id: ClipId(alloc()),
+            let clip_at = |id: u64, at: i64, offset: u64, length: u64, takes: Vec<i64>| Clip {
+                id: ClipId(id),
                 asset: asset_id,
-                name,
-                start,
-                source_offset: skip,
-                source_length: frames - skip,
+                name: name.clone(),
+                start: self.project().frames_to_ticks(at, self.rate),
+                source_offset: offset,
+                source_length: length,
                 gain: 1.0,
                 warp: Default::default(),
                 disabled: false,
                 clip_loop: None,
                 fades: Default::default(),
+                takes,
             };
+            // Timeline frames <-> the take's own frames.
+            let to_asset = |tl: i64| (tl as f64 * rate / self.rate).round().max(0.0) as u64;
+            let kept = ((frames - skip) as f64 * self.rate / rate).round() as i64;
+            let mut clips = Vec::new();
+            // Round the loop: one clip over the loop playing the last complete pass, with every
+            // pass as a take (and the part before the loop, if any, as a clip of its own).
+            if let Some(cut) = rec_loop.and_then(|l| crate::takes::loop_cut(first, kept, l)) {
+                if cut.lead > 0 {
+                    clips.push(clip_at(alloc(), first, skip, to_asset(cut.lead), Vec::new()));
+                }
+                let len = to_asset(cut.len);
+                let starts: Vec<u64> = cut.passes.iter().map(|&o| skip + to_asset(o)).filter(|&o| o + len <= frames).collect();
+                if let Some(&last) = starts.last() {
+                    let takes = if starts.len() > 1 { starts.iter().map(|&o| o as i64 - last as i64).collect() } else { Vec::new() };
+                    passes = passes.max(starts.len());
+                    clips.push(clip_at(alloc(), cut.start, last, len, takes));
+                } else {
+                    clips.clear(); // no whole pass after rounding: keep the take linear
+                }
+            }
+            if clips.is_empty() {
+                clips.push(clip_at(alloc(), first, skip, frames - skip, Vec::new()));
+            }
             cmds.push(Command::AddAsset { asset });
-            cmds.push(Command::AddClip { track, clip });
+            cmds.extend(clips.into_iter().map(|clip| Command::AddClip { track, clip }));
             loaded.push((asset_id, info.asset_id, pyr));
         }
         if cmds.is_empty() {
@@ -470,7 +501,10 @@ impl Controller {
         }
         if self.execute(Command::Batch { label: "Record".into(), commands: cmds }) {
             self.rec.last_pass = Some("Record".into());
-            let extra = if midi_clips > 0 { format!(" and {midi_clips} MIDI clip(s)") } else { String::new() };
+            let mut extra = if midi_clips > 0 { format!(" and {midi_clips} MIDI clip(s)") } else { String::new() };
+            if passes > 1 {
+                extra += &format!(", {passes} loop takes (clip menu › Takes)");
+            }
             if errors.is_empty() {
                 self.set_status(format!("Recorded {} take(s){extra}", loaded.len()), 3);
             } else {

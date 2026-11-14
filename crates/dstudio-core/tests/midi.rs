@@ -83,6 +83,7 @@ fn clip_move_resize_delete_undo_and_ids() {
         disabled: false,
         clip_loop: None,
         fades: Default::default(),
+        takes: Vec::new(),
     };
     assert_eq!(d.execute(Command::AddClip { track: audio, clip: dup }, Origin::User), Err(EditError::DuplicateId(c.0)));
 }

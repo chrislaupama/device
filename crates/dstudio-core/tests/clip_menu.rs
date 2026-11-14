@@ -27,6 +27,7 @@ fn audio_doc() -> (Document, TrackId, ClipId) {
         disabled: false,
         clip_loop: None,
         fades: Default::default(),
+        takes: Vec::new(),
     };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let c = d.project().tracks[0].clips[0].id;
@@ -159,6 +160,7 @@ fn audio_clip(id: u64, asset: AssetId, start: Ticks, secs: u64) -> Clip {
         disabled: false,
         clip_loop: None,
         fades: Default::default(),
+        takes: Vec::new(),
     }
 }
 

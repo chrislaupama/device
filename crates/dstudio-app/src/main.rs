@@ -31,6 +31,9 @@ static CLIP_MENU_BOUNCE: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 /// review-clip-fades: once the default project's audio clip is in, give it a fade-in and a
 /// longer fade-out and select it so its handles show.
 static CLIP_FADES_REVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// review-clip-takes: a 2 s loop recorded three times round (each pass louder) on the Audio
+/// track, playing take 3, with its menu's Takes submenu open.
+static CLIP_TAKES_REVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
 mod appmenu;
@@ -86,6 +89,7 @@ mod snap;
 mod splitters;
 mod stepseq;
 mod synth;
+mod takes;
 mod text_measure;
 mod timeline;
 mod track_menu;
@@ -478,6 +482,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     CLIP_FADES_REVIEW.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
+                "review-clip-takes" => {
+                    a.reference_default = true;
+                    CLIP_TAKES_REVIEW.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 "review-clip-bounce-menu" => {
                     a.reference_default = true;
                     a.clip_menu_audio = true;
@@ -648,7 +656,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-returns-empty, review-returns-options, review-snap-menu, review-count-in-menu, review-clip-takes, review-track-menu, review-track-drag, review-clip-selection, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-strip-trim, review-plugin-folders, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1549,6 +1557,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
         if wavgen::write_wav_pcm(&path, 48_000, 1, 24, &pad).is_ok() {
+            let mut c = ctl.borrow_mut();
+            if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Audio).map(|t| t.id) {
+                c.import_files(vec![path], controller::ImportTarget::Track(t), Some(4 * dstudio_core::PPQ));
+            }
+        }
+    }
+    if CLIP_TAKES_REVIEW.load(std::sync::atomic::Ordering::Relaxed) {
+        // Three 2 s passes of a plucked phrase, each louder than the last, as one file.
+        let dir = std::env::temp_dir().join("device-studio-review");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Loop take.wav");
+        let take: Vec<f32> = (0..288_000)
+            .map(|i| {
+                let (pass, j) = (i / 96_000, i % 96_000);
+                let (note, k) = (j / 12_000, (j % 12_000) as f32 / 48_000.0);
+                let f = [220.0f32, 261.6, 329.6, 392.0][(note + pass) % 4];
+                [0.25f32, 0.5, 0.8][pass] * (-k * 9.0).exp() * (std::f32::consts::TAU * f * k).sin()
+            })
+            .collect();
+        if wavgen::write_wav_pcm(&path, 48_000, 1, 24, &take).is_ok() {
             let mut c = ctl.borrow_mut();
             if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Audio).map(|t| t.id) {
                 c.import_files(vec![path], controller::ImportTarget::Track(t), Some(4 * dstudio_core::PPQ));
@@ -3416,6 +3444,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             c.select_track(track);
                             c.select_clip(Some(id));
                             c.view.px_per_beat = 48.0;
+                        }
+                    }
+                    if c.pending_jobs == 0 && CLIP_TAKES_REVIEW.load(std::sync::atomic::Ordering::Relaxed) {
+                        let found = c.project().tracks.iter().find_map(|t| t.clips.first().map(|k| (t.id, k.clone())));
+                        if let Some((track, k)) = found {
+                            CLIP_TAKES_REVIEW.store(false, std::sync::atomic::Ordering::Relaxed);
+                            // As a looped recording leaves it: the loop, playing the last pass.
+                            let clip = dstudio_core::Clip {
+                                source_offset: 192_000,
+                                source_length: 96_000,
+                                takes: vec![-192_000, -96_000, 0],
+                                ..k.clone()
+                            };
+                            let (start, end) = (4 * dstudio_core::PPQ, 8 * dstudio_core::PPQ);
+                            c.execute(dstudio_core::Command::Batch {
+                                label: "Record".into(),
+                                commands: vec![
+                                    dstudio_core::Command::RemoveClip { clip: k.id },
+                                    dstudio_core::Command::AddClip { track, clip },
+                                    dstudio_core::Command::SetLoop { enabled: true, start, end },
+                                ],
+                            });
+                            c.select_track(track);
+                            c.view.px_per_beat = 60.0;
+                            c.open_clip_menu(k.id, 700.0, 215.0, (10_000.0, 10_000.0));
+                            c.menu.sub_open = true;
+                            c.menu.sub_for = Some(controller::MenuAction::Takes);
                         }
                     }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());

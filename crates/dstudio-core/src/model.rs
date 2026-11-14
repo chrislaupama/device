@@ -216,6 +216,12 @@ pub struct Clip {
     /// fades existed load without them.
     #[serde(default, skip_serializing_if = "ClipFades::is_default")]
     pub fades: ClipFades,
+    /// Takes from a looped recording: each loop pass is one take of the same recorded file.
+    /// Each entry is that take's start in the asset, in frames, relative to `source_offset`,
+    /// so the take that plays is the one at 0 and trims and splits keep the others in step.
+    /// Empty for clips that are not a looped take.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub takes: Vec<i64>,
 }
 
 /// An audio clip's fades: lengths on the timeline, in ticks, from the clip's start (fade-in)
@@ -250,6 +256,23 @@ impl ClipFades {
         } else {
             Ok(())
         }
+    }
+}
+
+impl Clip {
+    /// The take that plays (the entry at 0), if the clip has takes.
+    pub fn current_take(&self) -> Option<usize> {
+        self.takes.iter().position(|&d| d == 0)
+    }
+
+    /// The takes with take `take` playing: (new source offset, new takes), or why not.
+    pub fn with_take(&self, take: usize, asset_frames: u64) -> Result<(u64, Vec<i64>), String> {
+        let &d = self.takes.get(take).ok_or_else(|| format!("clip {} has no take {}", self.id.0, take + 1))?;
+        let offset = self.source_offset as i64 + d;
+        if offset < 0 || offset as u64 + self.source_length > asset_frames {
+            return Err(format!("take {} is outside the recording", take + 1));
+        }
+        Ok((offset as u64, self.takes.iter().map(|&x| x - d).collect()))
     }
 }
 
