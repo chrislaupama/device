@@ -34,6 +34,8 @@ static CLIP_FADES_REVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 /// review-clip-takes: a 2 s loop recorded three times round (each pass louder) on the Audio
 /// track, playing take 3, with its menu's Takes submenu open.
 static CLIP_TAKES_REVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// review-zoom-fit(-before): 2 = clips spread over 16 bars at a close zoom, 1 = then W and H.
+static ZOOM_FIT_REVIEW: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 mod analyzer_views;
 mod appmenu;
@@ -57,6 +59,7 @@ mod devminimap;
 mod dialogs;
 mod fades;
 mod files;
+mod fit;
 mod gain_scope;
 mod gpu;
 mod groups;
@@ -512,6 +515,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.sections_review = 1;
                 }
+                st @ ("review-zoom-fit" | "review-zoom-fit-before") => {
+                    a.reference_default = true;
+                    ZOOM_FIT_REVIEW.store(if st == "review-zoom-fit" { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+                }
                 "review-sections-two" => {
                     a.reference_default = true;
                     a.sections_review = 2;
@@ -868,6 +875,14 @@ pub fn app_keymap() -> Keymap {
             });
         }
     }
+    // Zoom to fit: W the song's width, H the tracks' height (View menu).
+    for (action, chord) in [("view.fit_width", "w"), ("view.fit_height", "h")] {
+        k.bindings.push(Binding {
+            action: action.into(),
+            chords: vec![Chord::parse(chord).expect("valid chord")],
+            when: Condition::Always,
+        });
+    }
     // Tap tempo from the keyboard (the transport bar's TAP).
     k.bindings.push(Binding {
         action: "transport.tap_tempo".into(),
@@ -1075,6 +1090,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             }
         }
         "view.zoom_in" => ctl.borrow_mut().view.zoom_at(1.25, 0.0),
+        "view.fit_width" => ctl.borrow_mut().zoom_to_fit_width(),
+        "view.fit_height" => ctl.borrow_mut().zoom_to_fit_height(),
         "view.toggle_mixer" => ctl.borrow_mut().toggle_mixer(),
         "view.toggle_assistant" => ctl.borrow_mut().toggle_assistant(),
         "file.import_audio" => {
@@ -3474,6 +3491,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());
+                    let zf = ZOOM_FIT_REVIEW.load(std::sync::atomic::Ordering::Relaxed);
+                    if zf > 3 {
+                        // Fit once the panels have settled (selecting a track opens its devices).
+                        ZOOM_FIT_REVIEW.store(zf - 1, std::sync::atomic::Ordering::Relaxed);
+                        app.window().request_redraw();
+                    } else if zf == 3 {
+                        ZOOM_FIT_REVIEW.store(0, std::sync::atomic::Ordering::Relaxed);
+                        c.zoom_to_fit_width();
+                        c.zoom_to_fit_height();
+                    } else if zf > 0 {
+                        ZOOM_FIT_REVIEW.store(if zf == 1 { 8 } else { 0 }, std::sync::atomic::Ordering::Relaxed);
+                        // Two instrument rows with parts out to bar 17 (run once the lanes have their size).
+                        c.add_instrument_track();
+                        c.add_instrument_track();
+                        let ids: Vec<_> = c
+                            .project()
+                            .tracks
+                            .iter()
+                            .filter(|t| t.kind == dstudio_core::TrackKind::Instrument)
+                            .map(|t| (t.id, t.kind))
+                            .collect();
+                        let bar = 4 * dstudio_core::PPQ;
+                        for (k, (track, _)) in ids.iter().enumerate() {
+                            for (start, len) in [(k as i64 * 2 * bar, 4 * bar), ((8 + k as i64 * 3) * bar, 6 * bar)] {
+                                let mut clip = dstudio_core::MidiClip::empty(start, len);
+                                clip.name = format!("Part {}", start / bar + 1);
+                                c.execute(dstudio_core::Command::AddMidiClip { track: *track, clip });
+                            }
+                        }
+                        c.view.px_per_beat = 90.0;
+                        c.view.start_beats = 0.0;
+                        c.rebuild_vis();
+                    }
                     c.update_ui(&app);
                     c.rebuild_vis();
                     let scale = app.window().scale_factor();
