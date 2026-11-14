@@ -25,7 +25,7 @@ RenderContext::RenderContext(uint32_t max_block)
       sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f),
       bus_(new float[std::size_t{2} * SE_MAX_RETURNS * max_block]), send_(new float[std::size_t{2} * max_block]), mod_points_(max_block / SE_MOD_GRID_FRAMES + 2),
       mod_(std::size_t{2} * kMaxModTargets * mod_points_, 0.0f), mod_binds_(kMaxModTargets), live_(max_block),
-      midi_(kMidiScratch) {}
+      fade_l_(max_block), fade_r_(max_block), midi_(kMidiScratch) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -587,20 +587,47 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 const int32_t v = graph->warps[static_cast<std::size_t>(clip->warp)].voice;
                 voice = v >= 0 && inst.warp_voices != nullptr ? inst.warp_voices[v] : nullptr;
             }
+            // A block inside a fade renders the clip on its own first, then adds it with the fade gain.
+            const bool fading = clip_fades_in(*clip, from, to);
+            if (fading) {
+                std::memset(ctx.fade_l(), 0, sizeof(float) * static_cast<std::size_t>(to - from));
+                std::memset(ctx.fade_r(), 0, sizeof(float) * static_cast<std::size_t>(to - from));
+            }
             // One run per pass over the content (several when the loop wraps in this block).
             for (int64_t at = from; at < to;) {
                 const int64_t c = clip_content(*clip, at - clip->timeline_start);
                 const int64_t n = clip->loop_end > 0 ? std::min(to - at, clip->loop_end - c) : to - at;
-                const auto out_off = static_cast<uint32_t>(at - block_start);
+                float* const dl = fading ? ctx.fade_l() + (at - from) : tl + (at - block_start);
+                float* const dr = fading ? ctx.fade_r() + (at - from) : tr + (at - block_start);
                 if (clip->warp >= 0) {
                     const int64_t ct = clip->timeline_start + c;
-                    render_warped_clip(*graph, *clip, voice, ct, ct + n, tl + out_off, tr + out_off);
+                    render_warped_clip(*graph, *clip, voice, ct, ct + n, dl, dr);
                 } else {
                     const int64_t src = clip->source_offset + c;
-                    kernel_add_scaled(tl + out_off, clip->src_l + src, clip->gain, static_cast<uint32_t>(n));
-                    kernel_add_scaled(tr + out_off, clip->src_r + src, clip->gain, static_cast<uint32_t>(n));
+                    kernel_add_scaled(dl, clip->src_l + src, clip->gain, static_cast<uint32_t>(n));
+                    kernel_add_scaled(dr, clip->src_r + src, clip->gain, static_cast<uint32_t>(n));
                 }
                 at += n;
+            }
+            if (fading) {
+                const float* fl = ctx.fade_l();
+                const float* fr = ctx.fade_r();
+                const auto off = static_cast<uint32_t>(from - block_start);
+                const auto n = static_cast<uint32_t>(to - from);
+                // Linear ramps as multiplies (clip_fade_gain, without its divides per frame).
+                const float r0 = static_cast<float>(from - clip->timeline_start);
+                const float left0 = static_cast<float>(clip->timeline_end - from);
+                const float fi = static_cast<float>(clip->fade_in);
+                const float fo = static_cast<float>(clip->fade_out);
+                const float inv_in = clip->fade_in > 0 ? 1.0f / fi : 0.0f;
+                const float inv_out = clip->fade_out > 0 ? 1.0f / fo : 0.0f;
+                for (uint32_t i = 0; i < n; ++i) {
+                    const float r = r0 + static_cast<float>(i);
+                    const float left = left0 - static_cast<float>(i);
+                    const float g = (r < fi ? r * inv_in : 1.0f) * (left < fo ? left * inv_out : 1.0f);
+                    tl[off + i] += fl[i] * g;
+                    tr[off + i] += fr[i] * g;
+                }
             }
         }
         // Clips line up with the instrument plugin's (latent) output.

@@ -499,6 +499,7 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_frame_ring.cpp
     tests/test_warp.cpp
     tests/test_clip_loop.cpp
+    tests/test_clip_fade.cpp
     tests/test_preview.cpp
     tests/test_decode.cpp
     tests/devices/test_builtin.cpp
@@ -593,6 +594,9 @@ if(DSTUDIO_ENGINE_BUILD_BENCH)
   add_executable(dstudio_clip_loop_bench bench/bench_clip_loop.cpp)
   target_include_directories(dstudio_clip_loop_bench PRIVATE src)
   target_link_libraries(dstudio_clip_loop_bench PRIVATE dstudio_engine dstudio_engine_warnings)
+  add_executable(dstudio_clip_fade_bench bench/bench_clip_fade.cpp)
+  target_include_directories(dstudio_clip_fade_bench PRIVATE src)
+  target_link_libraries(dstudio_clip_fade_bench PRIVATE dstudio_engine dstudio_engine_warnings)
   add_executable(dstudio_decode_bench bench/bench_decode.cpp)
   target_include_directories(dstudio_decode_bench PRIVATE src)
   target_link_libraries(dstudio_decode_bench PRIVATE dstudio_engine dstudio_engine_warnings)

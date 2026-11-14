@@ -28,6 +28,9 @@
 static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// With `review-clip-bounce-menu`: the audio clip menu opens with its Bounce submenu showing.
 static CLIP_MENU_BOUNCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// review-clip-fades: once the default project's audio clip is in, give it a fade-in and a
+/// longer fade-out and select it so its handles show.
+static CLIP_FADES_REVIEW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
 mod appmenu;
@@ -49,6 +52,7 @@ mod device_views;
 mod devices;
 mod devminimap;
 mod dialogs;
+mod fades;
 mod files;
 mod gain_scope;
 mod gpu;
@@ -466,6 +470,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-clip-menu" => {
                     a.reference_default = true;
                     a.clip_menu_audio = true;
+                }
+                "review-clip-fades" => {
+                    a.reference_default = true;
+                    CLIP_FADES_REVIEW.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 "review-clip-bounce-menu" => {
                     a.reference_default = true;
@@ -1508,6 +1516,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.open_input_menu();
     }
     CLIP_MENU_AUDIO.store(args.clip_menu_audio, std::sync::atomic::Ordering::Relaxed);
+    if CLIP_FADES_REVIEW.load(std::sync::atomic::Ordering::Relaxed) {
+        // A 4 s pad (three detuned sines) on the Audio track at bar 2.
+        let dir = std::env::temp_dir().join("device-studio-review");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Pad.wav");
+        let pad: Vec<f32> = (0..192_000)
+            .map(|i| {
+                let t = i as f32 / 48_000.0;
+                [220.0f32, 277.2, 329.6].iter().map(|f| 0.18 * (std::f32::consts::TAU * f * t).sin()).sum::<f32>()
+                    * (1.0 + 0.3 * (std::f32::consts::TAU * 0.75 * t).sin())
+            })
+            .collect();
+        if wavgen::write_wav_pcm(&path, 48_000, 1, 24, &pad).is_ok() {
+            let mut c = ctl.borrow_mut();
+            if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Audio).map(|t| t.id) {
+                c.import_files(vec![path], controller::ImportTarget::Track(t), Some(4 * dstudio_core::PPQ));
+            }
+        }
+    }
     if args.clip_menu_state {
         let mut c = ctl.borrow_mut();
         if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
@@ -2889,6 +2916,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.auto_hover(x, y);
+                c.clip_hover(x, y);
             }
         });
     }
@@ -3346,6 +3374,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 c.menu.sub_open = true;
                                 c.menu.sub_for = Some(controller::MenuAction::Bounce);
                             }
+                        }
+                    }
+                    if c.pending_jobs == 0 && CLIP_FADES_REVIEW.load(std::sync::atomic::Ordering::Relaxed) {
+                        let found =
+                            c.project().tracks.iter().find_map(|t| t.clips.first().map(|k| (t.id, k.id, c.project().clip_length_ticks(k))));
+                        if let Some((track, id, len)) = found {
+                            CLIP_FADES_REVIEW.store(false, std::sync::atomic::Ordering::Relaxed);
+                            let fades = dstudio_core::ClipFades { fade_in: len / 5, fade_out: len / 3 };
+                            c.execute(dstudio_core::Command::SetClipFades { clip: id, fades });
+                            c.select_track(track);
+                            c.select_clip(Some(id));
+                            c.view.px_per_beat = 48.0;
                         }
                     }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());

@@ -12435,6 +12435,142 @@ fn ruler_zoom_steps() -> Vec<Step> {
 
 /// Several clips selected at once (src/selection.rs): Shift-click, moving, duplicating and
 /// deleting them together, and the selection box.
+fn clip_fade_steps() -> Vec<Step> {
+    use Step::*;
+    use dstudio_core::{ClipFades, ClipId, Command, PPQ, TrackId};
+    fn dir() -> std::path::PathBuf {
+        run_dir().join("clip-fades")
+    }
+    /// The clip's fade handle centre (`out`: the fade-out one) in window coordinates, after
+    /// scrolling the clip's row into view.
+    fn handle(a: &AppWindow, ctl: &Ctl, id: ClipId, out: bool) -> (f32, f32) {
+        let mut c = ctl.borrow_mut();
+        let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
+        let (_, y, _, h) = c.clip_vis[i].rect(&c.view);
+        let over = y + h + 10.0 - c.lanes_size.1;
+        if over > 0.0 {
+            c.view.scroll_y += f64::from(over);
+            c.update_ui(a);
+            c.rebuild_vis();
+        }
+        let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
+        let (hx, hy) = c.clip_vis[i].fade_handle_centres(&c.view)[out as usize];
+        (lane_x() + hx, lane_y0() + hy)
+    }
+    fn fades(c: &Controller, id: u64) -> ClipFades {
+        c.project().clip(ClipId(id)).map(|k| k.fades).unwrap_or_default()
+    }
+    let ids = Rc::new(Cell::new((0u64, 0u64)));
+    let (i1, i2, i3, i4, i5, i6, i7, i8, i9) =
+        (ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone(), ids.clone());
+    vec![
+        DoC(
+            "fades: import a 2 s sine at beat 4 on a new track and select it (its fade handles show)",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                if c.mixer_open {
+                    c.toggle_mixer();
+                }
+                let d = dir();
+                let _ = std::fs::remove_dir_all(&d);
+                std::fs::create_dir_all(&d).unwrap();
+                let s: Vec<f32> = (0..96_000).map(|i| 0.3 * (std::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin()).collect();
+                crate::wavgen::write_wav_pcm(&d.join("f.wav"), 48_000, 1, 24, &s).unwrap();
+                c.view.start_beats = 0.0;
+                c.import_files(vec![d.join("f.wav")], crate::controller::ImportTarget::NewTrack, Some(4 * PPQ));
+                let t = c.selected_track.unwrap();
+                let k = c.project().track(t).and_then(|t| t.clips.first()).map(|k| k.id).unwrap_or(ClipId(0));
+                i1.set((t.0, k.0));
+                c.ui_dirty = true;
+            }),
+        ),
+        DoC(
+            "fades: click the clip to select it",
+            Box::new(move |a, ctl| {
+                let id = ClipId(i9.get().1);
+                let (x, y) = handle(a, ctl, id, false);
+                let (ox, _) = handle(a, ctl, id, true);
+                // Mid-clip, below the handles.
+                click(a, (x + ox) / 2.0, y + 14.0);
+            }),
+        ),
+        Check(
+            "fades: the clip has no fades and shows both handles at its corners",
+            Box::new(move |c, _| {
+                let (_, k) = i2.get();
+                let i = c.clip_ids.iter().position(|&x| x == ClipId(k)).ok_or("clip not drawn")?;
+                let v = &c.clip_vis[i];
+                (fades(c, k) == ClipFades::default() && v.fade_handles && v.fades == (0.0, 0.0)).then_some(()).ok_or(format!(
+                    "{:?} handles {} {:?}",
+                    fades(c, k),
+                    v.fade_handles,
+                    v.fades
+                ))
+            }),
+        ),
+        DoC(
+            "fades: drag the fade-in handle one beat to the right",
+            Box::new(move |a, ctl| {
+                let id = ClipId(i3.get().1);
+                let (x, y) = handle(a, ctl, id, false);
+                let beat = ctl.borrow().view.px_per_beat as f32;
+                drag(a, x, y, x + beat, y);
+            }),
+        ),
+        Check(
+            "fades: the clip fades in over about a beat, as one undo step",
+            Box::new(move |c, _| {
+                let f = fades(c, i4.get().1);
+                ((f.fade_in - PPQ).abs() < PPQ / 8 && f.fade_out == 0 && c.doc.undo_label() == Some("Clip Fade Change"))
+                    .then_some(())
+                    .ok_or(format!("{f:?} undo {:?}", c.doc.undo_label()))
+            }),
+        ),
+        DoC(
+            "fades: drag the fade-out handle two beats to the left",
+            Box::new(move |a, ctl| {
+                let id = ClipId(i5.get().1);
+                let (x, y) = handle(a, ctl, id, true);
+                let beat = ctl.borrow().view.px_per_beat as f32;
+                drag(a, x, y, x - 2.0 * beat, y);
+            }),
+        ),
+        Check(
+            "fades: the clip fades out over about two beats and the engine gets both fades",
+            Box::new(move |c, _| {
+                let (_, k) = i6.get();
+                let f = fades(c, k);
+                let assets: std::collections::HashMap<_, _> = c.project().assets.iter().map(|a| (a.id, 1u64)).collect();
+                let (snap, _) = dstudio_core::snapshot::build(c.project(), 48_000.0, &assets);
+                let sf = snap.tracks.iter().flat_map(|t| &t.clips).find(|x| x.clip_id == k).map(|x| x.fades);
+                // 120 bpm: a beat is 24 000 frames.
+                let near = |a: i64, b: i64| (a - b).abs() < 3_000;
+                ((f.fade_out - 2 * PPQ).abs() < PPQ / 8 && sf.is_some_and(|(i, o)| near(i, 24_000) && near(o, 48_000)))
+                    .then_some(())
+                    .ok_or(format!("{f:?} engine {sf:?}"))
+            }),
+        ),
+        Do("fades: undo", Box::new(|a| key(a, "z", true, false))),
+        Check(
+            "fades: undo takes back the fade-out and keeps the fade-in",
+            Box::new(move |c, _| {
+                let f = fades(c, i7.get().1);
+                (f.fade_out == 0 && f.fade_in > 0).then_some(()).ok_or(format!("{f:?}"))
+            }),
+        ),
+        DoC(
+            "fades: remove the test track",
+            Box::new(move |_, ctl| {
+                let mut c = ctl.borrow_mut();
+                c.select_clip(None);
+                c.execute(Command::RemoveTrack { track: TrackId(i8.get().0) });
+                c.view.scroll_y = 0.0;
+                c.ui_dirty = true;
+            }),
+        ),
+    ]
+}
+
 fn clip_selection_steps() -> Vec<Step> {
     use Step::*;
     use dstudio_core::{ClipId, Command, MidiClip, Track, TrackId};
@@ -12663,6 +12799,7 @@ fn clip_menu_steps() -> Vec<Step> {
                                 warp: Default::default(),
                                 disabled: false,
                                 clip_loop: None,
+                                fades: Default::default(),
                             },
                         },
                         Command::AddMidiClip {
@@ -14450,6 +14587,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(devminimap_steps());
     all.extend(clip_menu_steps());
     all.extend(clip_selection_steps());
+    all.extend(clip_fade_steps());
     all.extend(clip_render_steps());
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());

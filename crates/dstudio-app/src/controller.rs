@@ -396,6 +396,10 @@ pub struct Controller {
     pub(crate) track_resize: Option<crate::splitters::TrackResize>,
     /// Track header press that may become a reorder drag (src/track_menu.rs).
     pub(crate) track_drag: Option<crate::track_menu::TrackDrag>,
+    /// A fade handle being dragged (src/fades.rs).
+    pub(crate) fade_drag: Option<crate::fades::FadeDrag>,
+    /// The audio clip under the lane pointer, which shows its fade handles.
+    pub(crate) hover_clip: Option<ClipId>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
     /// Saved height (None = default) each bottom panel kind had before its collapse button shut
@@ -581,6 +585,8 @@ impl Controller {
             drag: None,
             track_resize: None,
             track_drag: None,
+            fade_drag: None,
+            hover_clip: None,
             bottom_drag: None,
             bottom_restore: Default::default(),
             chat_drag: None,
@@ -1504,6 +1510,7 @@ impl Controller {
                 warp: Default::default(),
                 disabled: false,
                 clip_loop: None,
+                fades: Default::default(),
             },
         });
         // Engine asset must be known before the snapshot is published.
@@ -1650,6 +1657,9 @@ impl Controller {
         if self.auto.shown && y >= timeline::RULER_H {
             return 0;
         }
+        if self.fade_drag.is_some() || timeline::fade_hit(&self.view, &self.clip_vis, x, y).is_some() {
+            return 1;
+        }
         match timeline::hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y) {
             Hit::Clip { zone: Zone::Left | Zone::Right, .. } => 1,
             Hit::Clip { zone: Zone::Body, .. } => 2,
@@ -1675,6 +1685,13 @@ impl Controller {
         }
         if self.drag.is_none() && self.auto_pointer(kind, x, y, shift, alt) {
             return;
+        }
+        // Fade handles come first: they sit over the clip's edges and body.
+        match kind {
+            0 if self.drag.is_none() && !shift && self.fade_press(x, y) => return,
+            1 if self.fade_drag.is_some() => return self.fade_move(x),
+            2.. if self.fade_drag.is_some() => return self.fade_release(),
+            _ => {}
         }
         let beat = self.view.beat_at(x).max(0.0);
         match kind {
@@ -1961,6 +1978,7 @@ impl Controller {
                 let shown = dstudio_core::Clip { source_offset: off, source_length: len, clip_loop, ..c.clone() };
                 let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
                 let wave = self.clip_wave(&shown);
+                let fades = self.shown_fades(c.id, c.fades, p.clip_length_ticks(&shown));
                 self.clip_vis.push(ClipVis {
                     track_index,
                     start_beats: start as f64 / PPQ as f64,
@@ -1972,6 +1990,8 @@ impl Controller {
                     wave,
                     midi: None,
                     live: None,
+                    fades,
+                    fade_handles: self.shows_fade_handles(c.id),
                 });
                 self.clip_ids.push(c.id);
             }
@@ -2007,6 +2027,8 @@ impl Controller {
                     wave: None,
                     midi: Some(mini_notes(&notes, shift, len)),
                     live: None,
+                    fades: (0.0, 0.0),
+                    fade_handles: false,
                 });
                 self.clip_ids.push(c.id);
             }
@@ -2630,6 +2652,7 @@ mod tests {
                         warp: Default::default(),
                         disabled: false,
                         clip_loop: None,
+                        fades: Default::default(),
                     },
                 },
             ],

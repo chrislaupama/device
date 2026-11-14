@@ -1459,6 +1459,38 @@ typedef struct se_session_desc_v10 {
 /* MAIN THREAD (like se_session_publish_v5). */
 int32_t se_session_publish_v10(se_engine* engine, const se_session_desc_v10* session);
 
+/* ---- audio clip fades (ABI v1 addition) ----------------------------------
+ * se_session_publish_v11 is se_session_publish_v10 plus clip fades. A clip
+ * listed in `fades` (by clip_id, which must name a clip of the session, once)
+ * fades in over its first `fade_in` timeline frames and out over its last
+ * `fade_out`: at clip-relative frame r of a clip whose played range is
+ * `len` frames long (after the clamps of se_session_publish_v8), its output
+ * is scaled by min(1, r / fade_in) and by min(1, (len - r) / fade_out), a
+ * linear ramp from silence (a 0-length fade is no fade). Fades follow the
+ * timeline, so a looped or warped clip fades where it plays; each fade is
+ * clamped to the clip, and the fade-out to what the fade-in leaves. Clips
+ * not listed, and listed clips with both fades 0, are unchanged (and cost
+ * nothing); blocks outside a clip's fades cost nothing either. Rendering
+ * never allocates or locks.
+ *
+ * Validation (else SE_ERR_INVALID_ARG): fades non-NULL when counted; clip ids
+ * known and listed at most once; fade_in and fade_out >= 0. */
+typedef struct se_clip_fade_desc {
+    uint64_t clip_id;
+    int64_t fade_in;  /* timeline frames from the clip start */
+    int64_t fade_out; /* timeline frames back from the clip end */
+} se_clip_fade_desc; /* 24 bytes, align 8 */
+
+typedef struct se_session_desc_v11 {
+    se_session_desc_v10 v10;
+    const se_clip_fade_desc* fades;
+    uint32_t fade_count;
+    uint32_t _pad;
+} se_session_desc_v11; /* 120 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v11(se_engine* engine, const se_session_desc_v11* session);
+
 /* ---- MIDI input (specs/003-midi-input-and-recording) ----------------------
  * The engine reads MIDI input ports (Core MIDI on macOS, the Windows
  * multimedia MIDI API, the ALSA sequencer on Linux; none elsewhere) and

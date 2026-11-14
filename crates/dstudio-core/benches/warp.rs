@@ -54,6 +54,7 @@ fn project(tracks: usize, warped: bool) -> (Document, HashMap<AssetId, u64>, Has
             warp: if warped { warp.clone() } else { ClipWarp::default() },
             disabled: false,
             clip_loop: None,
+            fades: Default::default(),
         };
         d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     }

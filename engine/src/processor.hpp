@@ -60,6 +60,9 @@ public:
     bool& bus_used(uint32_t bus) noexcept { return bus_used_[bus]; }
     float* send_l() noexcept { return send_.get(); }
     float* send_r() noexcept { return send_.get() + max_block_; }
+    // A fading clip's own output (se_session_publish_v11), before its fade gain.
+    float* fade_l() noexcept { return fade_l_.data(); }
+    float* fade_r() noexcept { return fade_r_.data(); }
 
 private:
     uint32_t max_block_;
@@ -74,6 +77,7 @@ private:
     std::vector<float> mod_;
     std::vector<BuiltinMod> mod_binds_;
     std::vector<float> live_;
+    std::vector<float> fade_l_, fade_r_;
     std::vector<MidiEvent> midi_;
     se_synth_params synth_params_{};
 };

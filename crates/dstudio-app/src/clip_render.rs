@@ -610,6 +610,7 @@ impl Controller {
             warp: Default::default(),
             disabled: false,
             clip_loop: None,
+            fades: Default::default(),
         };
         let mut cmds = vec![Command::AddAsset { asset }];
         let (label, track, status) = match &op {

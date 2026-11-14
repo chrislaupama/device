@@ -86,6 +86,7 @@ fn audio_clip(asset: AssetId, id: u64, start_beat: i64, secs: f64) -> Clip {
         warp: Default::default(),
         disabled: false,
         clip_loop: None,
+        fades: Default::default(),
     }
 }
 

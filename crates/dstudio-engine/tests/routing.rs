@@ -95,6 +95,7 @@ fn publish(e: &Engine, asset: u64, frames: u32, route: impl FnOnce(&mut TrackSna
         gain: 1.0,
         warp: None,
         clip_loop: None,
+        fades: Default::default(),
     }];
     let mut r = track(9);
     r.is_return = true;

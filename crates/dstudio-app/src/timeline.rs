@@ -418,7 +418,16 @@ pub struct ClipVis {
     /// (one pair every `.1` logical points from the clip start), drawn with the
     /// recording tint.
     pub live: Option<(Vec<[f32; 2]>, f32)>,
+    /// Audio clip fades (in, out) in beats, clamped to the clip.
+    pub fades: (f64, f64),
+    /// Draw (and hit-test) the fade handles: the clip is hovered or selected.
+    pub fade_handles: bool,
 }
+
+/// Half the side of a fade handle's square (its outline is one more).
+pub const FADE_HANDLE: f32 = 2.0;
+/// How far from a fade handle's centre a press still takes it.
+pub const FADE_GRAB: f32 = 6.0;
 
 impl ClipVis {
     pub fn rect(&self, v: &View) -> (f32, f32, f32, f32) {
@@ -426,6 +435,37 @@ impl ClipVis {
         let w = (self.len_beats * v.px_per_beat) as f32;
         (x, v.track_top(self.track_index) + 0.5, w.max(1.0), v.pitch(self.track_index) - 1.5)
     }
+
+    /// Fade-in and fade-out widths in px.
+    pub fn fade_px(&self, v: &View) -> (f32, f32) {
+        ((self.fades.0 * v.px_per_beat) as f32, (self.fades.1 * v.px_per_beat) as f32)
+    }
+
+    /// Centres of the fade-in and fade-out handles: just under the title strip at the end of
+    /// each fade, kept inside the clip.
+    pub fn fade_handle_centres(&self, v: &View) -> [(f32, f32); 2] {
+        let (x, y, w, _) = self.rect(v);
+        let (fi, fo) = self.fade_px(v);
+        let lo = x + FADE_HANDLE + 1.0;
+        let hi = (x + w - FADE_HANDLE - 1.0).max(lo);
+        let hy = y + CLIP_HEADER + FADE_HANDLE + 2.0;
+        [((x + fi).clamp(lo, hi), hy), ((x + w - fo).clamp(lo, hi), hy)]
+    }
+}
+
+/// The fade handle under (x, y): (clip index, fade-out). Only clips that show their handles
+/// take part; the nearer handle wins when both are in reach.
+pub fn fade_hit(v: &View, clips: &[ClipVis], x: f32, y: f32) -> Option<(usize, bool)> {
+    let mut best: Option<(f32, usize, bool)> = None;
+    for (i, c) in clips.iter().enumerate().filter(|(_, c)| c.fade_handles && c.midi.is_none()) {
+        for (out, (hx, hy)) in c.fade_handle_centres(v).into_iter().enumerate() {
+            let d = (x - hx).abs().max((y - hy).abs());
+            if d <= FADE_GRAB && best.is_none_or(|b| d < b.0) {
+                best = Some((d, i, out == 1));
+            }
+        }
+    }
+    best.map(|(_, i, out)| (i, out))
 }
 
 pub struct Scene<'a> {
@@ -652,6 +692,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
                 wave,
             );
         }
+        fade_overlay(&mut dl.base, sc, &px, c, body, (x, y, cw, ch));
     }
 
     // ---- takes being recorded: red-tinted growing clips with a live waveform (audio) or notes (MIDI) ----
@@ -814,6 +855,53 @@ fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automat
             out.push(px.rounded(x - r + 0.5, y - r + 0.5, 2.0 * r - 1.0, 2.0 * r - 1.0, r - 0.5, [1.0, 1.0, 1.0, 1.0]));
         } else {
             out.push(px.rounded(x - r, y - r, 2.0 * r, 2.0 * r, r, color));
+        }
+    }
+}
+
+/// An audio clip's fades: the body above each fade line darkened, the line itself, and the
+/// two square handles while the clip shows them.
+fn fade_overlay(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, body: [f32; 3], (x, y, cw, ch): (f32, f32, f32, f32)) {
+    let v = &sc.view;
+    let w = sc.size.0;
+    let (fi, fo) = c.fade_px(v);
+    let top = y + CLIP_HEADER + 1.0;
+    let bottom = y + ch;
+    let shade = rgba(BLACK, 0.32);
+    let line = rgba(BLACK, 0.7);
+    let lw = 1.0f32.max(1.0 / sc.scale);
+    // A fade from x0 to x1 whose line rises (fade-in) or falls (fade-out), in 1 px columns.
+    let mut fade = |x0: f32, x1: f32, rising: bool| {
+        let span = x1 - x0;
+        if span < 1.0 {
+            return;
+        }
+        let line_y = |gx: f32| {
+            let t = ((gx - x0) / span).clamp(0.0, 1.0);
+            let g = if rising { t } else { 1.0 - t };
+            bottom - g * (bottom - top)
+        };
+        let mut gx = x0.max(0.0);
+        let end = x1.min(w);
+        while gx < end {
+            let nx = (gx + 1.0).min(end);
+            let (ya, yb) = (line_y(gx), line_y(nx));
+            let (lo, hi) = (ya.min(yb), ya.max(yb));
+            if lo > top {
+                out.push(px.rect(gx, top, nx - gx, lo - top, shade));
+            }
+            out.push(px.rect(gx, lo - 0.5 * lw, nx - gx, hi - lo + lw, line));
+            gx = nx;
+        }
+    };
+    fade(x, x + fi, true);
+    fade(x + cw - fo, x + cw, false);
+    if c.fade_handles {
+        let o = 1.0;
+        for (hx, hy) in c.fade_handle_centres(v) {
+            let s = FADE_HANDLE;
+            out.push(px.rect(hx - s - o, hy - s - o, 2.0 * (s + o), 2.0 * (s + o), rgba(BLACK, 0.85)));
+            out.push(px.rect(hx - s, hy - s, 2.0 * s, 2.0 * s, rgba(mix(body, WHITE, 0.6), 1.0)));
         }
     }
 }
@@ -1166,6 +1254,8 @@ mod tests {
             wave: None,
             midi: None,
             live: None,
+            fades: (0.0, 0.0),
+            fade_handles: false,
         }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);

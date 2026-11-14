@@ -152,6 +152,7 @@ fn record_armed_track_then_play_back_the_take() {
                         warp: Default::default(),
                         disabled: false,
                         clip_loop: None,
+                        fades: Default::default(),
                     },
                 },
             ],

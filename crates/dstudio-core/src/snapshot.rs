@@ -23,6 +23,9 @@ pub struct ClipSnapshot {
     /// Looping: (loop start, loop end) in content frames from the clip start
     /// (`se_clip_loop_desc`); `length` is then the looped length.
     pub clip_loop: Option<(i64, i64)>,
+    /// (fade-in, fade-out) in timeline frames from the clip's start and back from its end
+    /// (`se_clip_fade_desc`); (0, 0) plays without fades.
+    pub fades: (i64, i64),
 }
 
 /// A warped clip in engine frames.
@@ -206,6 +209,7 @@ pub fn build_full(
                             })
                         },
                         clip_loop: None,
+                        fades: Default::default(),
                     };
                     let frames = asset.frames as f64 * ratio;
                     let mut cs = match reversed {
@@ -216,6 +220,15 @@ pub fn build_full(
                         let (ls, le) = (frames_at(l.start).max(0), frames_at(l.end).min(cs.length));
                         cs.length = frames_at(l.length);
                         cs.clip_loop = (le > ls).then_some((ls, le));
+                    }
+                    // Fades follow the clip on the timeline (a reversed clip keeps its fades where they are).
+                    // Clips without fades (nearly all of them) skip the length lookup.
+                    if !c.fades.is_default() {
+                        let len_ticks = project.clip_length_ticks(c);
+                        let f = c.fades.clamped(len_ticks);
+                        let fade_in = frames_at(f.fade_in).clamp(0, cs.length);
+                        let fade_out = (frames_at(len_ticks) - frames_at(len_ticks - f.fade_out)).clamp(0, cs.length - fade_in);
+                        cs.fades = (fade_in, fade_out);
                     }
                     Some(cs)
                 })
