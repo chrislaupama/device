@@ -84,6 +84,7 @@ mod transport_fields;
 mod typing;
 mod warpedit;
 mod wavgen;
+mod window_buttons;
 mod zoom;
 
 use controller::{BottomTab, Controller, ImportTarget, gain_from_slider};
@@ -2698,13 +2699,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         // Files dropped from Finder: onto the selected track's sampler, else imported as clips.
+        // AppKit lays the titlebar out again on resize, focus and display changes: put the
+        // window buttons back on the header's title row.
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
         let ctl = ctl.clone();
-        app.window().on_winit_window_event(move |_, ev| {
-            if let WindowEvent::DroppedFile(path) = ev
-                && let Ok(mut c) = ctl.try_borrow_mut()
-            {
-                c.drop_files(vec![path.clone()]);
+        let zm = zoom.clone();
+        app.window().on_winit_window_event(move |window, ev| {
+            match ev {
+                WindowEvent::DroppedFile(path) => {
+                    if let Ok(mut c) = ctl.try_borrow_mut() {
+                        c.drop_files(vec![path.clone()]);
+                    }
+                }
+                WindowEvent::Resized(_) | WindowEvent::Focused(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                    if let Ok(z) = zm.try_borrow() {
+                        window_buttons::place(window, z.percent);
+                    }
+                }
+                _ => {}
             }
             EventResult::Propagate
         });
@@ -2809,6 +2821,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     if let Some(a) = aw.upgrade() {
                         zm.borrow_mut().sync(a.window());
+                        window_buttons::place(a.window(), percent);
                         a.window().request_redraw();
                     }
                     if let Ok(mut c) = ctl.try_borrow_mut() {
@@ -3195,6 +3208,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         slint::Timer::single_shot(Duration::ZERO, move || {
                             if let Some(a) = aw.upgrade() {
                                 zm.borrow_mut().sync(a.window());
+                                window_buttons::place(a.window(), zm.borrow().percent);
                                 a.window().request_redraw();
                             }
                         });
