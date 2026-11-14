@@ -488,6 +488,8 @@ mod tests {
             wave: None,
             midi: None,
             live: None,
+            fades: (0.0, 0.0),
+            fade_handles: false,
         }
     }
 

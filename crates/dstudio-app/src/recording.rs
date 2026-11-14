@@ -504,6 +504,8 @@ impl Controller {
                 wave: None,
                 midi: None,
                 live: Some((peaks, (fpp as f64 / frames_per_pt) as f32)),
+                fades: (0.0, 0.0),
+                fade_handles: false,
             });
         }
         self.rebuild_live_midi();
@@ -561,6 +563,8 @@ impl Controller {
                 wave: None,
                 midi: Some(mini.clone()),
                 live: None,
+                fades: (0.0, 0.0),
+                fade_handles: false,
             });
         }
     }

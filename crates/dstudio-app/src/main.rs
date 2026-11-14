@@ -71,6 +71,7 @@ mod resample;
 mod routing;
 mod sampler_panel;
 mod sections;
+mod fades;
 mod selection;
 mod selftest;
 mod settings;
@@ -2874,6 +2875,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.auto_hover(x, y);
+                c.clip_hover(x, y);
             }
         });
     }

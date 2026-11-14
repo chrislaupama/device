@@ -374,6 +374,8 @@ mod tests {
             wave: None,
             midi: None,
             live: None,
+            fades: (0.0, 0.0),
+            fade_handles: false,
         };
         let v = [vis(0, 0.0, 4.0), vis(0, 8.0, 4.0), vis(1, 2.0, 2.0)];
         let ids = [ClipId(1), ClipId(2), ClipId(3)];
