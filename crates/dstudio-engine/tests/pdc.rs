@@ -103,6 +103,7 @@ fn latency_plugin_on_one_of_two_tracks_is_compensated_and_toggle_off_restores_th
                     disabled: false,
                     clip_loop: None,
                     fades: Default::default(),
+                    takes: Vec::new(),
                 },
             },
             Origin::User,

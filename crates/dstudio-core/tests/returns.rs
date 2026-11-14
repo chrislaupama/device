@@ -78,6 +78,7 @@ fn return_tracks_refuse_clips_input_and_sends() {
         disabled: false,
         clip_loop: None,
         fades: Default::default(),
+        takes: Vec::new(),
     };
     let audio = d.project().tracks[0].id;
     for cmd in [
