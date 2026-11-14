@@ -468,12 +468,42 @@ pub fn fade_hit(v: &View, clips: &[ClipVis], x: f32, y: f32) -> Option<(usize, b
     best.map(|(_, i, out)| (i, out))
 }
 
+/// One clip of a group's track, drawn as a thin bar in the group's own lane: one row per
+/// track of the group that holds clips ([summary_rows]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SummaryBlock {
+    /// The group's row.
+    pub track_index: usize,
+    pub start_beats: f64,
+    pub len_beats: f64,
+    pub row: usize,
+    pub rows: usize,
+    /// The track's colour with the alpha for its state (folded or not, selected, silent).
+    pub color: [f32; 4],
+}
+
+/// Layout of `rows` summary rows in a lane `h` tall: (top of the first row, row pitch, row
+/// height). 2 px margins (8 % of short lanes), rows at most 10 px apart and 8 px tall with a
+/// gap of a quarter of the pitch (at most 2 px), centred (all in 100 % px, times 0.85).
+pub fn summary_rows(h: f32, rows: usize) -> (f32, f32, f32) {
+    const U: f32 = 0.85;
+    let rows = rows.max(1) as f32;
+    let margin = (2.0 * U).min(h * 0.08);
+    let avail = (h - 2.0 * margin).max(U);
+    let pitch = (10.0 * U).min(avail / rows);
+    let gap = (2.0 * U).min(pitch * 0.25);
+    let row_h = (pitch - gap).clamp(U, 8.0 * U);
+    (margin.max((h - rows * pitch) / 2.0), pitch, row_h)
+}
+
 pub struct Scene<'a> {
     pub view: View,
     pub size: (f32, f32), // logical
     pub scale: f32,
     pub tracks: &'a [TrackVis],
     pub clips: &'a [ClipVis],
+    /// Group lanes: their tracks' clips in brief ([SummaryBlock]).
+    pub summary: &'a [SummaryBlock],
     /// Growing clips of takes in progress (not hit-testable).
     pub live: &'a [ClipVis],
     pub playhead_beats: f64,
@@ -638,6 +668,22 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         }
         let sep = if t.selected { 0x2c2d30 } else { 0x26272a };
         dl.base.push(px.rect(0.0, top + row_h - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
+    }
+
+    // ---- group lanes: a bar per clip of each of the group's tracks ----
+    for b in sc.summary {
+        if v.is_pinned(b.track_index) {
+            continue;
+        }
+        let top = v.track_top(b.track_index);
+        let lane_h = v.pitch(b.track_index) - 0.5;
+        let (x0, x1) = (v.x_of(b.start_beats), v.x_of(b.start_beats + b.len_beats));
+        if x0 > w || x1 < 0.0 || top > lanes_bottom || top + lane_h < RULER_H {
+            continue;
+        }
+        let (row_top, pitch, row_h) = summary_rows(lane_h, b.rows);
+        let width = (x1 - x0 - 0.85).max(0.85);
+        dl.base.push(px.rounded(x0, top + row_top + b.row as f32 * pitch, width, row_h, (1.7f32).min(row_h / 2.0), b.color));
     }
 
     // ---- clips ----
@@ -1101,6 +1147,18 @@ mod tests {
     }
 
     #[test]
+    fn summary_rows_fit_the_lane() {
+        // A full 74.8 pt lane with two tracks: 8.5 apart, 6.8 tall, centred.
+        let (top, pitch, h) = summary_rows(74.3, 2);
+        assert!((pitch - 8.5).abs() < 1e-4 && (h - 6.8).abs() < 1e-4, "{pitch} {h}");
+        assert!((top - (74.3 - 17.0) / 2.0).abs() < 1e-4);
+        // Many tracks in a short lane: rows shrink to share it, never under one px.
+        let (top, pitch, h) = summary_rows(20.0, 12);
+        assert!(top >= 1.6 - 1e-4 && top + 12.0 * pitch <= 20.0 - 1.6 + 1e-3, "{top} {pitch}");
+        assert!(h >= 0.85);
+    }
+
+    #[test]
     fn ruler_ticks_in_the_draw_list_follow_the_steps() {
         let w = 969.5f32;
         let count = |ppb: f64| -> (usize, usize, usize) {
@@ -1112,6 +1170,7 @@ mod tests {
                 scale: 2.0,
                 tracks: &[],
                 clips: &[],
+                summary: &[],
                 live: &[],
                 playhead_beats: 0.0,
                 loop_beats: (0.0, 0.0),

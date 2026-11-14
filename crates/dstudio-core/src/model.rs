@@ -570,9 +570,9 @@ impl Project {
         self.tracks.iter().filter(move |t| t.output == Some(group))
     }
 
-    /// Name for a new group track: "Group 1", "Group 2", ..., the first number not in use.
+    /// Name for a new group track: "Group", then "Group 2", "Group 3", ..., the first not in use.
     pub fn next_group_name(&self) -> String {
-        (1..).map(|n| format!("Group {n}")).find(|n| !self.tracks.iter().any(|t| &t.name == n)).unwrap_or_default()
+        (1..).map(|n| if n == 1 { "Group".to_string() } else { format!("Group {n}") }).find(|n| !self.tracks.iter().any(|t| &t.name == n)).unwrap_or_default()
     }
 
     /// The return tracks, in order.

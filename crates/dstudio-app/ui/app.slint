@@ -788,9 +788,10 @@ component Inspector inherits Rectangle {
     // tracks open the instrument selector (built-in Synth or an instrument plugin: SetInstrumentPlugin).
     // Return tracks have no input: a "Return" label instead.
     // Out: Master or a return track (SetTrackOutput, src/routing.rs); fixed to Master on returns.
-    if Studio.sel-return || Studio.sel-group: Raised {
+    // Group tracks have no input: their Out selector takes the top row.
+    if Studio.sel-return: Raised {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px;
-        Text { x: 7.5px; text: Studio.sel-group ? "Group" : "Return"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: 7.5px; text: "Return"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
     }
     if !Studio.sel-return && !Studio.sel-group: Raised {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px;
@@ -801,7 +802,7 @@ component Inspector inherits Rectangle {
         TouchArea { clicked => { if (Studio.sel-instrument) { Studio.open-inst-menu(parent.absolute-position.x + 1px, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 3px); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
     }
     Raised {
-        x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px;
+        x: 10px; y: Studio.sel-group ? 37px : 63px; width: 149px; height: 18px; border-radius: 9px;
         Text { x: 7.5px; text: "Out"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Text { x: 29.5px; width: 134px - self.x - 4px; text: Studio.sel-out-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
         if Studio.sel-can-send: Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
